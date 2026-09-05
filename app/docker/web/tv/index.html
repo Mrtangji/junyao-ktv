@@ -328,10 +328,10 @@ html,body{width:100%;height:100%;width:100vw;height:100vh;overflow:hidden;backgr
   padding:30px 8%;box-sizing:border-box;text-align:center;pointer-events:none;
   background:radial-gradient(circle at 50% 40%,rgba(199,54,247,.22),transparent 58%),linear-gradient(135deg,#08051d,#1b0938)}
 #lyrics-panel.show{display:flex}
-#lyrics-panel .lyrics-inner{max-width:92%;display:flex;flex-direction:column;align-items:center;gap:18px}
-#lyrics-panel .lyrics-prev,#lyrics-panel .lyrics-next{font-size:22px;color:rgba(255,255,255,.28);min-height:28px;white-space:pre-wrap}
-#lyrics-panel .lyrics-current{font-size:42px;line-height:1.32;font-weight:800;color:#fff;text-shadow:0 0 24px rgba(255,79,154,.6);white-space:pre-wrap}
-#lyrics-panel .lyrics-next{color:rgba(255,255,255,.42)}
+#lyrics-panel .lyrics-inner{width:92%;max-width:1180px;height:88%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;overflow:hidden}
+#lyrics-panel .lyrics-line{width:100%;font-size:20px;line-height:1.22;color:rgba(255,255,255,.28);min-height:26px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center;transition:color .18s,font-size .18s,transform .18s}
+#lyrics-panel .lyrics-line.current{font-size:40px;line-height:1.28;font-weight:800;color:#fff;text-shadow:0 0 24px rgba(255,79,154,.6);transform:scale(1.02)}
+#lyrics-panel .lyrics-line.near{font-size:25px;color:rgba(255,255,255,.48)}
 #lyrics-panel.no-lyrics .lyrics-inner{display:none}
 #lyrics-panel.no-lyrics:after{content:'暂无 LRC 歌词';font-size:22px;color:rgba(255,255,255,.55)}
 /* QR - 修复双码 */
@@ -818,7 +818,7 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
     <div id="now-col">
       <div id="now-panel" data-f onclick="enterFullscreen()">
         <video id="ktv-video" class="video-home" playsinline></video>
-        <div id="lyrics-panel"><div class="lyrics-inner"><div class="lyrics-prev"></div><div class="lyrics-current">—</div><div class="lyrics-next"></div></div></div>
+        <div id="lyrics-panel"><div class="lyrics-inner"></div></div>
         <div id="video-loading"><div class="vl-spinner"></div><div class="vl-text">加载中…</div></div>
         <div id="now-idle"><div class="idle-big">骏耀K歌</div><div class="idle-sub">扫码点歌 · 大屏沉浸演唱</div></div>
         <div id="now-info"><div class="ni-t" id="ni-title">—</div><div class="ni-m" id="ni-meta">—</div></div>
@@ -1291,9 +1291,7 @@ function resetLyrics(){
   if(lyricTimer){clearInterval(lyricTimer);lyricTimer=null;}
   const panel=document.getElementById('lyrics-panel');
   panel.classList.remove('show','no-lyrics');
-  panel.querySelector('.lyrics-prev').textContent='';
-  panel.querySelector('.lyrics-current').textContent='—';
-  panel.querySelector('.lyrics-next').textContent='';
+  panel.querySelector('.lyrics-inner').innerHTML='';
 }
 function renderLyrics(){
   const panel=document.getElementById('lyrics-panel');
@@ -1302,9 +1300,16 @@ function renderLyrics(){
   let idx=-1;
   for(let i=0;i<lyricLines.length;i++){if(lyricLines[i].time<=now)idx=i;else break;}
   if(idx<0)idx=0;
-  panel.querySelector('.lyrics-prev').textContent=idx>0?lyricLines[idx-1].text:'';
-  panel.querySelector('.lyrics-current').textContent=lyricLines[idx].text||'♪';
-  panel.querySelector('.lyrics-next').textContent=idx+1<lyricLines.length?lyricLines[idx+1].text:'';
+  // 尽量多显示上下文：当前行前后各 4 行，最多 9 行，当前行始终高亮居中。
+  const start=Math.max(0,idx-4), end=Math.min(lyricLines.length,idx+5);
+  const inner=panel.querySelector('.lyrics-inner');
+  inner.innerHTML='';
+  for(let i=start;i<end;i++){
+    const line=document.createElement('div');
+    line.className='lyrics-line'+(i===idx?' current':Math.abs(i-idx)===1?' near':'');
+    line.textContent=lyricLines[i].text||'♪';
+    inner.appendChild(line);
+  }
 }
 async function loadLyrics(song){
   resetLyrics();
