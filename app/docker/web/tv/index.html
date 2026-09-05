@@ -383,6 +383,16 @@ html,body{width:100%;height:100%;width:100vw;height:100vh;overflow:hidden;backgr
   display:flex;flex-direction:column;
   background:linear-gradient(0,rgba(0,0,0,.72) 0%,rgba(0,0,0,.2) 25%,transparent 55%,rgba(0,0,0,.2) 100%)}
 #fs-ov.show{opacity:1;pointer-events:all}
+/* MP3 全屏时把同步歌词铺满屏幕；视频全屏时隐藏该层，只保留视频画面。 */
+#fs-lyrics{position:absolute;top:0;right:0;bottom:0;left:0;z-index:0;display:none;align-items:center;justify-content:center;
+  padding:5vh 8vw 22vh;box-sizing:border-box;text-align:center;pointer-events:none;
+  background:radial-gradient(circle at 50% 42%,rgba(199,54,247,.3),transparent 60%),linear-gradient(135deg,#08051d,#1b0938)}
+#fs-ov.audio-mode #fs-lyrics{display:flex}
+#fs-lyrics .lyrics-inner{width:92%;height:86%;max-width:1500px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;overflow:hidden}
+#fs-lyrics .lyrics-line{width:100%;font-size:25px;line-height:1.25;color:rgba(255,255,255,.3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#fs-lyrics .lyrics-line.near{font-size:34px;color:rgba(255,255,255,.55)}
+#fs-lyrics .lyrics-line.current{font-size:58px;line-height:1.3;font-weight:900;color:#fff;text-shadow:0 0 32px rgba(255,79,154,.75)}
+#fs-ov.audio-mode #ov-top,#fs-ov.audio-mode #ov-bot{position:relative;z-index:2}
 #ov-top{padding:18px 24px;display:flex;align-items:center}
 #ov-back{width:56px;height:56px;border-radius:50%;border:2px solid rgba(255,255,255,.5);
   display:flex;align-items:center;justify-content:center;font-size:26px;cursor:pointer;
@@ -853,6 +863,7 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
 </div>
 <div id="fs-tap" onclick="showOverlay()"></div>
 <div id="fs-ov">
+  <div id="fs-lyrics"><div class="lyrics-inner"></div></div>
   <div id="ov-top">
     <div id="ov-back" onclick="exitKtvFullscreen()">←</div>
     <div><div id="ov-title">—</div><div id="ov-artist">—</div></div>
@@ -1293,22 +1304,29 @@ function resetLyrics(){
   panel.classList.remove('show','no-lyrics');
   panel.querySelector('.lyrics-inner').innerHTML='';
 }
-function renderLyrics(){
-  const panel=document.getElementById('lyrics-panel');
+function renderLyricLines(inner, large){
+  if(!inner)return;
+  inner.innerHTML='';
   if(!lyricLines.length)return;
   const now=video.currentTime||0;
   let idx=-1;
   for(let i=0;i<lyricLines.length;i++){if(lyricLines[i].time<=now)idx=i;else break;}
   if(idx<0)idx=0;
-  // 尽量多显示上下文：当前行前后各 4 行，最多 9 行，当前行始终高亮居中。
   const start=Math.max(0,idx-4), end=Math.min(lyricLines.length,idx+5);
-  const inner=panel.querySelector('.lyrics-inner');
-  inner.innerHTML='';
   for(let i=start;i<end;i++){
     const line=document.createElement('div');
     line.className='lyrics-line'+(i===idx?' current':Math.abs(i-idx)===1?' near':'');
     line.textContent=lyricLines[i].text||'♪';
     inner.appendChild(line);
+  }
+}
+function renderLyrics(){
+  const panel=document.getElementById('lyrics-panel');
+  if(!lyricLines.length)return;
+  renderLyricLines(panel.querySelector('.lyrics-inner'), false);
+  const fsOv=document.getElementById('fs-ov');
+  if(fsOv.classList.contains('show') && fsOv.classList.contains('audio-mode')){
+    renderLyricLines(document.querySelector('#fs-lyrics .lyrics-inner'), true);
   }
 }
 async function loadLyrics(song){
@@ -1519,6 +1537,8 @@ function restoreVideoPlayback(wasPlaying, t) {
 }
 function enterFullscreen(){if(!curSong){showToast('先点一首歌吧 🎵');return;}pushFocus();isFS=true;window.ktv_fs=true;
   var wasPlaying=!video.paused,t=video.currentTime;
+  fsOv.classList.toggle('audio-mode',curSong.media_type==='audio');
+  if(curSong.media_type==='audio')renderLyricLines(document.querySelector('#fs-lyrics .lyrics-inner'),true);
   document.body.appendChild(video);video.className='video-fs';
   restoreVideoPlayback(wasPlaying,t);setTimeout(function(){restoreVideoPlayback(wasPlaying,t);},120);
   if(window.__fitViewport)window.__fitViewport();fsTap.classList.add('on');showOverlay();}
@@ -1547,7 +1567,7 @@ function exitKtvFullscreen(){
   var wasPlaying=!video.paused,t=video.currentTime;
   video.className='video-home';video.style.width='';video.style.height='';nowPanel.insertBefore(video,nowPanel.firstChild);
   restoreVideoPlayback(wasPlaying,t);setTimeout(function(){restoreVideoPlayback(wasPlaying,t);},120);
-  fsTap.classList.remove('on');fsOv.classList.remove('show');document.getElementById('fsq').classList.remove('open');clearTimeout(ovTimer);popFocus();}
+  fsTap.classList.remove('on');fsOv.classList.remove('show','audio-mode');document.querySelector('#fs-lyrics .lyrics-inner').innerHTML='';document.getElementById('fsq').classList.remove('open');clearTimeout(ovTimer);popFocus();}
 // Bug1修复：showOverlay 被 keydown 全局监听、moveFocus 结尾等多处频繁调用（用于顺带
 // "续命"隐藏计时器），但原代码每次调用都无条件把 focIdx 重置为0。于是每次按方向键时，
 // keydown 处理函数先调用一次 showOverlay()（把 focIdx 归零），紧接着 moveFocus 才用这个
