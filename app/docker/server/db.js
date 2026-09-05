@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS songs (
   pinyin TEXT,
   play_count INTEGER DEFAULT 0,
   audio_tracks INTEGER,
+  media_type TEXT DEFAULT 'video',
+  lyrics_path TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -66,6 +68,12 @@ try {
   if (!cols.includes('audio_tracks')) {
     db.exec('ALTER TABLE songs ADD COLUMN audio_tracks INTEGER');
   }
-} catch (e) { console.error('音轨字段迁移失败:', e.message); }
+  if (!cols.includes('media_type')) {
+    db.exec("ALTER TABLE songs ADD COLUMN media_type TEXT DEFAULT 'video'");
+  }
+  if (!cols.includes('lyrics_path')) {
+    db.exec('ALTER TABLE songs ADD COLUMN lyrics_path TEXT');
+  }
+} catch (e) { console.error('歌曲媒体字段迁移失败:', e.message); }
 
 module.exports = db;

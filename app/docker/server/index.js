@@ -157,6 +157,26 @@ app.use('/m',     express.static(path.join(__dirname, '../web/mobile')));
 app.use('/admin', express.static(path.join(__dirname, '../web/admin')));
 app.use('/cover', express.static('/data/covers'));
 
+// 同名旁车歌词：例如 /mv/周杰伦 - 晴天.lrc。
+// 只允许返回曲库根目录内、且由扫描器记录过的歌词文件，避免把容器内其它文件
+// 暴露给局域网客户端。歌词内容按 UTF-8 返回；前端会兼容 BOM 和常见的 LRC 标签。
+app.get('/lyrics/:id', (req, res) => {
+  const song = db.prepare('SELECT lyrics_path FROM songs WHERE id = ?').get(req.params.id);
+  if (!song || !song.lyrics_path) return res.status(404).end();
+  const rel = String(song.lyrics_path).replace(/\\/g, '/');
+  if (!rel || rel.startsWith('/') || rel.includes('..')) return res.status(404).end();
+  const full = path.resolve(MV_DIR, rel);
+  const root = path.resolve(MV_DIR);
+  if (full !== root && !full.startsWith(root + path.sep)) return res.status(404).end();
+  try {
+    if (!fs.statSync(full).isFile()) return res.status(404).end();
+  } catch (e) {
+    return res.status(404).end();
+  }
+  res.set({ 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+  fs.createReadStream(full).pipe(res);
+});
+
 // ---------- HLS 播放 (音轨切换不中断播放、进度可寻址) ----------
 // 取代了旧的"?track=0/1 现场 ffmpeg 重新封装"方案：那个方案吐出的新流没有
 // Content-Length/Range 支持，所以切音轨、以及切完音轨后拖进度条，都只能从
@@ -259,9 +279,10 @@ app.get('/stream/:id', (req, res) => {
   }
 
   const stat = fs.statSync(song.filepath);
+  const contentType = song.media_type === 'audio' ? 'audio/mpeg' : 'video/mp4';
   const range = req.headers.range;
   if (!range) {
-    res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': 'video/mp4' });
+    res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': contentType });
     return fs.createReadStream(song.filepath).pipe(res);
   }
   const [s, e] = range.replace(/bytes=/, '').split('-');
@@ -271,7 +292,7 @@ app.get('/stream/:id', (req, res) => {
     'Content-Range': `bytes ${start}-${end}/${stat.size}`,
     'Accept-Ranges': 'bytes',
     'Content-Length': end - start + 1,
-    'Content-Type': 'video/mp4',
+    'Content-Type': contentType,
   });
   fs.createReadStream(song.filepath, { start, end }).pipe(res);
 });
@@ -394,7 +415,7 @@ function getQueueWithSongs() {
   return db.prepare(`
     SELECT q.id as queue_id, q.nickname, q.is_top, q.status, q.created_at,
            s.id as song_id, s.title, s.artist, s.filename, s.cover, s.duration,
-           s.audio_tracks
+           s.audio_tracks, s.media_type, s.lyrics_path
     FROM queue q JOIN songs s ON q.song_id = s.id
     WHERE q.status != 'done'
     -- 排序修复：置顶只能把一首歌挪到"正在播放"之后的第一位（即整个队列的第二位），

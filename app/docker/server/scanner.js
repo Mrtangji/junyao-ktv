@@ -11,6 +11,22 @@ const MV_DIR = process.env.MV_DIR || '/mv';
 // 判定为不可直拷贝，自动走 VAAPI/libx264 转码分支，不需要针对该格式
 // 额外改动转码逻辑。
 const VIDEO_EXT = ['.mp4', '.mkv', '.avi', '.flv', '.mov', '.webm', '.mpg'];
+const AUDIO_EXT = ['.mp3'];
+const MEDIA_EXT = new Set([...VIDEO_EXT, ...AUDIO_EXT]);
+
+// LRC 是与歌曲同名的旁车歌词文件，不作为歌曲入库；支持大小写后缀，
+// 例如「周杰伦 - 晴天.mp3」对应「周杰伦 - 晴天.lrc」。
+function findLyricsPath(filepath) {
+  const dir = path.dirname(filepath);
+  const stem = path.basename(filepath, path.extname(filepath));
+  try {
+    const names = fs.readdirSync(dir);
+    const exact = names.find(name => name.toLowerCase() === `${stem.toLowerCase()}.lrc`);
+    return exact ? path.join(dir, exact) : null;
+  } catch (e) {
+    return null;
+  }
+}
 
 // Bug修复：原唱/伴唱切换失效的根源——浏览器的 HTMLMediaElement.audioTracks
 // 在本应用运行的浏览器内核里没有真正实现（对本地文件播放，长度恒为0），前端
@@ -67,7 +83,7 @@ function listFilesRecursive(dir) {
     }
     if (isDir) {
       results = results.concat(listFilesRecursive(full));
-    } else if (VIDEO_EXT.includes(path.extname(entry.name).toLowerCase())) {
+    } else if (MEDIA_EXT.has(path.extname(entry.name).toLowerCase())) {
       results.push(full);
     }
   }
@@ -109,8 +125,8 @@ async function scanLibrary() {
   }
   const files = listFilesRecursive(MV_DIR);
   const insert = db.prepare(`
-    INSERT INTO songs (title, artist, filename, filepath, audio_tracks)
-    VALUES (@title, @artist, @filename, @filepath, @audio_tracks)
+    INSERT INTO songs (title, artist, filename, filepath, audio_tracks, media_type, lyrics_path)
+    VALUES (@title, @artist, @filename, @filepath, @audio_tracks, @media_type, @lyrics_path)
     ON CONFLICT(filename) DO NOTHING
   `);
   const existing = db.prepare('SELECT filename FROM songs').all().map(r => r.filename);
@@ -132,15 +148,31 @@ async function scanLibrary() {
     if (!existingSet.has(rel)) {
       try {
         const { artist, title } = parseFilename(f);
-        // 新文件入库时顺手探测音轨数，避免播放时才发现切换不了
-        const audio_tracks = probeAudioTracks(f);
-        const r = insert.run({ title, artist, filename: rel, filepath: f, audio_tracks });
+        const media_type = AUDIO_EXT.includes(path.extname(f).toLowerCase()) ? 'audio' : 'video';
+        // 新文件入库时顺手探测音轨数，避免播放时才发现切换不了；纯 MP3 永远是单音轨。
+        const audio_tracks = media_type === 'audio' ? 1 : probeAudioTracks(f);
+        const lyrics = findLyricsPath(f);
+        const lyrics_path = lyrics ? path.relative(MV_DIR, lyrics) : null;
+        const r = insert.run({ title, artist, filename: rel, filepath: f, audio_tracks, media_type, lyrics_path });
         if (r.changes > 0) added++;
       } catch (e) {
         console.error('曲库扫描-新增文件入库失败(' + rel + '):', e.message);
       }
     }
     await yieldToEventLoop();
+  }
+
+  // 已存在曲目也要补齐/刷新媒体类型和同名 LRC 路径，确保升级后 MP3 与歌词立即可用。
+  try {
+    const updMeta = db.prepare('UPDATE songs SET media_type = ?, lyrics_path = ? WHERE filename = ?');
+    for (const f of files) {
+      const rel = path.relative(MV_DIR, f);
+      const type = AUDIO_EXT.includes(path.extname(f).toLowerCase()) ? 'audio' : 'video';
+      const lrc = findLyricsPath(f);
+      updMeta.run(type, lrc ? path.relative(MV_DIR, lrc) : null, rel);
+    }
+  } catch (e) {
+    console.error('歌曲媒体类型/LRC 路径补全失败:', e.message);
   }
 
   // 兼容旧版本升级：把之前没探测过(audio_tracks为空)的老曲目补一遍。同样逐条
@@ -203,4 +235,4 @@ async function scanLibrary() {
   return { total: files.length, added, removed };
 }
 
-module.exports = { scanLibrary, MV_DIR, probeAudioTracks };
+module.exports = { scanLibrary, MV_DIR, probeAudioTracks, findLyricsPath };

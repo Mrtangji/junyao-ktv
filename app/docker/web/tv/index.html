@@ -323,6 +323,17 @@ html,body{width:100%;height:100%;width:100vw;height:100vh;overflow:hidden;backgr
   background:linear-gradient(0,rgba(0,0,0,.85),transparent);display:none;z-index:3}
 #now-info.show{display:block}
 .ni-t{font-size:24px;font-weight:700}.ni-m{font-size:16px;color:rgba(255,255,255,.65);margin-top:2px}
+/* 纯 MP3 没有画面时，用歌词面板作为主视觉；歌词由同名 .lrc 文件驱动。 */
+#lyrics-panel{position:absolute;top:0;right:0;bottom:0;left:0;z-index:2;display:none;align-items:center;justify-content:center;
+  padding:30px 8%;box-sizing:border-box;text-align:center;pointer-events:none;
+  background:radial-gradient(circle at 50% 40%,rgba(199,54,247,.22),transparent 58%),linear-gradient(135deg,#08051d,#1b0938)}
+#lyrics-panel.show{display:flex}
+#lyrics-panel .lyrics-inner{max-width:92%;display:flex;flex-direction:column;align-items:center;gap:18px}
+#lyrics-panel .lyrics-prev,#lyrics-panel .lyrics-next{font-size:22px;color:rgba(255,255,255,.28);min-height:28px;white-space:pre-wrap}
+#lyrics-panel .lyrics-current{font-size:42px;line-height:1.32;font-weight:800;color:#fff;text-shadow:0 0 24px rgba(255,79,154,.6);white-space:pre-wrap}
+#lyrics-panel .lyrics-next{color:rgba(255,255,255,.42)}
+#lyrics-panel.no-lyrics .lyrics-inner{display:none}
+#lyrics-panel.no-lyrics:after{content:'暂无 LRC 歌词';font-size:22px;color:rgba(255,255,255,.55)}
 /* QR - 修复双码 */
 #qr-corner{position:absolute;top:10px;right:10px;background:rgba(0,0,0,.65);
   backdrop-filter:blur(8px);border-radius:12px;padding:8px;text-align:center;z-index:4;pointer-events:none}
@@ -807,6 +818,7 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
     <div id="now-col">
       <div id="now-panel" data-f onclick="enterFullscreen()">
         <video id="ktv-video" class="video-home" playsinline></video>
+        <div id="lyrics-panel"><div class="lyrics-inner"><div class="lyrics-prev"></div><div class="lyrics-current">—</div><div class="lyrics-next"></div></div></div>
         <div id="video-loading"><div class="vl-spinner"></div><div class="vl-text">加载中…</div></div>
         <div id="now-idle"><div class="idle-big">骏耀K歌</div><div class="idle-sub">扫码点歌 · 大屏沉浸演唱</div></div>
         <div id="now-info"><div class="ni-t" id="ni-title">—</div><div class="ni-m" id="ni-meta">—</div></div>
@@ -1254,12 +1266,72 @@ function getInitials(str){let out='';for(const ch of String(str||'')){if(/\s/.te
 // 状态
 let queueData=[],curSong=null,isPaused=false,isFS=false,endingNotified=false;
 let hlsInstance=null;
+let lyricLines=[], lyricTimer=null;
 function destroyHls(){if(hlsInstance){try{hlsInstance.destroy();}catch(e){}hlsInstance=null;}}
+
+// LRC 解析：兼容 [mm:ss.xx]、[mm:ss:xx]、一行多个时间标签，以及 [ar]/[ti]
+// 等元数据标签。没有时间标签的元数据不参与播放显示。
+function parseLrc(text){
+  const lines=[];
+  String(text||'').replace(/^\uFEFF/,'').split(/\r?\n/).forEach(raw=>{
+    const tags=[...raw.matchAll(/\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g)];
+    if(!tags.length)return;
+    const lyric=raw.replace(/\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g,'').trim();
+    tags.forEach(tag=>{
+      const mins=Number(tag[1]), secs=Number(tag[2]), fraction=String(tag[3]||'');
+      const ms=fraction.length===1?Number(fraction)*100:Number(fraction.length===2?fraction:Math.round(Number(fraction)/10));
+      lines.push({time:mins*60+secs+ms/1000,text:lyric});
+    });
+  });
+  lines.sort((a,b)=>a.time-b.time);
+  return lines;
+}
+function resetLyrics(){
+  lyricLines=[];
+  if(lyricTimer){clearInterval(lyricTimer);lyricTimer=null;}
+  const panel=document.getElementById('lyrics-panel');
+  panel.classList.remove('show','no-lyrics');
+  panel.querySelector('.lyrics-prev').textContent='';
+  panel.querySelector('.lyrics-current').textContent='—';
+  panel.querySelector('.lyrics-next').textContent='';
+}
+function renderLyrics(){
+  const panel=document.getElementById('lyrics-panel');
+  if(!lyricLines.length)return;
+  const now=video.currentTime||0;
+  let idx=-1;
+  for(let i=0;i<lyricLines.length;i++){if(lyricLines[i].time<=now)idx=i;else break;}
+  if(idx<0)idx=0;
+  panel.querySelector('.lyrics-prev').textContent=idx>0?lyricLines[idx-1].text:'';
+  panel.querySelector('.lyrics-current').textContent=lyricLines[idx].text||'♪';
+  panel.querySelector('.lyrics-next').textContent=idx+1<lyricLines.length?lyricLines[idx+1].text:'';
+}
+async function loadLyrics(song){
+  resetLyrics();
+  if(!song || song.media_type!=='audio')return;
+  const panel=document.getElementById('lyrics-panel');
+  panel.classList.add('show');
+  if(!song.lyrics_path){panel.classList.add('no-lyrics');return;}
+  try{
+    const resp=await fetch(`${BASE}/lyrics/${song.song_id}`);
+    if(!resp.ok)throw new Error('歌词不存在');
+    lyricLines=parseLrc(await resp.text());
+    if(!lyricLines.length)throw new Error('LRC 无时间标签');
+    panel.classList.remove('no-lyrics');
+    renderLyrics();
+    lyricTimer=setInterval(renderLyrics,250);
+  }catch(e){
+    const panel=document.getElementById('lyrics-panel');
+    if(song.media_type==='audio')panel.classList.add('show','no-lyrics');
+  }
+}
 // 加载一首新歌：优先用 hls.js 播放 HLS(master.m3u8 里声明的每条音轨都是独立分片，
 // 切音轨/拖进度条都不会打断视频)；hls.js 不可用但浏览器原生支持 HLS(如 Safari)则
 // 直接把 src 指过去；两者都不支持时兜底退回旧的整段直传接口(仅默认音轨，无法切换)。
 function loadSong(v,songId){
   hideToast();
+  loadLyrics(curSong);
+  if(curSong && curSong.media_type==='audio')document.getElementById('lyrics-panel').classList.add('show');
   document.getElementById('video-loading').classList.add('show');
   destroyHls();
   const url=`${BASE}/hls/${songId}/master.m3u8`;
@@ -1322,14 +1394,15 @@ function renderAll(){
   if(isFS&&document.getElementById('fsq').classList.contains('open'))renderFsQueue();
   if(document.getElementById('pd-queue').classList.contains('open'))loadQueue();
   if(playing){
-    document.getElementById('now-idle').style.display='none';video.style.display='block';
+    document.getElementById('now-idle').style.display='none';
+    video.style.display=playing.media_type==='audio'?'none':'block';
     document.getElementById('now-info').classList.add('show');
     document.getElementById('ni-title').textContent=playing.title;
     document.getElementById('ni-meta').textContent=`${playing.artist||''} · ${playing.nickname}`;
     document.getElementById('ov-title').textContent=playing.title;
     document.getElementById('ov-artist').textContent=`${playing.artist||''} · ${playing.nickname}`;
     if(!curSong||curSong.queue_id!==playing.queue_id){curSong=playing;loadSong(video,playing.song_id);endingNotified=false;}
-  }else{document.getElementById('now-idle').style.display='flex';video.style.display='none';document.getElementById('now-info').classList.remove('show');document.getElementById('video-loading').classList.remove('show');hideToast();curSong=null;destroyHls();video.removeAttribute('src');video.load();
+  }else{document.getElementById('now-idle').style.display='flex';video.style.display='none';document.getElementById('lyrics-panel').classList.remove('show','no-lyrics');document.getElementById('now-info').classList.remove('show');document.getElementById('video-loading').classList.remove('show');hideToast();curSong=null;resetLyrics();destroyHls();video.removeAttribute('src');video.load();
     if(isFS)exitKtvFullscreen();}
 }
 // 播放

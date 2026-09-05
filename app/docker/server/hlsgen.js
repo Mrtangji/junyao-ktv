@@ -281,7 +281,7 @@ async function buildAudioRendition(filepath, dir, track, songTag) {
 // 就可以先生成并让播放器拿到。播放器随后请求 video.m3u8 / audioN.m3u8 时，
 // 如果对应分片还没转出来，由路由层(index.js)负责短暂等待，而不是在这里
 // 阻塞。
-function writeMasterPlaylist(dir, trackCount) {
+function writeMasterPlaylist(dir, trackCount, mediaType = 'video') {
   const names = trackCount >= 2 ? ['原唱', '伴唱'] : ['原唱'];
   let m3u8 = '#EXTM3U\n#EXT-X-VERSION:6\n';
   for (let t = 0; t < trackCount; t++) {
@@ -289,7 +289,13 @@ function writeMasterPlaylist(dir, trackCount) {
     const isDefault = t === 0 ? 'YES' : 'NO';
     m3u8 += `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="${name}",DEFAULT=${isDefault},AUTOSELECT=${isDefault},URI="audio${t}.m3u8"\n`;
   }
-  m3u8 += '#EXT-X-STREAM-INF:BANDWIDTH=8000000,AUDIO="aud"\nvideo.m3u8\n';
+  if (mediaType === 'audio') {
+    // 纯音频 MP3 没有视频轨：用一个仅含 AUDIO group 的 master，
+    // hls.js 会把音频分片挂到同一个 <video> 元素上，电视端仍可复用现有播放器。
+    m3u8 += '#EXT-X-STREAM-INF:BANDWIDTH=256000,CODECS="mp4a.40.2",AUDIO="aud"\naudio0.m3u8\n';
+  } else {
+    m3u8 += '#EXT-X-STREAM-INF:BANDWIDTH=8000000,AUDIO="aud"\nvideo.m3u8\n';
+  }
   fs.writeFileSync(path.join(dir, 'master.m3u8'), m3u8);
 }
 
@@ -305,7 +311,12 @@ async function buildHLS(song, dir) {
 
   log.info('TRANSCODE', `${songTag} 开始转码，共 ${trackCount} 条音轨（1=原唱${trackCount >= 2 ? ', 2=伴唱' : ''}）`);
 
-  const tasks = [buildVideoRendition(filepath, dir, songTag)];
+  // 纯音频歌曲（当前为 MP3）没有视频流，不能调用 buildVideoRendition；
+  // 只生成音频 HLS。视频歌曲则保持原有的“视频轨 + 音频轨并行”流程。
+  const tasks = [];
+  if (song.media_type !== 'audio') {
+    tasks.push(buildVideoRendition(filepath, dir, songTag));
+  }
   for (let t = 0; t < trackCount; t++) {
     tasks.push(buildAudioRendition(filepath, dir, t, songTag));
   }
@@ -341,7 +352,7 @@ async function ensureHLS(song) {
     const dir = outDir(id);
     fs.rmSync(dir, { recursive: true, force: true });
     fs.mkdirSync(dir, { recursive: true });
-    writeMasterPlaylist(dir, Math.max(1, song.audio_tracks || 1));
+    writeMasterPlaylist(dir, Math.max(1, song.audio_tracks || 1), song.media_type || 'video');
     buildErrors.delete(id);
 
     const p = buildHLS(song, dir)
