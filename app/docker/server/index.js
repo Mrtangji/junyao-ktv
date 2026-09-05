@@ -151,7 +151,12 @@ app.post('/api/admin/change-password', requireAdminAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// ---------- 静态资源 ----------
+// ---------- 入口与静态资源 ----------
+// 直接访问 http://NAS_IP:8083 时默认进入电视大屏，避免 Express 返回 Cannot GET /。
+// 手机点歌和管理后台仍分别通过 /m、/admin 访问。
+app.get('/', (req, res) => res.redirect('/tv/'));
+app.get('/health', (req, res) => res.json({ ok: true, service: 'junyao-ktv' }));
+
 app.use('/tv',    express.static(path.join(__dirname, '../web/tv')));
 app.use('/m',     express.static(path.join(__dirname, '../web/mobile')));
 app.use('/admin', express.static(path.join(__dirname, '../web/admin')));
