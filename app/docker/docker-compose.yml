@@ -1,8 +1,8 @@
 version: "3.8"
 services:
   junyao-ktv:
-    build: .
-    image: junyao-ktv:1.0.8
+    # 默认直接拉取 Docker Hub 镜像；本地开发构建时可临时恢复 build: .
+    image: ${JUNYAO_IMAGE:-junyao-ktv:latest}
     container_name: junyao-ktv
     restart: unless-stopped
     # 端口已取消自定义功能，固定使用宿主机 8083 端口，容器内部始终监听
@@ -28,8 +28,9 @@ services:
       # 目录 /vol1/@appshare/junyao-ktv 下的 data、mv 两个子目录，不再支持
       # 通过安装/配置向导修改，因此这里直接写死绝对路径，不需要生命周期
       # 脚本再用 sed 改写。
-      - /vol1/@appshare/junyao-ktv/data:/data    # 数据库/封面持久化
-      - /vol1/@appshare/junyao-ktv/mv:/mv        # MV 曲库文件
+      # 可通过 .env 修改为飞牛 NAS 上实际的共享目录。
+      - ${JUNYAO_DATA_DIR:-/vol1/@appshare/junyao-ktv/data}:/data    # 数据库/封面持久化
+      - ${JUNYAO_MV_DIR:-/vol1/@appshare/junyao-ktv/mv}:/mv        # MP3/MV/LRC 曲库文件
     # VAAPI_DEVICES_BEGIN
     # 直通宿主机的 DRI 渲染节点，供 ffmpeg 使用 h264_vaapi 做硬件编解码。
     # 注意：如果宿主机没有 /dev/dri（纯软件环境/无核显的老机器），
