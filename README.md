@@ -87,54 +87,7 @@ docker compose up -d
 
 进入「管理后台 → 曲库管理」，将挂载进容器的目录逐个启用为曲库来源，保存后即会自动扫描曲库，无需重建容器。
 
-### 5. 从 Docker Hub 拉取并运行
-
-本项目已配置 GitHub Actions。以后每次推送 `main`，GitHub 会自动构建 Docker 镜像并推送到 Docker Hub；需要先在 GitHub 仓库设置以下 Actions Secrets：
-
-```text
-DOCKERHUB_USERNAME = 你的 Docker Hub 用户名
-DOCKERHUB_TOKEN    = Docker Hub Access Token，不是登录密码
-```
-
-在项目 GitHub 页面进入：`Settings → Secrets and variables → Actions → New repository secret`。
-
-Actions 成功后，在 NAS 上准备目录并创建 `.env`：
-
-```bash
-mkdir -p /vol1/@appshare/junyao-ktv/data
-mkdir -p /vol1/@appshare/junyao-ktv/mv
-cd /vol1/@appshare/junyao-ktv
-```
-
-将 `app/docker/.env.example` 复制为 `.env`，把镜像名改成自己的 Docker Hub 镜像：
-
-```env
-JUNYAO_IMAGE=你的DockerHub用户名/junyao-ktv:latest
-JUNYAO_DATA_DIR=/vol1/@appshare/junyao-ktv/data
-JUNYAO_MV_DIR=/vol1/@appshare/junyao-ktv/mv
-```
-
-然后执行：
-
-```bash
-git clone https://github.com/Mrtangji/junyao-ktv.git
-cd junyao-ktv/app/docker
-docker compose pull
-docker compose up -d
-docker compose ps
-```
-
-如果是从 GitHub 更新代码后重新部署：
-
-```bash
-git pull
-docker compose pull
-docker compose up -d
-```
-
-电视端地址：`http://NAS局域网IP:8083/tv`；手机点歌地址：`http://NAS局域网IP:8083/m`。
-
-### 6. MP3 与 LRC 歌词格式
+### 5. MP3 与 LRC 歌词格式
 
 将音频和歌词放在同一目录，并保持文件名主体一致：
 
