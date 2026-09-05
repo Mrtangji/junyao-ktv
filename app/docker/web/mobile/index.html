@@ -317,14 +317,18 @@ async function topSong(id){ await fetch(`/api/queue/${id}/top`,{method:'POST'});
 async function delSong(id){ await fetch(`/api/queue/${id}`,{method:'DELETE'}); }
 
 // ===== Song search & add =====
-let searchTimer;
+let searchTimer, searchRequest = 0;
 searchInput.addEventListener('input',()=>{
   clearTimeout(searchTimer);
-  searchTimer=setTimeout(()=>loadSongs(searchInput.value.trim()),220);
+  searchTimer=setTimeout(()=>loadSongs(searchInput.value.trim()),320);
 });
 async function loadSongs(q=''){
-  const res=await fetch(`/api/songs${q?`?q=${encodeURIComponent(q)}`:''}`);
-  renderSongs(await res.json());
+  const requestId=++searchRequest;
+  const params=new URLSearchParams({limit:'60'});
+  if(q)params.set('q',q);
+  const res=await fetch(`/api/songs?${params}`);
+  const songs=await res.json();
+  if(requestId===searchRequest)renderSongs(songs);
 }
 function renderSongs(list){
   const el=document.getElementById('song-list');

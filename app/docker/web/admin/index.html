@@ -53,6 +53,9 @@ main{max-width:960px;margin:0 auto;padding:24px}
 .song-table .title-cell{font-weight:600}
 .song-table .artist-cell{color:var(--sub);font-size:13px}
 .song-table .count-cell{color:var(--cyan);font-size:13px;text-align:right}
+.song-pager{display:flex;align-items:center;justify-content:center;gap:14px;padding:18px 0;color:var(--sub);font-size:13px}
+.song-pager button{padding:7px 16px;border-radius:8px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--text);cursor:pointer}
+.song-pager button:disabled{opacity:.35;cursor:default}
 .row-acts{display:flex;gap:6px;justify-content:flex-end}
 .act-btn{
   padding:4px 12px;border-radius:8px;font-size:12px;border:none;cursor:pointer
@@ -189,6 +192,11 @@ main{max-width:960px;margin:0 auto;padding:24px}
     <tbody id="song-tbody"></tbody>
   </table>
   <div class="empty" id="empty-tip" style="display:none">暂无歌曲，请先扫描曲库</div>
+  <div class="song-pager">
+    <button id="song-prev" onclick="changeSongPage(-1)">上一页</button>
+    <span id="song-page-info">第 1 页</span>
+    <button id="song-next" onclick="changeSongPage(1)">下一页</button>
+  </div>
 
   <div id="scan-log">
     <b>扫描结果</b>
@@ -229,6 +237,10 @@ main{max-width:960px;margin:0 auto;padding:24px}
 
 <script>
 let allSongs = [];
+let songPage = 0;
+let songQuery = '';
+const SONG_PAGE_SIZE = 100;
+let songSearchTimer;
 
 // ---------- 登录状态 ----------
 async function checkSession(){
@@ -359,9 +371,11 @@ async function doLogout(){
 }
 
 async function loadAll(){
+  const params = new URLSearchParams({limit:String(SONG_PAGE_SIZE), offset:String(songPage*SONG_PAGE_SIZE)});
+  if(songQuery) params.set('q', songQuery);
   const [stats, songs] = await Promise.all([
     fetch('/api/stats').then(r=>r.json()),
-    fetch('/api/songs').then(r=>r.json())
+    fetch(`/api/songs?${params}`).then(r=>r.json())
   ]);
   document.getElementById('s-total').textContent = stats.songCount;
   document.getElementById('s-queue').textContent = stats.queueCount;
@@ -369,6 +383,19 @@ async function loadAll(){
   const totalPlays = songs.reduce((a,s)=>a+s.play_count,0);
   document.getElementById('s-plays').textContent = totalPlays;
   render(songs);
+  const info = document.getElementById('song-page-info');
+  const prev = document.getElementById('song-prev');
+  const next = document.getElementById('song-next');
+  info.textContent = `${songQuery ? '搜索结果 · ' : ''}第 ${songPage+1} 页`;
+  prev.disabled = songPage === 0;
+  next.disabled = songs.length < SONG_PAGE_SIZE;
+}
+
+function changeSongPage(delta){
+  const nextPage = Math.max(0, songPage + delta);
+  if(nextPage === songPage)return;
+  songPage = nextPage;
+  loadAll();
 }
 
 function render(list){
@@ -380,7 +407,7 @@ function render(list){
     const tr = document.createElement('tr');
     tr.dataset.id = s.id;
     tr.innerHTML = `
-      <td style="color:var(--sub);font-size:12px">${i+1}</td>
+      <td style="color:var(--sub);font-size:12px">${songPage*SONG_PAGE_SIZE+i+1}</td>
       <td class="title-cell">${esc(s.title)}</td>
       <td class="artist-cell">${esc(s.artist||'未知歌手')}</td>
       <td class="count-cell">${s.play_count}</td>
@@ -394,14 +421,13 @@ function render(list){
   });
 }
 
-let searchTimer;
 function doSearch(q){
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(async ()=>{
-    if(!q.trim()){ render(allSongs); return; }
-    const res = await fetch(`/api/songs?q=${encodeURIComponent(q)}`);
-    render(await res.json());
-  }, 200);
+  clearTimeout(songSearchTimer);
+  songSearchTimer = setTimeout(()=>{
+    songQuery = q.trim();
+    songPage = 0;
+    loadAll();
+  }, 320);
 }
 
 async function delSong(id, btn){

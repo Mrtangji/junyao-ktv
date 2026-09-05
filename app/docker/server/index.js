@@ -317,17 +317,29 @@ app.post('/api/voice/switch', (req, res) => {
 app.get('/api/songs', (req, res) => {
   const q = (req.query.q || '').trim();
   const artist = (req.query.artist || '').trim();
+  const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 100));
+  const offset = Math.max(0, Number.parseInt(req.query.offset, 10) || 0);
   let rows;
   if (artist) {
-    rows = db.prepare('SELECT * FROM songs WHERE artist = ? ORDER BY title').all(artist);
+    rows = db.prepare(`SELECT * FROM songs WHERE artist = ? ORDER BY title LIMIT ? OFFSET ?`).all(artist, limit, offset);
   } else if (q) {
-    rows = db.prepare('SELECT * FROM songs WHERE title LIKE ? OR artist LIKE ? ORDER BY play_count DESC LIMIT 100').all(`%${q}%`, `%${q}%`);
+    // FTS5 trigram 可命中中文任意片段；长度不足 3 个字符时仍走 LIKE，保证短词可搜。
+    if (db.fts5Ready && q.length >= 3) {
+      const match = q.replace(/["*:^(){}\[\]]/g, ' ').trim();
+      if (!match) return res.json([]);
+      rows = db.prepare(`
+        SELECT s.* FROM songs s JOIN songs_fts f ON f.rowid = s.id
+        WHERE songs_fts MATCH ? ORDER BY s.play_count DESC, s.id DESC LIMIT ? OFFSET ?
+      `).all(match, limit, offset);
+    } else {
+      rows = db.prepare(`SELECT * FROM songs WHERE title LIKE ? OR artist LIKE ? ORDER BY play_count DESC, id DESC LIMIT ? OFFSET ?`)
+        .all(`%${q}%`, `%${q}%`, limit, offset);
+    }
   } else {
-    // 原来这里写死 LIMIT 200，曲库超过200首后台管理页面/点歌页首字母浏览就只能看到
-    // 前200首，后面的歌完全没法管理。曲库列表没有分页机制，这里不再限制条数，
-    // 有多少首歌就返回多少首。
-    rows = db.prepare('SELECT * FROM songs ORDER BY play_count DESC, id DESC').all();
+    // 默认列表也分页，避免 40,000 首歌曲一次性序列化并传给电视/手机浏览器。
+    rows = db.prepare('SELECT * FROM songs ORDER BY play_count DESC, id DESC LIMIT ? OFFSET ?').all(limit, offset);
   }
+  res.set('Cache-Control', 'no-store');
   res.json(rows);
 });
 

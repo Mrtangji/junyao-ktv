@@ -1759,19 +1759,31 @@ function artistPage(d){const t=Math.ceil(filtArtists.length/ARTIST_PG)||1;arPg=M
 // 点歌
 let allSongs=[],filtSongs=[],odPg=0;const ORDER_PG=20;
 alphaState['od']='';
-alphaFilter['od']=()=>{const q=alphaState['od'];filtSongs=!q?[...allSongs]:allSongs.filter(s=>getInitials(s.title).startsWith(q));odPg=0;renderOrder();};
-async function initOrder(){if(!allSongs.length)allSongs=await fetch('/api/songs').then(r=>r.json());alphaState['od']='';filtSongs=[...allSongs];odPg=0;document.getElementById('od-keys-txt').textContent=ALPHA_PLACEHOLDER['od'];document.querySelectorAll('#od-keys .ak').forEach(b=>b.classList.remove('sel'));renderOrder();}
+alphaFilter['od']=()=>{odPg=0;loadOrderPage();};
+async function initOrder(){
+  // 不再一次性加载整个曲库；首字母按钮按需向后端分页查询，避免 40,000 首歌曲撑爆浏览器内存。
+  alphaState['od']='';filtSongs=[];odPg=0;
+  document.getElementById('od-keys-txt').textContent=ALPHA_PLACEHOLDER['od'];
+  document.querySelectorAll('#od-keys .ak').forEach(b=>b.classList.remove('sel'));
+  await loadOrderPage();
+}
+async function loadOrderPage(){
+  const params=new URLSearchParams({limit:String(ORDER_PG),offset:String(odPg*ORDER_PG)});
+  const q=alphaState['od']||'';
+  if(q)params.set('q',q);
+  const songs=await fetch(`/api/songs?${params}`).then(r=>r.json());
+  filtSongs=songs;renderOrder();
+}
 // Bug：点歌(立即点歌)列表没有分页，曲库一大(几百上千首)就要一次性渲染全部
 // 歌曲行，是"点歌列表卡顿严重"的根因——常唱/收藏早就是分页的，这里补齐同样
 // 的模式。
 function renderOrder(){
-  const t=Math.ceil(filtSongs.length/ORDER_PG)||1;
-  odPg=Math.max(0,Math.min(t-1,odPg));
-  renderSongs(document.getElementById('order-song-list'),filtSongs.slice(odPg*ORDER_PG,(odPg+1)*ORDER_PG));
+  const hasMore=filtSongs.length===ORDER_PG;
+  renderSongs(document.getElementById('order-song-list'),filtSongs);
   const el=document.getElementById('order-pg-info');
-  if(el)el.textContent=`${filtSongs.length?odPg+1:1}/${t} (共${filtSongs.length}首)`;
+  if(el)el.textContent=`第 ${odPg+1} 页${hasMore?' · 还有更多':''}`;
 }
-function orderPage(d){const t=Math.ceil(filtSongs.length/ORDER_PG)||1;odPg=Math.max(0,Math.min(t-1,odPg+d));renderOrder();}
+function orderPage(d){odPg=Math.max(0,odPg+d);loadOrderPage();}
 // 常唱（Bug1修复：二级菜单）
 let allHist=[],filtHist=[],hsPg=0;const HS_PG=15;
 alphaState['hs']='';
@@ -1812,7 +1824,17 @@ async function topQ(id){await fetch(`/api/queue/${id}/top`,{method:'POST'});}
 async function delQ(id){await fetch(`/api/queue/${id}`,{method:'DELETE'});}
 async function loadCharts(){const el=document.getElementById('pl-charts');el.innerHTML='';const songs=(await fetch('/api/charts').then(r=>r.json())).slice(0,10);if(!songs.length){el.innerHTML='<div style="color:#555;text-align:center;padding:30px">还没有人唱过歌</div>';return;}songs.forEach((s,i)=>{const d=document.createElement('div');d.className='chart-row';const rk=i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}`;d.innerHTML=`<div class="ck ${i<3?'r'+(i+1):''}"> ${rk}</div><div class="chart-info"><div class="ct">${s.title}</div><div class="cm">${s.artist||'未知歌手'}</div></div><span class="cp">${s.play_count}次</span><button class="btn-add" onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button>`;el.appendChild(d);});}
 let st2;
-function doSearch(q){clearTimeout(st2);st2=setTimeout(async()=>{const songs=await fetch('/api/songs'+(q?`?q=${encodeURIComponent(q)}`:'')).then(r=>r.json());renderSongs(document.getElementById('pl-search'),songs);},220);}
+let searchRequestId=0;
+function doSearch(q){
+  clearTimeout(st2);
+  st2=setTimeout(async()=>{
+    const requestId=++searchRequestId;
+    const params=new URLSearchParams({limit:'60'});
+    if(q.trim())params.set('q',q.trim());
+    const songs=await fetch(`/api/songs?${params}`).then(r=>r.json());
+    if(requestId===searchRequestId)renderSongs(document.getElementById('pl-search'),songs);
+  },320);
+}
 function loadSettings(){document.getElementById('s-host').textContent=location.host;fetch('/api/stats').then(r=>r.json()).then(d=>document.getElementById('s-songs').textContent=d.songCount+'首');}
 async function doScan(){showToast('扫描中…');let d;try{d=await fetch('/api/scan',{method:'POST'}).then(r=>r.json());}catch(e){showToast('⚠️ 扫描请求失败：'+e.message);return;}if(d.error==='MV_DIR_UNAVAILABLE'){showToast('⚠️ 曲库目录暂时无法访问，请检查挂载后重试');return;}if(d.ok===false){showToast('⚠️ 扫描出错：'+(d.error||'未知错误'));return;}showToast(`扫描完成：${d.total}首，新增${d.added}首，移除${d.removed||0}首`);allSongs=[];loadSettings();}
 // 遥控
