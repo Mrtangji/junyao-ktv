@@ -383,16 +383,21 @@ html,body{width:100%;height:100%;width:100vw;height:100vh;overflow:hidden;backgr
   display:flex;flex-direction:column;
   background:linear-gradient(0,rgba(0,0,0,.72) 0%,rgba(0,0,0,.2) 25%,transparent 55%,rgba(0,0,0,.2) 100%)}
 #fs-ov.show{opacity:1;pointer-events:all}
+/* MP3 全屏是歌词模式，不依赖控制层的 5 秒自动隐藏计时器；否则控制层一隐藏，
+   歌词也会跟着消失，画面会露出主页。audio-mode 自己保持全屏覆盖。 */
+#fs-ov.audio-mode{opacity:1;pointer-events:all;background:#08051d}
 /* MP3 全屏时把同步歌词铺满屏幕；视频全屏时隐藏该层，只保留视频画面。 */
 #fs-lyrics{position:absolute;top:0;right:0;bottom:0;left:0;z-index:0;display:none;align-items:center;justify-content:center;
   padding:5vh 8vw 22vh;box-sizing:border-box;text-align:center;pointer-events:none;
   background:radial-gradient(circle at 50% 42%,rgba(199,54,247,.3),transparent 60%),linear-gradient(135deg,#08051d,#1b0938)}
-#fs-ov.audio-mode #fs-lyrics{display:flex}
+#fs-ov.audio-mode #fs-lyrics{display:flex;z-index:1}
 #fs-lyrics .lyrics-inner{width:92%;height:86%;max-width:1500px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;overflow:hidden}
 #fs-lyrics .lyrics-line{width:100%;font-size:25px;line-height:1.25;color:rgba(255,255,255,.3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #fs-lyrics .lyrics-line.near{font-size:34px;color:rgba(255,255,255,.55)}
 #fs-lyrics .lyrics-line.current{font-size:58px;line-height:1.3;font-weight:900;color:#fff;text-shadow:0 0 32px rgba(255,79,154,.75)}
 #fs-ov.audio-mode #ov-top,#fs-ov.audio-mode #ov-bot{position:relative;z-index:2}
+#fs-ov.audio-mode #ov-top{background:linear-gradient(180deg,rgba(0,0,0,.45),transparent)}
+#fs-ov.audio-mode #ov-bot{background:linear-gradient(0,rgba(0,0,0,.65),transparent)}
 #ov-top{padding:18px 24px;display:flex;align-items:center}
 #ov-back{width:56px;height:56px;border-radius:50%;border:2px solid rgba(255,255,255,.5);
   display:flex;align-items:center;justify-content:center;font-size:26px;cursor:pointer;
@@ -1574,8 +1579,29 @@ function exitKtvFullscreen(){
 // 被归零的 focIdx 去 +1/-1 计算新焦点——结果永远是 (0+1)%N=1（重唱）或 (0-1+N)%N=N-1（队列），
 // 其它按钮永远轮不到。修复：只有"从隐藏变为显示"的那一次才需要重置焦点，已经显示时的
 // 刷新（保活计时器）不应该改变当前焦点位置。
-function showOverlay(){fsTap.classList.remove('on');const wasHidden=!fsOv.classList.contains('show');fsOv.classList.add('show');clearTimeout(ovTimer);ovTimer=setTimeout(hideOverlay,5000);if(wasHidden)focIdx=0;}
-function hideOverlay(){fsOv.classList.remove('show');if(isFS)fsTap.classList.add('on');}
+function showOverlay(){
+  fsTap.classList.remove('on');
+  const wasHidden=!fsOv.classList.contains('show');
+  fsOv.classList.add('show');
+  if(fsOv.classList.contains('audio-mode')){
+    renderLyricLines(document.querySelector('#fs-lyrics .lyrics-inner'),true);
+    clearTimeout(ovTimer);
+  }else{
+    clearTimeout(ovTimer);
+    ovTimer=setTimeout(hideOverlay,5000);
+  }
+  if(wasHidden)focIdx=0;
+}
+function hideOverlay(){
+  // MP3 全屏时歌词必须持续覆盖全屏，不能隐藏整个 overlay；只隐藏控制按钮层。
+  if(fsOv.classList.contains('audio-mode')){
+    fsOv.classList.add('show');
+    fsTap.classList.remove('on');
+    return;
+  }
+  fsOv.classList.remove('show');
+  if(isFS)fsTap.classList.add('on');
+}
 fsOv.addEventListener('click',e=>{if(!e.target.closest('.ob,#ov-back,#prog-bar')){clearTimeout(ovTimer);ovTimer=setTimeout(hideOverlay,5000);}});
 function toggleFsQueue(){const q=document.getElementById('fsq');q.classList.toggle('open');if(q.classList.contains('open'))renderFsQueue();}
 function closeFsQueue(){document.getElementById('fsq').classList.remove('open');}
