@@ -981,9 +981,11 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
     <div class="set-r" data-f style="cursor:pointer" onclick="toggleAutoPlay()"><span class="set-l">首页自动播放</span><span class="set-v" id="s-autoplay">关</span></div>
     <div class="set-r" data-f style="cursor:pointer" onclick="toggleDlFormat()"><span class="set-l">点唱榜下载格式</span><span class="set-v" id="s-dlfmt">MP3</span></div>
     <div class="set-r" data-f style="cursor:pointer" onclick="doScan()" data-page-node-id="h6eOYDLjT1y806yq5yzV4w"><span class="set-l" data-page-node-id="0lPmMUEA9nLgTt7ocIa4Pb">重新扫描曲库</span><span style="color:var(--ac2)" data-page-node-id="swWFQDPZvYroJ32yMv4cyN">▶ 扫描</span></div>
-    <div class="set-r" data-f id="row-local-scan" style="cursor:pointer;display:none" onclick="pickLocalFolder()"><span class="set-l">扫描本机音频</span><span class="set-v" id="s-locals">0首</span></div>
+    <div class="set-r" data-f id="row-local-scan" style="cursor:pointer;display:none" onclick="pickLocalFolder()"><span class="set-l">扫描本机文件夹</span><span class="set-v" id="s-locals">0首</span></div>
+    <div class="set-r" data-f id="row-local-files" style="cursor:pointer;display:none" onclick="pickLocalFiles()"><span class="set-l">选择音频文件</span><span style="color:var(--ac2)">＋</span></div>
     <div class="set-r" data-f id="row-local-clear" style="cursor:pointer;display:none" onclick="clearLocalSongs()"><span class="set-l">清空本机音频</span><span style="color:#ff7a93">🗑</span></div>
-    <input type="file" id="local-dir-input" multiple webkitdirectory style="display:none" onchange="onLocalFilesChosen(this.files)">
+    <input type="file" id="local-dir-input" multiple webkitdirectory style="display:none" onchange="onLocalFilesChosen(this.files,'dir')">
+    <input type="file" id="local-file-input" multiple accept="audio/*,.mp3,.flac,.m4a,.aac,.wav,.ogg,.opus" style="display:none" onchange="onLocalFilesChosen(this.files,'files')">
   </div></div>
 </div>
 <!-- 点唱榜（LX Music 整合） -->
@@ -2381,15 +2383,25 @@ function parseLocalName(fn){
   return{artist:'',title:base.trim()};
 }
 function pickLocalFolder(){const inp=document.getElementById('local-dir-input');inp.value='';inp.click();}
-async function onLocalFilesChosen(files){
+function pickLocalFiles(){const inp=document.getElementById('local-file-input');inp.value='';inp.click();}
+// Android 7~14 兼容：File → ArrayBuffer（FileReader 全版本支持，不用 file.arrayBuffer()）；
+// IndexedDB 存 ArrayBuffer（部分老内核不支持存 Blob）；播放时按扩展名还原 MIME 再建 Blob。
+const LOCAL_MIME={mp3:'audio/mpeg',flac:'audio/flac',m4a:'audio/mp4',aac:'audio/aac',wav:'audio/wav',ogg:'audio/ogg',opus:'audio/ogg'};
+function fileToBuf(f){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(r.error);r.readAsArrayBuffer(f);});}
+async function onLocalFilesChosen(files,mode){
   if(!files||!files.length)return;
   const audio=[...files].filter(f=>LOCAL_AUDIO_EXT.test(f.name));
-  if(!audio.length){showToast('所选文件夹里没有可播放的音频文件');return;}
+  if(!audio.length){showToast(mode==='dir'?'所选文件夹里没有可播放的音频文件':'没有可播放的音频文件（可换用「扫描本机文件夹」）');return;}
   showToast(`正在导入 ${audio.length} 个音频文件…`,true);
   const db=await localDB();
   const store=localStore(db,'readwrite');
+  const items=[];
+  for(const f of audio){
+    const p=parseLocalName(f.name);
+    items.push({title:p.title,artist:p.artist,ext:((f.name.match(/\.([^.]+)$/)||[])[1]||'mp3').toLowerCase(),size:f.size,buf:await fileToBuf(f)});
+  }
   await new Promise((res,rej)=>{
-    audio.forEach(f=>{const p=parseLocalName(f.name);store.add({title:p.title,artist:p.artist,ext:(f.name.match(/\.([^.]+)$/)||[])[1]||'',size:f.size,blob:f});});
+    items.forEach(it=>store.add(it));
     store.transaction.oncomplete=res;store.transaction.onerror=()=>rej(store.transaction.error);
   });
   await localList(true);updateLocalBadge();
@@ -2405,7 +2417,8 @@ function updateLocalBadge(){const el=document.getElementById('s-locals');if(el)e
 async function playLocalSong(id){
   const list=await localList();const s=list.find(x=>x.id===id);if(!s)return;
   if(localPlay.url){try{URL.revokeObjectURL(localPlay.url);}catch(e){}}
-  localPlay.url=URL.createObjectURL(s.blob);
+  const blob=new Blob([s.buf],{type:LOCAL_MIME[s.ext]||'audio/mpeg'});
+  localPlay.url=URL.createObjectURL(blob);
   localPlay.active=true;localPlay.baseQueueId=curSong?curSong.queue_id:null;
   // 本机歌曲无参考音高曲线，评分挂起（UI 隐藏，ended 结算跳过）
   scoreState.ended=true;
@@ -2449,8 +2462,11 @@ async function appendLocalMatches(el,q){
   });
 }
 if(IS_ANDROID){
-  const rs=document.getElementById('row-local-scan'),rc=document.getElementById('row-local-clear');
-  if(rs)rs.style.display='';if(rc)rc.style.display='';
+  const rs=document.getElementById('row-local-scan'),rf=document.getElementById('row-local-files'),rc=document.getElementById('row-local-clear');
+  // webkitdirectory 属性不存在（老内核/部分安卓 WebView）时隐藏文件夹入口，文件多选始终可用
+  const canDir='webkitdirectory' in document.createElement('input');
+  if(rs&&canDir)rs.style.display='';
+  if(rf)rf.style.display='';if(rc)rc.style.display='';
   localList().then(updateLocalBadge).catch(()=>{});
 }
 // 开启后：TV 空闲在首页且队列无歌（无 playing/pending）时，延迟几秒自动从全曲库
