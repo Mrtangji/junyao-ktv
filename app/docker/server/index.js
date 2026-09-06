@@ -10,6 +10,7 @@ const { scanLibrary, MV_DIR } = require('./scanner');
 const { toPinyin, toPinyinInitial } = require('./pinyin');
 const { detectLang } = require('./lang');
 const { ensureHLS, removeHLS, outDir, waitForFile, scheduleHLSCleanup } = require('./hlsgen');
+const { getPitchCurve } = require('./pitch');
 const log = require('./logger');
 
 const PORT = process.env.PORT || 8080;
@@ -394,6 +395,53 @@ app.get('/api/history', (req, res) => {
     SELECT s.*, COUNT(h.id) as times_sung
     FROM songs s JOIN history h ON s.id = h.song_id
     GROUP BY s.id ORDER BY times_sung DESC, s.play_count DESC LIMIT 50
+  `).all();
+  res.json(rows);
+});
+
+// ---------- 唱歌评分 ----------
+// 参考音高曲线：首次请求时用 ffmpeg 从「原唱音轨」(第 0 条) 离线提取并落盘缓存，
+// 之后直接读缓存（源文件被替换会自动失效重建）。一首 4 分钟的歌首次提取约
+// 5~15 秒（取决于 CPU），前端要按"评分准备中"处理这段延迟。
+app.get('/api/songs/:id/pitch', (req, res) => {
+  const song = db.prepare('SELECT id, filepath, title FROM songs WHERE id = ?').get(req.params.id);
+  if (!song) return res.status(404).json({ error: '歌曲不存在' });
+  getPitchCurve(song)
+    .then(curve => { res.set('Cache-Control', 'no-store'); res.json(curve); })
+    .catch(e => res.status(502).json({ error: '音高曲线提取失败', detail: e.message }));
+});
+
+// 提交演唱成绩。广播给所有 WS 客户端，电视端可以即时弹"本曲得分"。
+app.post('/api/scores', (req, res) => {
+  const { song_id, score, grade, device } = req.body || {};
+  const sid = Number.parseInt(song_id, 10);
+  const sc = Number(score);
+  if (!Number.isFinite(sid) || !Number.isFinite(sc)) {
+    return res.status(400).json({ error: '参数不合法' });
+  }
+  const g = (grade || '').toString().slice(0, 4);
+  const d = (device || '').toString().slice(0, 64);
+  db.prepare('INSERT INTO scores(song_id, score, grade, device) VALUES(?,?,?,?)').run(sid, sc, g, d);
+  const best = db.prepare('SELECT MAX(score) AS best FROM scores WHERE song_id = ?').get(sid).best;
+  const payload = JSON.stringify({
+    type: 'score', data: { song_id: sid, score: sc, grade: g, device: d, best: best ?? sc },
+  });
+  wss.clients.forEach(c => { if (c.readyState === 1) c.send(payload); });
+  res.json({ ok: true, best: best ?? sc });
+});
+
+// 某首歌的历史最高分（点歌面板/成绩面板显示"历史最高"用）。
+app.get('/api/songs/:id/best-score', (req, res) => {
+  const row = db.prepare('SELECT MAX(score) AS best, COUNT(*) AS cnt FROM scores WHERE song_id = ?').get(req.params.id);
+  res.json({ best: row.best ?? null, count: row.cnt });
+});
+
+// 最近的演唱成绩（评分面板"打榜"列表）。
+app.get('/api/scores/recent', (req, res) => {
+  const rows = db.prepare(`
+    SELECT sc.score, sc.grade, sc.created_at, s.title, s.artist
+    FROM scores sc JOIN songs s ON s.id = sc.song_id
+    ORDER BY sc.id DESC LIMIT 20
   `).all();
   res.json(rows);
 });
