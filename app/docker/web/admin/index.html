@@ -138,6 +138,28 @@ main{max-width:960px;margin:0 auto;padding:24px}
   border:1px solid rgba(255,255,255,.1)
 }
 #pw-modal h3{font-size:17px;margin-bottom:20px}
+/* LX 音源管理弹窗（复用 pw-modal 样式，宽度更大） */
+#lx-modal-overlay{
+  position:fixed;top:0;left:0;right:0;bottom:0;z-index:50;display:none;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.6);backdrop-filter:blur(6px)
+}
+#lx-modal-overlay.open{display:flex}
+#lx-modal{
+  width:min(640px,92vw);max-height:86vh;overflow-y:auto;background:var(--card);border:1px solid rgba(255,255,255,.1);
+  border-radius:18px;padding:26px
+}
+#lx-modal h3{font-size:17px;margin-bottom:20px}
+.lx-src-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+.lx-src-row:last-child{border:none}
+.lx-src-row .nm{flex:1;font-size:14px}
+.lx-src-row .nm small{color:var(--sub);margin-left:6px}
+.lx-src-row.on .nm{color:var(--cyan)}
+.form-row textarea{
+  width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);
+  border-radius:10px;padding:10px 14px;color:var(--text);font-size:13px;outline:none;
+  font-family:Consolas,monospace;resize:vertical;min-height:70px
+}
+.form-row input:focus,.form-row textarea:focus{border-color:var(--accent)}
 </style>
 </head>
 <body>
@@ -165,6 +187,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
   <button class="hbtn" onclick="window.open('/tv','_blank')">📺 TV端</button>
   <button class="hbtn" onclick="window.open('/m','_blank')">📱 手机端</button>
   <button class="hbtn primary" onclick="doScan()">🔄 扫描曲库</button>
+  <button class="hbtn" onclick="openLxModal()">🎼 LX 音源</button>
   <button class="hbtn" onclick="openPwModal()">🔑 修改密码</button>
   <button class="hbtn" onclick="doLogout()">🚪 退出登录</button>
 </header>
@@ -230,6 +253,25 @@ main{max-width:960px;margin:0 auto;padding:24px}
       <button class="hbtn" onclick="closePwModal()">取消</button>
       <button class="hbtn primary" onclick="submitChangePassword()">保存</button>
     </div>
+  </div>
+</div>
+
+<!-- LX 音源管理弹窗 -->
+<div id="lx-modal-overlay" onclick="closeLxModal()">
+  <div id="lx-modal" onclick="event.stopPropagation()">
+    <h3>🎼 LX 音源（网络点唱 / 点唱榜下载）</h3>
+    <div class="form-row"><label>当前音源</label><div id="lx-cur" style="font-size:14px;color:var(--sub)">加载中…</div></div>
+    <div class="form-row"><label>导入：音源脚本链接（http… .js）</label>
+      <input id="lx-url" placeholder="https://example.com/sixyin.js" onkeydown="if(event.key==='Enter')lxImport()"></div>
+    <div class="form-row"><label>或直接粘贴脚本内容（二选一）</label>
+      <textarea id="lx-script" placeholder="/**&#10; * @name 六音音源&#10; * ...&#10; */&#10;const { EVENT_NAMES, on, send } = globalThis.lx ..."></textarea></div>
+    <div id="lx-err" style="color:var(--pink);font-size:12px;min-height:14px;margin-bottom:8px"></div>
+    <div class="modal-btns" style="justify-content:flex-start">
+      <button class="hbtn primary" onclick="lxImport()">📥 导入并启用</button>
+      <button class="hbtn" onclick="closeLxModal()">关闭</button>
+    </div>
+    <div style="margin-top:18px;font-size:13px;color:var(--sub)">已导入的音源</div>
+    <div id="lx-list"><div style="color:var(--sub);font-size:13px;padding:8px 0">加载中…</div></div>
   </div>
 </div>
 
@@ -483,6 +525,64 @@ function toast(msg){
   setTimeout(()=>t.classList.remove('show'), 1800);
 }
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,'&#39;'); }
+
+// ===== LX 音源管理 =====
+async function openLxModal(){
+  document.getElementById('lx-modal-overlay').classList.add('open');
+  document.getElementById('lx-err').textContent='';
+  await lxLoadList();
+}
+function closeLxModal(){document.getElementById('lx-modal-overlay').classList.remove('open');}
+async function lxLoadList(){
+  try{
+    const d = await fetch('/api/lx/source').then(r=>r.json());
+    document.getElementById('lx-cur').textContent = d.active ? `${d.active.name}（源: ${Object.keys(d.active.sources).join(' / ')}）` : '未导入';
+    const el = document.getElementById('lx-list');
+    el.innerHTML = '';
+    if(!d.list.length){el.innerHTML = '<div style="color:var(--sub);font-size:13px;padding:8px 0">还没有导入音源。网上找 lx-music 自定义音源 .js 链接粘贴到上面即可。</div>';return;}
+    d.list.forEach(s=>{
+      const isActive = d.active && d.active.id === s.id;
+      const row = document.createElement('div');row.className = 'lx-src-row'+(isActive?' on':'');
+      row.innerHTML = `<div class="nm">${s.name||('源 #'+s.id)}${s.version?`<small>v${s.version}</small>`:''}${s.author?`<small>@${s.author}</small>`:''}${isActive?'<small>· 使用中</small>':''}</div>
+        ${isActive?'':`<button class="hbtn" onclick="lxActivate(${s.id})">启用</button>`}
+        <button class="hbtn" onclick="lxDelete(${s.id})">删除</button>`;
+      el.appendChild(row);
+    });
+  }catch(e){document.getElementById('lx-cur').textContent='加载失败：'+e.message;}
+}
+async function lxImport(){
+  const err = document.getElementById('lx-err');
+  err.textContent = '';
+  const url = document.getElementById('lx-url').value.trim();
+  const script = document.getElementById('lx-script').value.trim();
+  if(!url && !script){err.textContent = '请填写脚本链接或粘贴脚本内容';return;}
+  toast('音源导入中…');
+  try{
+    const body = url ? {url} : {script};
+    const res = await fetch('/api/lx/source',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const r = await res.json();
+    if(r.error){err.textContent = r.error;toast('⚠️ 导入失败');return;}
+    toast(`✅ 已导入并启用：${r.name}`);
+    document.getElementById('lx-url').value = '';
+    document.getElementById('lx-script').value = '';
+    lxLoadList();
+  }catch(e){err.textContent = '导入失败：'+e.message;}
+}
+async function lxActivate(id){
+  try{
+    const r = await fetch(`/api/lx/source/${id}/activate`,{method:'POST'}).then(r=>r.json());
+    if(r.error){toast('⚠️ '+r.error);return;}
+    toast(`✅ 已启用：${r.name}`);
+    lxLoadList();
+  }catch(e){toast('⚠️ 启用失败：'+e.message);}
+}
+async function lxDelete(id){
+  try{
+    await fetch(`/api/lx/source/${id}`,{method:'DELETE'});
+    toast('已删除');
+    lxLoadList();
+  }catch(e){toast('⚠️ 删除失败：'+e.message);}
+}
 
 checkSession();
 </script>
