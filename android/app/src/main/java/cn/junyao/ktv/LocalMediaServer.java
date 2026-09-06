@@ -48,10 +48,18 @@ final class LocalMediaServer extends Thread {
         InputStream media = null;
         try {
             s.setSoTimeout(8000);
+            // 循环读满请求头（单次 read 可能只拿到半截，导致 Range 头丢失）
+            java.io.ByteArrayOutputStream head = new java.io.ByteArrayOutputStream();
             byte[] buf = new byte[4096];
-            int n = s.getInputStream().read(buf);
-            if (n <= 0) return;
-            String req = new String(buf, 0, n, "UTF-8");
+            InputStream is = s.getInputStream();
+            int n;
+            while ((n = is.read(buf)) > 0) {
+                head.write(buf, 0, n);
+                String soFar = head.toString("UTF-8");
+                if (soFar.contains("\r\n\r\n") || head.size() > 16384) break;
+            }
+            String req = head.toString("UTF-8");
+            if (req.isEmpty()) return;
             String line = req.split("\r\n")[0];
             String[] parts = line.split(" ");
             String method = parts[0];
@@ -82,15 +90,19 @@ final class LocalMediaServer extends Thread {
 
             long start = Math.max(0, rangeStart);
             long end = rangeEnd >= 0 ? rangeEnd : size - 1;
+            // size 未知(部分 SAF 文档报告 0/-1)时不能走 Range/Content-Length：
+            // 直接 200 + 流式输出到结尾，由连接关闭标记结束，否则视频会解码失败
             boolean ranged = rangeStart >= 0 && size > 0;
+            boolean knownSize = size > 0;
             if (ranged) skipFully(media, start);
-            long len = ranged ? (end - start + 1) : size;
+            Long len = ranged ? Long.valueOf(end - start + 1) : (knownSize ? Long.valueOf(size) : null);
 
             StringBuilder h = new StringBuilder();
             h.append(ranged ? "HTTP/1.1 206 Partial Content" : "HTTP/1.1 200 OK").append("\r\n");
             h.append("Content-Type: ").append(mime).append("\r\n");
-            h.append("Content-Length: ").append(len).append("\r\n");
+            if (len != null) h.append("Content-Length: ").append(len).append("\r\n");
             h.append("Accept-Ranges: bytes\r\n");
+            h.append("Access-Control-Allow-Origin: *\r\n");
             if (ranged) h.append("Content-Range: bytes ").append(start).append("-").append(end).append("/").append(size).append("\r\n");
             h.append("Connection: close\r\n\r\n");
 
@@ -98,7 +110,7 @@ final class LocalMediaServer extends Thread {
             out.write(h.toString().getBytes("UTF-8"));
             if (!"HEAD".equals(method)) {
                 byte[] chunk = new byte[32 * 1024];
-                long remaining = len < 0 ? Long.MAX_VALUE : len;
+                long remaining = len == null ? Long.MAX_VALUE : len;
                 while (remaining > 0 && (n = media.read(chunk, 0, (int) Math.min(chunk.length, remaining))) > 0) {
                     out.write(chunk, 0, n);
                     remaining -= n;

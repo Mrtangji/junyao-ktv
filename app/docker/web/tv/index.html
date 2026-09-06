@@ -1004,7 +1004,8 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
   <div class="ps"><div class="ph"><h3>🎼 LX 音源</h3><div class="pc" data-f onclick="closePanel('lxsrc')">✕</div></div>
   <div class="pb">
     <div class="set-r"><span class="set-l">当前音源</span><span class="set-v" id="lx-src-cur">未导入</span></div>
-    <div style="display:flex;gap:10px;margin:14px 0 8px">
+    <div class="set-r"><span class="set-l">音源来源</span><span style="display:flex;gap:8px"><button class="btn-add" id="lx-mode-srv" data-f onclick="lxSetMode('srv')">服务器音源</button><button class="btn-add" id="lx-mode-loc" data-f onclick="lxSetMode('loc')">本机音源</button></span></div>
+    <div id="lx-url-row" style="display:flex;gap:10px;margin:14px 0 8px">
       <input id="lx-url" data-f placeholder="在线导入：粘贴音源脚本链接（http… .js）" style="flex:1;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.2);border-radius:10px;padding:10px 14px;outline:none;color:#fff;font-size:16px">
       <button class="btn-add" data-f onclick="lxImportSrc()">导入</button>
     </div>
@@ -1014,7 +1015,7 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
       <span id="lx-file-name" style="color:var(--sub);font-size:13px"></span>
     </div>
     <div id="lx-src-list"></div>
-    <div style="color:var(--sub);font-size:13px;margin-top:10px;line-height:1.6">支持 lx-music 自定义音源脚本（.js）。导入后「点唱榜」里的歌本地没有时会自动下载到曲库（/mv/歌手名/）。也可在电脑浏览器打开曲库管理后台导入。</div>
+    <div id="lx-src-hint" style="color:var(--sub);font-size:13px;margin-top:10px;line-height:1.6">支持 lx-music 自定义音源脚本（.js）。导入后「点唱榜」里的歌本地没有时会自动下载到曲库（/mv/歌手名/）。也可在电脑浏览器打开曲库管理后台导入。</div>
   </div></div>
 </div>
 <!-- 点唱榜（LX Music 整合） -->
@@ -2383,6 +2384,7 @@ function loadSettings(){
 let lxBoardsLoaded=false,lxBoardBangid='255',lxBoardName='KTV点唱榜',lxSeq=0,lxListSongs=[];
 async function initLX(){
   const bar=document.getElementById('lx-boardbar'),list=document.getElementById('lx-list');
+  if(LOCAL_MODE){bar.innerHTML='<div class="lx-empty">本地模式无服务器，点唱榜不可用。可在设置里导入本机音源，连接服务器后使用。</div>';list.innerHTML='';return;}
   if(!lxBoardsLoaded){
     bar.innerHTML='<div class="lx-empty">榜单加载中…</div>';
     try{
@@ -2457,7 +2459,27 @@ function toggleDlFormat(){
 }
 updateDlFmtUI();
 // ===== LX 音源管理（设置面板；TV/安卓端导入，与曲库后台共用 /api/lx/source）=====
+// 双音源集合：服务器音源（存服务端，点唱榜/搜索/下载都在服务端跑）与本机音源
+// （存本页 localStorage）。安卓本地模式没有服务器，只能导入本机音源；连接服务器
+// 后用服务器音源，两套可随时切换查看。「启用」本机音源时若已连服务器，会把脚本
+// 上传到服务端并激活——联网点唱功能实际都在服务端执行。
+const LX_LOCAL_KEY='tv-lx-local',LX_LOCAL_ACT='tv-lx-local-active',LX_MODE_KEY='tv-lx-src-mode';
+let lxMode=localStorage.getItem(LX_MODE_KEY)||(LOCAL_MODE?'loc':'srv');
+function lxLocalList(){try{return JSON.parse(localStorage.getItem(LX_LOCAL_KEY)||'[]');}catch(e){return[];}}
+function lxSaveLocal(list){try{localStorage.setItem(LX_LOCAL_KEY,JSON.stringify(list));}catch(e){showToast('⚠️ 本机保存失败（存储空间不足）');}}
+function lxLocalActive(){try{return JSON.parse(localStorage.getItem(LX_LOCAL_ACT)||'null');}catch(e){return null;}}
+// 从音源脚本里粗提取 name/version/author（lx 脚本头部一般是 name:"xx" 形式）
+function lxParseMeta(script,fn){
+  const g=k=>{const m=script.match(new RegExp(k+'\\s*[:=]\\s*[\'"]([^\'"\\n\\r]+)'));return m?m[1]:'';};
+  return {name:g('name')||(fn||'').replace(/\.js$/i,'')||'未命名音源',version:g('version'),author:g('author')};
+}
 async function refreshLxSrcBadge(){
+  if(LOCAL_MODE){
+    const a=lxLocalActive();
+    const el=document.getElementById('s-lxsrc');
+    if(el)el.textContent=a?a.name+'（本机）':'未导入';
+    return null;
+  }
   try{
     const d=await fetch('/api/lx/source').then(r=>r.json());
     const el=document.getElementById('s-lxsrc');
@@ -2466,13 +2488,38 @@ async function refreshLxSrcBadge(){
   }catch(e){return null;}
 }
 async function openLXSrc(){
-  if(LOCAL_MODE){showToast('本地模式无服务器，无法管理音源');return;}
+  if(LOCAL_MODE&&lxMode==='srv')lxMode='loc'; // 本地模式强制本机音源视图
   openPanel('lxsrc');
+  lxRenderModeBtns();
+  lxApplyModeUI();
   const d=await refreshLxSrcBadge();
   await lxRenderSrcList(d);
 }
+function lxRenderModeBtns(){
+  const b1=document.getElementById('lx-mode-srv'),b2=document.getElementById('lx-mode-loc');
+  if(!b1||!b2)return;
+  b1.style.opacity=(lxMode==='srv'&&!LOCAL_MODE)?'1':'.45';
+  b2.style.opacity=lxMode==='loc'?'1':'.45';
+}
+// 按当前模式调整面板：本地模式隐藏在线导入（取链接需要服务器）；本机音源模式下
+// 在线导入也隐藏（只能从本机文件导入）
+function lxApplyModeUI(){
+  const urlRow=document.getElementById('lx-url-row'),hint=document.getElementById('lx-src-hint');
+  if(urlRow)urlRow.style.display=(LOCAL_MODE||lxMode==='loc')?'none':'flex';
+  if(hint)hint.textContent=(LOCAL_MODE||lxMode==='loc')
+    ?'支持 lx-music 自定义音源脚本（.js），从本机文件导入。'+(LOCAL_MODE?'当前为本地模式：音源先保存在本机，连接服务器后启用即可在点唱榜/搜索中使用。':'启用本机音源会上传到服务器并立即生效。')
+    :'支持 lx-music 自定义音源脚本（.js）。导入后「点唱榜」里的歌本地没有时会自动下载到曲库（/mv/歌手名/）。也可在电脑浏览器打开曲库管理后台导入。';
+}
+function lxSetMode(m){
+  if(m==='srv'&&LOCAL_MODE){showToast('本地模式无服务器，请先在设置里配置服务器');return;}
+  lxMode=m;localStorage.setItem(LX_MODE_KEY,m);
+  lxRenderModeBtns();lxApplyModeUI();lxRenderSrcList();
+}
 async function lxRenderSrcList(pre){
-  const d=pre||await fetch('/api/lx/source').then(r=>r.json());
+  lxRenderModeBtns();lxApplyModeUI();
+  if(lxMode==='loc'){lxRenderLocalList();return;}
+  const d=pre||await fetch('/api/lx/source').then(r=>r.json()).catch(()=>null);
+  if(!d){document.getElementById('lx-src-cur').textContent='服务器不可达';return;}
   document.getElementById('lx-src-cur').textContent=d.active?`${d.active.name}（源:${Object.keys(d.active.sources||{}).join('/')}）`:'未导入';
   const el=document.getElementById('lx-src-list');
   el.innerHTML='';
@@ -2484,6 +2531,42 @@ async function lxRenderSrcList(pre){
       <span style="display:flex;gap:8px">${isActive?'<span style="color:var(--ac);font-size:14px;align-self:center">使用中</span>':`<button class="btn-add" data-f onclick="lxActivateSrc(${s.id},this)">启用</button>`}<button class="ma ma-del" data-f onclick="lxDeleteSrc(${s.id})" title="删除">✕</button></span>`;
     el.appendChild(row);
   });
+}
+function lxRenderLocalList(){
+  const list=lxLocalList(),act=lxLocalActive();
+  document.getElementById('lx-src-cur').textContent=act?`${act.name}（本机${LOCAL_MODE?'，待服务器':''}）`:'未导入';
+  const el=document.getElementById('lx-src-list');
+  el.innerHTML='';
+  if(!list.length){el.innerHTML='<div style="color:var(--sub);font-size:14px;text-align:center;padding:8px 0">还没有导入本机音源</div>';return;}
+  list.forEach(s=>{
+    const isActive=act&&act.id===s.id;
+    const row=document.createElement('div');row.className='set-r';
+    row.innerHTML=`<span class="set-l">${esc(s.name)}${s.version?` <span style="color:var(--sub);font-size:13px">v${s.version}</span>`:''}${s.author?` <span style="color:var(--sub);font-size:13px">@${esc(s.author)}</span>`:''}</span>
+      <span style="display:flex;gap:8px">${isActive?'<span style="color:var(--ac);font-size:14px;align-self:center">使用中</span>':`<button class="btn-add" data-f onclick="lxActivateLocal(${s.id})">启用</button>`}<button class="ma ma-del" data-f onclick="lxDeleteLocal(${s.id})" title="删除">✕</button></span>`;
+    el.appendChild(row);
+  });
+}
+async function lxActivateLocal(id){
+  const s=lxLocalList().find(x=>x.id===id);
+  if(!s)return;
+  if(!LOCAL_MODE){
+    // 已连服务器：上传脚本到服务端并激活，联网点唱立即生效
+    showToast('音源启用中…');
+    try{
+      const r=await fetch('/api/lx/source',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({script:s.script})}).then(x=>x.json());
+      if(r.error){showToast('⚠️ '+r.error);return;}
+      showToast(`✅ 已启用：${r.name}`);
+    }catch(e){showToast('⚠️ 启用失败：'+e.message);return;}
+  }else{
+    showToast('✅ 已启用本机音源（连接服务器后自动可用）');
+  }
+  lxSetActiveLocal(s);lxRenderLocalList();
+}
+function lxDeleteLocal(id){
+  lxSaveLocal(lxLocalList().filter(x=>x.id!==id));
+  const act=lxLocalActive();
+  if(act&&act.id===id)lxSetActiveLocal(null);
+  refreshLxSrcBadge();lxRenderLocalList();showToast('已删除');
 }
 async function lxImportSrc(){
   const inp=document.getElementById('lx-url'),url=inp.value.trim();
@@ -2498,7 +2581,8 @@ async function lxImportSrc(){
     refreshLxSrcBadge();
   }catch(e){showToast('⚠️ 导入失败：'+e.message);}
 }
-// 本地文件导入：读入 .js 脚本文本走 {script} 字段（服务端与 URL 导入同一入口）
+// 本地文件导入：服务器音源模式读入 .js 脚本文本走 {script} 字段（服务端与 URL 导入
+// 同一入口）；本机音源模式存 localStorage（本地模式/断网也能导入）
 async function lxImportFile(files){
   const f=files&&files[0];
   if(!f)return;
@@ -2506,6 +2590,17 @@ async function lxImportFile(files){
   showToast('音源导入中…');
   try{
     const text=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(r.error);r.readAsText(f);});
+    if(LOCAL_MODE||lxMode==='loc'){
+      const meta=lxParseMeta(text,f.name);
+      const list=lxLocalList();
+      const item=Object.assign({id:Date.now(),script:text},meta);
+      list.push(item);lxSaveLocal(list);
+      lxSetActiveLocal(item);
+      document.getElementById('lx-file-name').textContent='';
+      lxRenderLocalList();refreshLxSrcBadge();
+      showToast(`✅ 已导入本机音源：${meta.name}`+(LOCAL_MODE?'（连接服务器后启用即可使用）':''));
+      return;
+    }
     const r=await fetch('/api/lx/source',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({script:text})}).then(x=>x.json());
     if(r.error){showToast('⚠️ '+r.error);return;}
     showToast(`✅ 已导入并启用：${r.name}`);
@@ -2673,7 +2768,14 @@ async function playLocalSong(id){
   document.getElementById('ov-artist').textContent=`${s.artist||''} · 本机`.replace(/^ · /,'');
   curSong={queue_id:'local_'+id,song_id:-1,title:s.title,artist:s.artist,media_type:'audio'};
   endingNotified=true;
-  video.play().catch(()=>showToast('⚠️ 本机播放失败'));
+  // 播放失败带具体原因（2=网络 3=解码 4=格式/源不可用），App 内提示重新扫描曲库
+  const ERR_TXT={1:'加载被中止',2:'网络错误（本地服务不可达）',3:'解码失败（文件可能损坏）',4:'格式或源不可用（请重新扫描本机文件夹）'};
+  video.addEventListener('error',function onLE(){
+    video.removeEventListener('error',onLE);
+    const c=video.error?video.error.code:0;
+    showToast('⚠️ 本地播放失败：'+(ERR_TXT[c]||'未知原因'));
+  },{once:true});
+  video.play().catch(()=>{ /* 真实失败原因由上面的 error 事件给出 */ });
   showToast(`▶ 本机播放：${s.title}`);
 }
 function localStop(){localPlay.active=false;if(localPlay.url){try{URL.revokeObjectURL(localPlay.url);}catch(e){}localPlay.url=null;}}
