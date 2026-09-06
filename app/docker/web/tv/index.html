@@ -2049,7 +2049,7 @@ function openPF(name){pushFocus();document.querySelectorAll('.pd-full').forEach(
 // 改成跟点歌页一样的分页：每页 30 首，翻页再向后台要下一页。
 let asArtist='',asPg=0;const AS_PG=30;
 async function openArtistSongs(artist){
-  asArtist=artist;asPg=0;
+  asArtist=artist;asPg=0;_asSrvTotal=null;
   pushFocus();
   document.getElementById('pf-artists').classList.remove('open');
   document.getElementById('as-title').textContent='🎤 '+artist;
@@ -2057,11 +2057,23 @@ async function openArtistSongs(artist){
   focIdx=0;
   await loadArtistSongs();
 }
+let _asSrvTotal=null;
 async function loadArtistSongs(){
-  const params=new URLSearchParams({artist:asArtist,limit:String(AS_PG),offset:String(asPg*AS_PG)});
-  const songs=await fetch(`/api/songs?${params}`).then(r=>r.json());
-  const hasMore=songs.length===AS_PG;
-  renderSongs(document.getElementById('as-list'),songs);
+  let songs=[];
+  if(!LOCAL_MODE){
+    const params=new URLSearchParams({artist:asArtist,limit:String(AS_PG),offset:String(asPg*AS_PG)});
+    songs=await fetch(`/api/songs?${params}`).then(r=>r.json()).catch(()=>[]);
+    if(songs.length<AS_PG&&_asSrvTotal==null)_asSrvTotal=asPg*AS_PG+songs.length;
+  }else if(_asSrvTotal==null){_asSrvTotal=0;}
+  let list=songs,locLen=0;
+  if(LOCAL_LIB_ON()){
+    const loc=(await localSongsTagged()).filter(s=>(s.artist||'本机歌曲')===asArtist);
+    locLen=loc.length;
+    if(_asSrvTotal!=null)list=mergePagedLocal(songs,asPg,AS_PG,_asSrvTotal,loc);
+  }
+  renderSongs(document.getElementById('as-list'),list);
+  const srvCount=_asSrvTotal!=null?_asSrvTotal:(asPg*AS_PG+songs.length);
+  const hasMore=(asPg+1)*AS_PG<srvCount+locLen;
   const info=document.getElementById('as-pg-info');
   if(info)info.textContent=`第 ${asPg+1} 页${hasMore?' · 还有更多':''}`;
 }
@@ -2146,7 +2158,20 @@ function handleLang(panel, lang){
   else if(panel==='od'){ odPg=0; scheduleAlphaWork(panel,loadOrderPage); }
   else if(panel==='pl'){ scheduleAlphaWork(panel,()=>doSearch(searchQ)); }
 }
-async function initArtists(){if(!allArtists.length){allArtists=await fetch('/api/artists').then(r=>r.json());sortArtistsByPinyin(allArtists);}alphaState['ar']='';langState['ar']='';filtArtists=[...allArtists];arPg=0;const al=document.getElementById('ar-lang');if(al)al.querySelectorAll('.ak').forEach(b=>b.classList.toggle('sel',(b.getAttribute('data-lang')||'')===''));document.getElementById('ar-keys-txt').textContent=ALPHA_PLACEHOLDER['ar'];document.querySelectorAll('#ar-keys .ak').forEach(b=>b.classList.remove('sel'));renderArtists();}
+let _artistsMerged=false; // 本机歌手只并入一次，扫描/清空/导入后重置
+async function initArtists(){
+  if(!LOCAL_MODE&&!allArtists.length){allArtists=await fetch('/api/artists').then(r=>r.json()).catch(()=>[]);sortArtistsByPinyin(allArtists);}
+  if(LOCAL_LIB_ON()&&!_artistsMerged){
+    const loc=await localSongsTagged();
+    if(loc.length){
+      const map=new Map(allArtists.map(a=>[a.artist,{artist:a.artist,count:a.count,lang:a.lang}]));
+      loc.forEach(s=>{const a=s.artist||'本机歌曲';const e=map.get(a);if(e)e.count++;else map.set(a,{artist:a,count:1});});
+      allArtists=[...map.values()];sortArtistsByPinyin(allArtists);
+    }
+    _artistsMerged=true;
+  }
+  alphaState['ar']='';langState['ar']='';filtArtists=[...allArtists];arPg=0;const al=document.getElementById('ar-lang');if(al)al.querySelectorAll('.ak').forEach(b=>b.classList.toggle('sel',(b.getAttribute('data-lang')||'')===''));document.getElementById('ar-keys-txt').textContent=ALPHA_PLACEHOLDER['ar'];document.querySelectorAll('#ar-keys .ak').forEach(b=>b.classList.remove('sel'));renderArtists();
+}
 // 按歌手名第一个字的拼音首字母排序（A-Z），首字母相同的再按完整名称排序，
 // 让"歌星"列表呈现出常见的拼音首字母顺序，而不是接口返回的原始顺序。
 function sortArtistsByPinyin(list){
@@ -2204,26 +2229,40 @@ async function initOrder(){
 // 请求令牌：连点字母/翻页时会有多个请求同时在飞，网络返回顺序不保证与发出顺序一致，
 // 没有守卫的话先发的慢请求回来会把后发的新结果覆盖掉（列表显示错内容），而且每个
 // 返回都会触发一次整列表重渲染。用递增令牌丢弃过期结果。
-let _orderReqId=0;
+let _orderReqId=0,_orderSrvTotal=null,_orderSrvKey='',_orderHasMore=false;
 async function loadOrderPage(){
   const reqId=++_orderReqId;
-  const params=new URLSearchParams({limit:String(ORDER_PG),offset:String(odPg*ORDER_PG)});
   const q=alphaState['od']||'';
-  if(q.length>=2)params.set('q',q); // 仅 2 个字母及以上才真正向后端搜索（第一个字母不查找）
   const lang=langState['od']||'';
-  if(lang)params.set('lang',lang); // 按语言(中文/粤语/英语/韩语/日语)筛选
-  const songs=await fetch(`/api/songs?${params}`).then(r=>r.json());
-  if(reqId!==_orderReqId)return; // 已有更新的请求发出，丢弃这次的过期结果
-  filtSongs=songs;renderOrder();
+  const key=q+'|'+lang;
+  if(key!==_orderSrvKey){_orderSrvKey=key;_orderSrvTotal=null;} // 筛选变了，服务器总数需重新探测
+  let songs=[];
+  if(!LOCAL_MODE){
+    const params=new URLSearchParams({limit:String(ORDER_PG),offset:String(odPg*ORDER_PG)});
+    if(q.length>=2)params.set('q',q); // 仅 2 个字母及以上才真正向后端搜索（第一个字母不查找）
+    if(lang)params.set('lang',lang); // 按语言(中文/粤语/英语/韩语/日语)筛选
+    songs=await fetch(`/api/songs?${params}`).then(r=>r.json()).catch(()=>[]);
+    if(reqId!==_orderReqId)return; // 已有更新的请求发出，丢弃这次的过期结果
+    if(songs.length<ORDER_PG&&_orderSrvTotal==null)_orderSrvTotal=odPg*ORDER_PG+songs.length; // 探测到服务器曲库总数
+  }else if(_orderSrvTotal==null){_orderSrvTotal=0;}
+  let list=songs,locLen=0;
+  if(LOCAL_LIB_ON()&&!lang){
+    const loc=localHitsFiltered(await localSongsTagged(),q,lang);
+    locLen=loc.length;
+    if(_orderSrvTotal!=null)list=mergePagedLocal(songs,odPg,ORDER_PG,_orderSrvTotal,loc);
+  }
+  filtSongs=list;
+  const srvCount=_orderSrvTotal!=null?_orderSrvTotal:(odPg*ORDER_PG+songs.length);
+  _orderHasMore=(odPg+1)*ORDER_PG<srvCount+locLen;
+  renderOrder();
 }
 // Bug：点歌(立即点歌)列表没有分页，曲库一大(几百上千首)就要一次性渲染全部
 // 歌曲行，是"点歌列表卡顿严重"的根因——常唱/收藏早就是分页的，这里补齐同样
 // 的模式。
 function renderOrder(){
-  const hasMore=filtSongs.length===ORDER_PG;
   renderSongs(document.getElementById('order-song-list'),filtSongs);
   const el=document.getElementById('order-pg-info');
-  if(el)el.textContent=`第 ${odPg+1} 页${hasMore?' · 还有更多':''}`;
+  if(el)el.textContent=`第 ${odPg+1} 页${_orderHasMore?' · 还有更多':''}`;
 }
 function orderPage(d){odPg=Math.max(0,odPg+d);loadOrderPage();}
 // 常唱（Bug1修复：二级菜单）
@@ -2246,14 +2285,20 @@ function renderSongs(el,songs){
   if(!songs.length){el.innerHTML='<div style="color:var(--sub);text-align:center;padding:30px">暂无歌曲</div>';return;}
   const frag=document.createDocumentFragment();
   songs.forEach((s,i)=>{
-    const fk='fav_'+s.id,isFaved=localStorage.getItem(fk)==='1';
     const d=document.createElement('div');d.className='so-row';
+    if(s.local){ // 本机歌曲：不走服务器点歌/收藏，直接本机插播播放
+      d.innerHTML=`<div class="so-num">${i+1}</div>
+        <div class="so-info"><div class="so-t">${esc(s.title)}<span class="mt-b mt-a">${(s.ext||'mp3').toUpperCase()}</span><span class="mt-b mt-loc">本地</span></div><div class="so-a">${esc(s.artist||'')}</div></div>
+        <div class="so-acts"><button class="btn-add" data-f onclick="playLocalSong(${s.id})">播放</button></div>`;
+    }else{
+    const fk='fav_'+s.id,isFaved=localStorage.getItem(fk)==='1';
     d.innerHTML=`<div class="so-num">${i+1}</div>
       <div class="so-info"><div class="so-t">${s.title}<span class="mt-b ${s.media_type==='audio'?'mt-a':'mt-v'}">${s.media_type==='audio'?'MP3':'MV'}</span><span class="mt-b mt-srv">服务器</span></div><div class="so-a">${s.artist||''}</div></div>
       <div class="so-acts">
         <button class="btn-fav${isFaved?' faved':''}" data-f onclick="toggleFav(${s.id},this)">❤</button>
         <button class="btn-add" data-f onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button>
       </div>`;
+    }
     frag.appendChild(d);
   });
   el.appendChild(frag);
@@ -2515,9 +2560,32 @@ async function appLocalList(refresh){
   }catch(e){appLibCache=[];}
   return appLibCache;
 }
+// ===== 本机歌曲并入歌名/歌星/点歌列表 =====
+// 安卓(App 桥接或浏览器)与本地模式下，把本机曲库以「本地」标签歌曲的形式合并进
+// 各列表：点歌页(歌名)、歌星页、歌手歌曲页、搜索页。排序原则：本机歌曲整体排在
+// 服务器曲库末尾，服务器最后一页起开始衔接，翻页继续展示本机歌曲，保证不重不漏。
+const LOCAL_LIB_ON=()=>IS_ANDROID||LOCAL_MODE;
+async function localSongsTagged(){
+  if(!LOCAL_LIB_ON())return[];
+  try{return (await localList()).map(s=>Object.assign({},s,{local:true}));}catch(e){return[];}
+}
+// 字母筛选与点歌页一致（歌名拼音首字母前缀）；本机文件无语言元数据，语言筛选时直接不混入
+function localHitsFiltered(loc,q,lang){
+  let list=loc;
+  if(lang)return[];
+  if(q&&q.length>=2)list=list.filter(s=>initialsOf(s.title).startsWith(q));
+  return list;
+}
+// 服务器分页 + 本机追加的通用衔接逻辑：srvTotal 为服务器曲库总数（本机歌曲从
+// 该全局位置开始）。过渡页用服务器剩余名额装本机歌曲开头，之后整页取本机歌曲。
+function mergePagedLocal(srvSongs,pg,PG,srvTotal,loc){
+  const start=pg*PG-srvTotal;
+  if(start<0)return srvSongs.concat(loc.slice(0,PG-srvSongs.length));
+  return loc.slice(start,start+PG);
+}
 // 原生扫描完成回调（MainActivity 扫完目录树后 evaluateJavascript 调用）
 window.localScanDone=function(n){
-  appLibCache=null;
+  appLibCache=null;_artistsMerged=false;allArtists=[];
   localList(true).then(()=>{updateLocalBadge();hideToast();showToast(`✅ 本机曲库扫描完成：${n} 首`);});
 };
 // 文件名解析："歌手 - 歌名.mp3" → artist+title；无分隔符则整名当歌名
@@ -2555,18 +2623,20 @@ async function onLocalFilesChosen(files,mode){
     store.transaction.oncomplete=res;store.transaction.onerror=()=>rej(store.transaction.error);
   });
   await localList(true);updateLocalBadge();
+  _artistsMerged=false;allArtists=[]; // 歌星列表下次打开重新合并本机歌手
   hideToast();showToast(`✅ 已导入 ${audio.length} 首本机音频`);
 }
 async function clearLocalSongs(){
   if(HAS_APP_LIB()){
     window.KtvBridge.clearLocal();
     appLibCache=null;
+    _artistsMerged=false;allArtists=[];
     await localList(true);updateLocalBadge();showToast('已清空本机曲库');
     return;
   }
   const db=await localDB();
   await new Promise((res,rej)=>{const rq=localStore(db,'readwrite').clear();rq.onsuccess=res;rq.onerror=()=>rej(rq.error);});
-  localSongsCache=[];updateLocalBadge();showToast('已清空本机音频');
+  localSongsCache=[];_artistsMerged=false;allArtists=[];updateLocalBadge();showToast('已清空本机音频');
 }
 function updateLocalBadge(){
   const el=document.getElementById('s-locals');if(!el)return;
@@ -2614,7 +2684,7 @@ async function appendLocalMatches(el,q){
   if(!IS_ANDROID&&!LOCAL_MODE)return;
   const list=await localList();
   const kw=(q||'').trim().toLowerCase();
-  const hits=kw?list.filter(s=>(s.title+' '+(s.artist||'')).toLowerCase().includes(kw)):[];
+  const hits=kw?list.filter(s=>(s.title+' '+(s.artist||'')).toLowerCase().includes(kw)):list; // 空关键词=初始列表：也展示本机歌曲（前 50 首）
   if(!hits.length)return;
   hits.slice(0,50).forEach(s=>{
     const d=document.createElement('div');d.className='so-row';
