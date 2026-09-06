@@ -460,6 +460,8 @@ html,body{width:100%;height:100%;width:100vw;height:100vh;overflow:hidden;backgr
 .mt-b{display:inline-block;vertical-align:1px;margin-left:6px;padding:1px 5px;border-radius:4px;font-size:11px;line-height:1.4;font-weight:700;letter-spacing:.5px}
 .mt-v{color:#ffd479;background:rgba(255,183,77,.18);border:1px solid rgba(255,183,77,.35)}
 .mt-a{color:#7ee0a3;background:rgba(94,220,140,.14);border:1px solid rgba(94,220,140,.3)}
+.mt-srv{color:#9db8ff;background:rgba(120,150,255,.14);border:1px solid rgba(120,150,255,.3)}
+.mt-loc{color:#ffb27e;background:rgba(255,150,90,.15);border:1px solid rgba(255,150,90,.35)}
 /* 点唱榜面板：榜单横条 + 歌曲列表 */
 .lx-main{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:16px 26px}
 #lx-boardbar{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px}
@@ -979,6 +981,9 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
     <div class="set-r" data-f style="cursor:pointer" onclick="toggleAutoPlay()"><span class="set-l">首页自动播放</span><span class="set-v" id="s-autoplay">关</span></div>
     <div class="set-r" data-f style="cursor:pointer" onclick="toggleDlFormat()"><span class="set-l">点唱榜下载格式</span><span class="set-v" id="s-dlfmt">MP3</span></div>
     <div class="set-r" data-f style="cursor:pointer" onclick="doScan()" data-page-node-id="h6eOYDLjT1y806yq5yzV4w"><span class="set-l" data-page-node-id="0lPmMUEA9nLgTt7ocIa4Pb">重新扫描曲库</span><span style="color:var(--ac2)" data-page-node-id="swWFQDPZvYroJ32yMv4cyN">▶ 扫描</span></div>
+    <div class="set-r" data-f id="row-local-scan" style="cursor:pointer;display:none" onclick="pickLocalFolder()"><span class="set-l">扫描本机音频</span><span class="set-v" id="s-locals">0首</span></div>
+    <div class="set-r" data-f id="row-local-clear" style="cursor:pointer;display:none" onclick="clearLocalSongs()"><span class="set-l">清空本机音频</span><span style="color:#ff7a93">🗑</span></div>
+    <input type="file" id="local-dir-input" multiple webkitdirectory style="display:none" onchange="onLocalFilesChosen(this.files)">
   </div></div>
 </div>
 <!-- 点唱榜（LX Music 整合） -->
@@ -1520,7 +1525,8 @@ function renderAll(){
   else{rq.innerHTML='';queueData.forEach(q=>{const d=document.createElement('div');d.className='rq-i'+(q.status==='playing'?' rq-p':'');d.innerHTML=`<div class="rq-t">${q.status==='playing'?'♪ ':''}${q.title}</div><div class="rq-m">${q.artist||''} · ${q.nickname}</div>`;rq.appendChild(d);});}
   if(isFS&&document.getElementById('fsq').classList.contains('open'))renderFsQueue();
   if(document.getElementById('pd-queue').classList.contains('open'))loadQueue();
-  if(playing){
+  if(playing&&!(localPlay.active&&playing.queue_id===localPlay.baseQueueId)){ // 本机插播中且队列未变 → 不打断
+    if(localPlay.active)localStop();
     document.getElementById('now-idle').style.display='none';
     video.style.display=playing.media_type==='audio'?'none':'block';
     document.getElementById('now-info').classList.add('show');
@@ -1529,7 +1535,7 @@ function renderAll(){
     document.getElementById('ov-title').textContent=playing.title;
     document.getElementById('ov-artist').textContent=`${playing.artist||''} · ${playing.nickname}`;
     if(!curSong||curSong.queue_id!==playing.queue_id){curSong=playing;loadSong(video,playing.song_id);endingNotified=false;}
-  }else{document.getElementById('now-idle').style.display='flex';video.style.display='none';document.getElementById('lyrics-panel').classList.remove('show','no-lyrics');document.getElementById('now-info').classList.remove('show');document.getElementById('video-loading').classList.remove('show');hideToast();curSong=null;resetLyrics();destroyHls();video.removeAttribute('src');video.load();if(scoreState.on){document.getElementById('score-wrap').classList.remove('show');document.getElementById('score-tick').classList.remove('show');document.getElementById('score-status').classList.remove('show');document.getElementById('score-result').classList.remove('show');}if(isFS)exitKtvFullscreen();maybeAutoPlay();}
+  }else if(!localPlay.active){document.getElementById('now-idle').style.display='flex';video.style.display='none';document.getElementById('lyrics-panel').classList.remove('show','no-lyrics');document.getElementById('now-info').classList.remove('show');document.getElementById('video-loading').classList.remove('show');hideToast();curSong=null;resetLyrics();destroyHls();video.removeAttribute('src');video.load();if(scoreState.on){document.getElementById('score-wrap').classList.remove('show');document.getElementById('score-tick').classList.remove('show');document.getElementById('score-status').classList.remove('show');document.getElementById('score-result').classList.remove('show');}if(isFS)exitKtvFullscreen();maybeAutoPlay();}
 }
 // 播放
 // 播放/暂停按钮图标+文案的唯一更新入口：只由 <video> 的原生 play/pause 事件驱动，
@@ -1621,6 +1627,7 @@ function seekVideo(e){const b=document.getElementById('prog-bar');video.currentT
 // 还是由下面的兜底检测触发的，避免重复调用 /api/queue/next 把队列多切一首。
 let advancedForQueueId=null;
 function advanceToNextSong(){
+  if(localPlay.active)return; // 本机插播播完由 localEnded 接管，不走服务端队列推进
   if(!curSong||advancedForQueueId===curSong.queue_id)return;
   advancedForQueueId=curSong.queue_id;
   isPaused=false; // 自然播完触发的自动切歌≠用户暂停意图，下一首要正常自动播放
@@ -2206,7 +2213,7 @@ function renderSongs(el,songs){
     const fk='fav_'+s.id,isFaved=localStorage.getItem(fk)==='1';
     const d=document.createElement('div');d.className='so-row';
     d.innerHTML=`<div class="so-num">${i+1}</div>
-      <div class="so-info"><div class="so-t">${s.title}<span class="mt-b ${s.media_type==='audio'?'mt-a':'mt-v'}">${s.media_type==='audio'?'MP3':'MV'}</span></div><div class="so-a">${s.artist||''}</div></div>
+      <div class="so-info"><div class="so-t">${s.title}<span class="mt-b ${s.media_type==='audio'?'mt-a':'mt-v'}">${s.media_type==='audio'?'MP3':'MV'}</span><span class="mt-b mt-srv">服务器</span></div><div class="so-a">${s.artist||''}</div></div>
       <div class="so-acts">
         <button class="btn-fav${isFaved?' faved':''}" data-f onclick="toggleFav(${s.id},this)">❤</button>
         <button class="btn-add" data-f onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button>
@@ -2221,7 +2228,7 @@ async function addSong(id,title){await fetch('/api/queue',{method:'POST',headers
 function loadQueue(){const el=document.getElementById('pl-queue');el.innerHTML='';if(!queueData.length){el.innerHTML='<div style="color:#555;text-align:center;padding:30px">暂无点歌</div>';return;}queueData.forEach((q,i)=>{const d=document.createElement('div');d.className='qr-row'+(q.status==='playing'?' qrp':'');d.innerHTML=`<div class="qr-num">${q.status==='playing'?'♪':i+1}</div><div class="qr-info"><div class="qr-t">${q.title}</div><div class="qr-m">${q.artist||''} · ${q.nickname}${q.status==='playing'?' <span style="color:var(--ac)">播放中</span>':''}</div></div><div class="qr-acts">${q.status!=='playing'?`<button class="ma ma-top" data-f onclick="topQ(${q.queue_id})">置顶</button>`:''}<button class="ma ma-del" data-f onclick="delQ(${q.queue_id})">✕</button></div>`;el.appendChild(d);});}
 async function topQ(id){await fetch(`/api/queue/${id}/top`,{method:'POST'});}
 async function delQ(id){await fetch(`/api/queue/${id}`,{method:'DELETE'});}
-async function loadCharts(){const el=document.getElementById('pl-charts');el.innerHTML='';const songs=(await fetch('/api/charts').then(r=>r.json())).slice(0,10);if(!songs.length){el.innerHTML='<div style="color:#555;text-align:center;padding:30px">还没有人唱过歌</div>';return;}songs.forEach((s,i)=>{const d=document.createElement('div');d.className='chart-row';const rk=i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}`;d.innerHTML=`<div class="ck ${i<3?'r'+(i+1):''}"> ${rk}</div><div class="chart-info"><div class="ct">${s.title}<span class="mt-b ${s.media_type==='audio'?'mt-a':'mt-v'}">${s.media_type==='audio'?'MP3':'MV'}</span></div><div class="cm">${s.artist||'未知歌手'}</div></div><span class="cp">${s.play_count}次</span><button class="btn-add" onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button>`;el.appendChild(d);});}
+async function loadCharts(){const el=document.getElementById('pl-charts');el.innerHTML='';const songs=(await fetch('/api/charts').then(r=>r.json())).slice(0,10);if(!songs.length){el.innerHTML='<div style="color:#555;text-align:center;padding:30px">还没有人唱过歌</div>';return;}songs.forEach((s,i)=>{const d=document.createElement('div');d.className='chart-row';const rk=i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}`;d.innerHTML=`<div class="ck ${i<3?'r'+(i+1):''}"> ${rk}</div><div class="chart-info"><div class="ct">${s.title}<span class="mt-b ${s.media_type==='audio'?'mt-a':'mt-v'}">${s.media_type==='audio'?'MP3':'MV'}</span><span class="mt-b mt-srv">服务器</span></div><div class="cm">${s.artist||'未知歌手'}</div></div><span class="cp">${s.play_count}次</span><button class="btn-add" onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button>`;el.appendChild(d);});}
 let st2;
 // 40,000+ 曲库修复：搜索结果原本被硬限在 60 首、且无法翻看更多——一个宽泛
 // 关键词（如歌手姓、单字）能命中成千上万首，却永远只看到前 60 首。
@@ -2239,6 +2246,7 @@ function doSearch(q){
     const songs=await fetch(`/api/songs?${params}`).then(r=>r.json());
     if(requestId!==searchRequestId)return; // 输入已变化，丢弃过期结果
     renderSongs(document.getElementById('pl-search'),songs);
+    appendLocalMatches(document.getElementById('pl-search'),searchQ); // 本机音频匹配（安卓），带「本地」标签
     updateSearchMore(songs.length===SEARCH_PG);
   },320);
 }
@@ -2349,7 +2357,102 @@ function toggleDlFormat(){
   showToast(dlFormat==='mp3'?'✅ 点唱榜下载格式：MP3（320K 音频）':'✅ 点唱榜下载格式：MV（封面+320K 音频合成视频）');
 }
 updateDlFmtUI();
-// ===== 首页自动播放（伴唱模式）=====
+// ===== 本机音频扫描（安卓电视）=====
+// 仅安卓设备(UA 含 Android)显示设置入口：选择本机文件夹 → 音频文件(含 blob)
+// 存入 IndexedDB(tv-local-media) 持久化，重启页面不丢。歌曲在「搜索」结果里以
+// 「本地」标签出现，点播即本机插播播放（不打断服务器队列，播完自动接队列下一首）。
+const IS_ANDROID=/android/i.test(navigator.userAgent);
+const LOCAL_AUDIO_EXT=/\.(mp3|flac|m4a|aac|wav|ogg|opus)$/i;
+const localPlay={active:false,baseQueueId:null,url:null};
+let localSongsCache=null;
+function localDB(){return new Promise((res,rej)=>{const r=indexedDB.open('tv-local-media',1);r.onupgradeneeded=()=>{r.result.createObjectStore('songs',{keyPath:'id',autoIncrement:true});};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
+function localStore(db,mode){return db.transaction('songs',mode).objectStore('songs');}
+async function localList(refresh){
+  if(localSongsCache&&!refresh)return localSongsCache;
+  const db=await localDB();
+  localSongsCache=await new Promise((res,rej)=>{const rq=localStore(db,'readonly').getAll();rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error);});
+  return localSongsCache;
+}
+// 文件名解析："歌手 - 歌名.mp3" → artist+title；无分隔符则整名当歌名
+function parseLocalName(fn){
+  const base=fn.replace(/\.[^.]+$/,'');
+  const m=base.split(/\s+-\s+/);
+  if(m.length>=2)return{artist:m[0].trim(),title:m.slice(1).join(' - ').trim()};
+  return{artist:'',title:base.trim()};
+}
+function pickLocalFolder(){const inp=document.getElementById('local-dir-input');inp.value='';inp.click();}
+async function onLocalFilesChosen(files){
+  if(!files||!files.length)return;
+  const audio=[...files].filter(f=>LOCAL_AUDIO_EXT.test(f.name));
+  if(!audio.length){showToast('所选文件夹里没有可播放的音频文件');return;}
+  showToast(`正在导入 ${audio.length} 个音频文件…`,true);
+  const db=await localDB();
+  const store=localStore(db,'readwrite');
+  await new Promise((res,rej)=>{
+    audio.forEach(f=>{const p=parseLocalName(f.name);store.add({title:p.title,artist:p.artist,ext:(f.name.match(/\.([^.]+)$/)||[])[1]||'',size:f.size,blob:f});});
+    store.transaction.oncomplete=res;store.transaction.onerror=()=>rej(store.transaction.error);
+  });
+  await localList(true);updateLocalBadge();
+  hideToast();showToast(`✅ 已导入 ${audio.length} 首本机音频`);
+}
+async function clearLocalSongs(){
+  const db=await localDB();
+  await new Promise((res,rej)=>{const rq=localStore(db,'readwrite').clear();rq.onsuccess=res;rq.onerror=()=>rej(rq.error);});
+  localSongsCache=[];updateLocalBadge();showToast('已清空本机音频');
+}
+function updateLocalBadge(){const el=document.getElementById('s-locals');if(el)el.textContent=(localSongsCache||[]).length+'首';}
+// 本机插播：不动服务器队列（baseQueueId 记住插播时的队列状态），播完自动接队列下一首
+async function playLocalSong(id){
+  const list=await localList();const s=list.find(x=>x.id===id);if(!s)return;
+  if(localPlay.url){try{URL.revokeObjectURL(localPlay.url);}catch(e){}}
+  localPlay.url=URL.createObjectURL(s.blob);
+  localPlay.active=true;localPlay.baseQueueId=curSong?curSong.queue_id:null;
+  // 本机歌曲无参考音高曲线，评分挂起（UI 隐藏，ended 结算跳过）
+  scoreState.ended=true;
+  document.querySelectorAll('.pd.open,.pd-full.open').forEach(p=>p.classList.remove('open'));
+  destroyHls();
+  video.src=localPlay.url;
+  document.getElementById('now-idle').style.display='none';
+  video.style.display='none';
+  document.getElementById('lyrics-panel').classList.remove('show','no-lyrics');
+  document.getElementById('score-wrap').classList.remove('show');
+  document.getElementById('score-tick').classList.remove('show');
+  document.getElementById('score-status').classList.remove('show');
+  document.getElementById('score-result').classList.remove('show');
+  document.getElementById('video-loading').classList.remove('show');
+  document.getElementById('now-info').classList.add('show');
+  document.getElementById('ni-title').textContent=s.title;
+  document.getElementById('ni-meta').textContent=`${s.artist||'本机音频'} · 本机`;
+  document.getElementById('ov-title').textContent=s.title;
+  document.getElementById('ov-artist').textContent=`${s.artist||''} · 本机`.replace(/^ · /,'');
+  curSong={queue_id:'local_'+id,song_id:-1,title:s.title,artist:s.artist,media_type:'audio'};
+  endingNotified=true;
+  video.play().catch(()=>showToast('⚠️ 本机播放失败'));
+  showToast(`▶ 本机播放：${s.title}`);
+}
+function localStop(){localPlay.active=false;if(localPlay.url){try{URL.revokeObjectURL(localPlay.url);}catch(e){}localPlay.url=null;}}
+// 本机歌曲播完：清插播态 → 队列切下一首（系统 ended 监听器已由 advanceToNextSong 的 localPlay 守卫跳过）
+video.addEventListener('ended',()=>{if(!localPlay.active)return;localStop();fetch('/api/queue/next',{method:'POST'});});
+// 搜索结果里追加本机音频匹配（「本地」标签 + 播放按钮）
+async function appendLocalMatches(el,q){
+  if(!IS_ANDROID)return;
+  const list=await localList();
+  const kw=(q||'').trim().toLowerCase();
+  const hits=kw?list.filter(s=>(s.title+' '+(s.artist||'')).toLowerCase().includes(kw)):[];
+  if(!hits.length)return;
+  hits.slice(0,50).forEach(s=>{
+    const d=document.createElement('div');d.className='so-row';
+    d.innerHTML=`<div class="so-num">📱</div>
+      <div class="so-info"><div class="so-t">${esc(s.title)}<span class="mt-b mt-a">${(s.ext||'mp3').toUpperCase()}</span><span class="mt-b mt-loc">本地</span></div><div class="so-a">${esc(s.artist||'')}</div></div>
+      <div class="so-acts"><button class="btn-add" data-f onclick="playLocalSong(${s.id})">播放</button></div>`;
+    el.appendChild(d);
+  });
+}
+if(IS_ANDROID){
+  const rs=document.getElementById('row-local-scan'),rc=document.getElementById('row-local-clear');
+  if(rs)rs.style.display='';if(rc)rc.style.display='';
+  localList().then(updateLocalBadge).catch(()=>{});
+}
 // 开启后：TV 空闲在首页且队列无歌（无 playing/pending）时，延迟几秒自动从全曲库
 // 随机点一首进队列（nickname='自动播放'），走正常队列流程播出；避开最近自动播过的歌。
 // 开关状态存本机 localStorage（tv-autoplay），仅影响当前电视端。
