@@ -240,6 +240,7 @@ function kwSong(item, nameField, singerField) {
     name: item.name || item.SONGNAME || '',
     singer: item.singer || formatSinger(item.ARTIST || item.artist || ''),
     album: item.albumName || item.ALBUM || item.album || '',
+    pic: item.pic || item.img || item.picPath || null,
     source: 'kw',
     types: item.types || kwParseQuality(item.n_minfo || item.N_MINFO),
   };
@@ -270,6 +271,25 @@ async function kwBoardSongs(bangid, page = 1, limit = 100) {
   return { list: raw.data.musiclist.map(it => kwSong(it)), total: parseInt(raw.data.total || 0), page, limit };
 }
 
+// ---------- 歌词（酷我 newlyric 接口） ----------
+// 流程（参考 lx-music-desktop kw/lyric.js 与酷我 PC 客户端解密方案）：
+//   请求参数串与 'yeelion' 逐字节 XOR 后 base64 → GET newlyric.lrc →
+//   响应为 "tp=content\r\n...\r\n\r\n" + zlib deflate 数据 → inflate 后是
+//   GB18030 编码的标准 LRC 文本（含 [ti:]/[ar:] 等标签）。
+async function kwLyric(songmid) {
+  const params = `user=12345,web,web,web&requester=localhost&req=1&rid=MUSIC_${songmid}`;
+  const key = Buffer.from('yeelion');
+  const out = Buffer.alloc(params.length);
+  for (let i = 0, j = 0; i < params.length; i++, j = (j + 1) % key.length) out[i] = params.charCodeAt(i) ^ key[j];
+  const resp = await httpReq(`http://newlyric.kuwo.cn/newlyric.lrc?${out.toString('base64')}`, { responseType: 'buffer', timeout: 15000 });
+  const buf = resp.body;
+  if (resp.statusCode !== 200 || buf.toString('utf8', 0, 10) !== 'tp=content') throw new Error('歌词接口响应异常');
+  const payload = buf.slice(buf.indexOf('\r\n\r\n') + 4);
+  const lrc = new TextDecoder('gb18030').decode(zlib.inflateSync(payload));
+  if (!lrc || !/\[\d{1,2}:\d{2}/.test(lrc)) throw new Error('歌词内容为空');
+  return lrc;
+}
+
 // ---------- 下载入库 ----------
 function ffmpegToMp3(src, dst) {
   return new Promise((resolve, reject) => {
@@ -280,35 +300,89 @@ function ffmpegToMp3(src, dst) {
     p.on('error', reject);
   });
 }
+
+// mp3 + 封面图 → MV 风格 mp4（静态封面视频，走 MV 播放路径）。coverBuf 为空时用纯色背景
+function ffmpegMp3ToMv(mp3Path, coverBuf, mp4Path) {
+  return new Promise((resolve, reject) => {
+    const coverTmp = coverBuf ? mp4Path + '.cover' : null;
+    try {
+      const args = ['-y', '-loop', '1', '-framerate', '2'];
+      if (coverTmp) { fs.writeFileSync(coverTmp, coverBuf); args.push('-i', coverTmp); }
+      else args.push('-f', 'lavfi', '-i', 'color=c=0x141432:s=1280x720:r=2');
+      args.push('-i', mp3Path,
+        '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p',
+        '-tune', 'stillimage', '-preset', 'ultrafast', '-shortest',
+        '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '192k', mp4Path);
+      const p = spawn('ffmpeg', args, { windowsHide: true });
+      let err = '';
+      p.stderr.on('data', d => { if (err.length < 2000) err += d.toString(); });
+      p.on('close', code => { try { if (coverTmp) fs.unlinkSync(coverTmp); } catch (e) {} code === 0 ? resolve() : reject(new Error('ffmpeg 合成 MV 失败: ' + err.slice(-300))); });
+      p.on('error', e => { try { if (coverTmp) fs.unlinkSync(coverTmp); } catch (e2) {} reject(e); });
+    } catch (e) { reject(e); }
+  });
+}
+
+// 下载封面图（仅接受 jpeg/png/webp），失败返回 null
+async function downloadCover(picUrl) {
+  if (!picUrl || !/^https?:/.test(picUrl)) return null;
+  try {
+    const resp = await httpReq(picUrl, { responseType: 'buffer', timeout: 15000 });
+    if (resp.statusCode !== 200) return null;
+    const b = resp.body;
+    const isJpeg = b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF;
+    const isPng = b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47;
+    const isWebp = b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WEBP';
+    return (isJpeg || isPng || isWebp) ? b : null;
+  } catch (e) { return null; }
+}
+
 const sanitize = (s) => String(s || '').replace(/[\\/:*?"<>|.]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || '未知';
 
-// 下载一首网络歌曲到曲库（LX下载/歌手 - 歌名.mp3），返回 songs 表行
-async function downloadSong({ songmid, name, singer, source = 'kw' }) {
+// 下载一首网络歌曲到曲库（MV_DIR/歌手名/歌手名 - 歌名.mp3|.mp4），返回 songs 表行
+// format: 'mp3'（默认，320K 音质优先）| 'mv'（同一 320K 音频 + 封面合成为视频）
+async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, format = 'mp3' }) {
   if (!fs.existsSync(MV_DIR)) throw new Error('MV_DIR_UNAVAILABLE');
   const artist = sanitize(singer) || '未知歌手';
   const title = sanitize(name) || '未知歌名';
+  const isMv = format === 'mv';
   const artistDir = path.join(MV_DIR, artist);
   if (!fs.existsSync(artistDir)) fs.mkdirSync(artistDir, { recursive: true });
-  const rel = path.join(artist, `${artist} - ${title}.mp3`);
+  const rel = path.join(artist, `${artist} - ${title}.${isMv ? 'mp4' : 'mp3'}`);
   const finalPath = path.join(MV_DIR, rel);
   // 已存在同名歌曲 → 直接返回库里的记录（可能上次已下过）
   const existed = db.prepare('SELECT * FROM songs WHERE filepath=?').get(rel.replace(/\\/g, '/'));
   if (existed) return existed;
-  // 1) 解析 url；2) 拉流到临时文件；3) mp3 直存 / 其它格式转码
+  // 1) 解析 url（320K 优先）；2) 拉流到临时文件；3) mp3 直存 / 转码 / 合成 MV
   const url = await resolveMusicUrl(source === 'kw' ? { songmid, songId: songmid, musicId: songmid, name, singer } : musicInfoOf(songmid, name, singer));
   const tmpPath = path.join(TMP_DIR, `dl_${Date.now()}_${process.pid}`);
   const resp = await httpReq(url, { responseType: 'buffer', timeout: 120000 });
   if (resp.statusCode !== 200) throw new Error(`下载失败 HTTP ${resp.statusCode}`);
   fs.writeFileSync(tmpPath, resp.body);
+  const isMp3Src = /\.mp3|mpeg/i.test((resp.headers['content-type'] || '') + ' ' + String(url.split('?')[0]));
   try {
-    const ct = (resp.headers['content-type'] || '') + ' ' + String(url.split('?')[0]);
-    if (/\.mp3|mpeg/i.test(ct)) {
-      fs.renameSync(tmpPath, finalPath);
+    if (!isMv) {
+      if (isMp3Src) fs.renameSync(tmpPath, finalPath);
+      else { await ffmpegToMp3(tmpPath, finalPath); try { fs.unlinkSync(tmpPath); } catch (e) {} }
     } else {
-      await ffmpegToMp3(tmpPath, finalPath);
+      // MV 模式：先统一为 mp3，再与封面合成 mp4（只留 mp4，避免同一首歌两份入库）
+      const tmpMp3 = finalPath + '.tmp.mp3';
+      if (isMp3Src) fs.renameSync(tmpPath, tmpMp3);
+      else await ffmpegToMp3(tmpPath, tmpMp3);
+      try {
+        const cover = await downloadCover(pic);
+        await ffmpegMp3ToMv(tmpMp3, cover, finalPath);
+      } finally { try { fs.unlinkSync(tmpMp3); } catch (e) {} }
       try { fs.unlinkSync(tmpPath); } catch (e) {}
     }
   } catch (e) { try { fs.unlinkSync(finalPath); } catch (e2) {} throw e; }
+  // 同步下载 LRC 歌词（同名 .lrc 放一起，扫描器自动关联 lyrics_path）；
+  // 歌词属附属信息，失败不影响歌曲入库。仅酷我源提供该接口。
+  if (source === 'kw') {
+    try {
+      const lrc = await kwLyric(songmid);
+      fs.writeFileSync(path.join(MV_DIR, rel.replace(/\.(mp3|mp4)$/i, '.lrc')), lrc, 'utf8');
+    } catch (e) { console.error('LRC 下载失败(忽略):', name, e.message); }
+  }
   // 4) 扫描入库并返回新行
   const { scanLibrary } = require('./scanner');
   await scanLibrary();
@@ -334,6 +408,6 @@ function findLocalSong(name, singer) {
 
 module.exports = {
   initActiveSource, activateSourceById, deactivateSource, activateScript, activeSource: () => activeSource,
-  resolveMusicUrl, kwSearch, kwBoardSongs, KW_BOARDS,
+  resolveMusicUrl, kwSearch, kwBoardSongs, KW_BOARDS, kwLyric,
   downloadSong, findLocalSong, parseScriptMeta,
 };

@@ -263,8 +263,10 @@ main{max-width:960px;margin:0 auto;padding:24px}
     <div class="form-row"><label>当前音源</label><div id="lx-cur" style="font-size:14px;color:var(--sub)">加载中…</div></div>
     <div class="form-row"><label>导入：音源脚本链接（http… .js）</label>
       <input id="lx-url" placeholder="https://example.com/sixyin.js" onkeydown="if(event.key==='Enter')lxImport()"></div>
-    <div class="form-row"><label>或直接粘贴脚本内容（二选一）</label>
+    <div class="form-row"><label>或直接粘贴脚本内容（与链接二选一）</label>
       <textarea id="lx-script" placeholder="/**&#10; * @name 六音音源&#10; * ...&#10; */&#10;const { EVENT_NAMES, on, send } = globalThis.lx ..."></textarea></div>
+    <div class="form-row"><label>或从本地电脑选择脚本文件（.js / .txt）</label>
+      <input type="file" id="lx-file" accept=".js,.txt,text/javascript,text/plain" style="font-size:13px;color:var(--sub)" onchange="lxFileChosen(this)"></div>
     <div id="lx-err" style="color:var(--pink);font-size:12px;min-height:14px;margin-bottom:8px"></div>
     <div class="modal-btns" style="justify-content:flex-start">
       <button class="hbtn primary" onclick="lxImport()">📥 导入并启用</button>
@@ -525,6 +527,20 @@ function toast(msg){
   setTimeout(()=>t.classList.remove('show'), 1800);
 }
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,'&#39;'); }
+
+// 本地脚本文件 → 读入粘贴框
+function lxFileChosen(inp){
+  const f = inp.files && inp.files[0];
+  if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    document.getElementById('lx-script').value = rd.result;
+    document.getElementById('lx-url').value = '';
+    toast(`已读取 ${f.name}，点击「导入并启用」完成导入`);
+  };
+  rd.readAsText(f, 'utf-8');
+  inp.value = ''; // 允许重复选择同一文件
+}
 
 // ===== LX 音源管理 =====
 async function openLxModal(){

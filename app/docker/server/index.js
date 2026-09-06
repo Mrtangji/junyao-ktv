@@ -519,18 +519,19 @@ app.get('/api/lx/search', async (req, res) => {
   } catch (e) { res.status(502).json({ error: '网络搜索失败: ' + e.message }); }
 });
 
-// 点唱：本地有直接入队；没有则下载入库再入队。body: {songmid,name,singer}
+// 点唱：本地有直接入队；没有则下载入库再入队。body: {songmid,name,singer,pic,format}
+// format: 'mp3'（默认，320K 优先）| 'mv'（320K 音频+封面合成视频，走 MV 播放路径）
 app.post('/api/lx/queue', async (req, res) => {
-  const { songmid, name, singer } = req.body || {};
+  const { songmid, name, singer, pic, format } = req.body || {};
   if (!songmid || !name) return res.status(400).json({ error: '缺少 songmid/name' });
   let song = lxmusic.findLocalSong(name, singer);
   let downloaded = false;
   if (!song) {
     try {
-      song = await lxmusic.downloadSong({ songmid, name, singer });
+      song = await lxmusic.downloadSong({ songmid, name, singer, pic: pic || null, format: format === 'mv' ? 'mv' : 'mp3' });
       downloaded = true;
     } catch (e) {
-      if (e.message === 'NO_ACTIVE_SOURCE') return res.status(400).json({ error: 'NO_ACTIVE_SOURCE', message: '尚未导入 LX 音源，请先在设置中导入' });
+      if (e.message === 'NO_ACTIVE_SOURCE') return res.status(400).json({ error: 'NO_ACTIVE_SOURCE', message: '尚未导入 LX 音源，请先在曲库管理后台导入' });
       if (e.message === 'MV_DIR_UNAVAILABLE') return res.status(503).json({ error: '曲库目录不可访问' });
       return res.status(502).json({ error: '下载失败: ' + e.message });
     }

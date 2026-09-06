@@ -977,21 +977,8 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
     <div class="set-r" data-page-node-id="nKT7Mh8HhsuBfyApCpkWLG"><span class="set-l" data-page-node-id="T3ueFT1R1bwTbPtZICupmN">服务器</span><span class="set-v" id="s-host" data-page-node-id="LcHtupKTlzCvBCrfpt52Ot">—</span></div>
     <div class="set-r" data-page-node-id="jQFmc22JUITFh70G7FMgqB"><span class="set-l" data-page-node-id="cm7WEluuYuRRwWcA6akc3t">曲库歌曲</span><span class="set-v" id="s-songs" data-page-node-id="MancH463s8fDUp3KER6rWg">—</span></div>
     <div class="set-r" data-f style="cursor:pointer" onclick="toggleAutoPlay()"><span class="set-l">首页自动播放</span><span class="set-v" id="s-autoplay">关</span></div>
-    <div class="set-r" data-f style="cursor:pointer" onclick="openLXSrc()"><span class="set-l">LX 音源（网络点唱）</span><span class="set-v" id="s-lxsrc">未导入</span></div>
+    <div class="set-r" data-f style="cursor:pointer" onclick="toggleDlFormat()"><span class="set-l">点唱榜下载格式</span><span class="set-v" id="s-dlfmt">MP3</span></div>
     <div class="set-r" data-f style="cursor:pointer" onclick="doScan()" data-page-node-id="h6eOYDLjT1y806yq5yzV4w"><span class="set-l" data-page-node-id="0lPmMUEA9nLgTt7ocIa4Pb">重新扫描曲库</span><span style="color:var(--ac2)" data-page-node-id="swWFQDPZvYroJ32yMv4cyN">▶ 扫描</span></div>
-  </div></div>
-</div>
-<!-- LX 音源管理 -->
-<div class="pd" id="pd-lxsrc" onclick="if(event.target===this)closePanel('lxsrc')">
-  <div class="ps"><div class="ph"><h3>🎼 LX 音源</h3><div class="pc" data-f onclick="closePanel('lxsrc')">✕</div></div>
-  <div class="pb">
-    <div class="set-r"><span class="set-l">当前音源</span><span class="set-v" id="lx-src-cur">未导入</span></div>
-    <div style="display:flex;gap:10px;margin:14px 0">
-      <input id="lx-url" data-f placeholder="粘贴音源脚本链接（http… .js）" style="flex:1;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.2);border-radius:10px;padding:10px 14px;outline:none;color:#fff;font-size:16px">
-      <button class="btn-add" data-f onclick="lxImportSrc()">导入</button>
-    </div>
-    <div id="lx-src-list"></div>
-    <div style="color:var(--sub);font-size:13px;margin-top:10px;line-height:1.6">支持 lx-music 自定义音源脚本（.js）。导入后「点唱榜」里的歌本地没有时会自动下载到曲库（/mv/歌手名/）。</div>
   </div></div>
 </div>
 <!-- 点唱榜（LX Music 整合） -->
@@ -2286,7 +2273,7 @@ function loadSettings(){document.getElementById('s-host').textContent=location.h
 // 榜单来自服务端内置酷我源（KTV点唱榜默认置前）；点歌时服务端先查本地曲库，
 // 没有则用已导入的 LX 音源解析下载链接 → 转码 mp3 → 存到曲库目录（/mv/歌手名/）
 // → 扫描入库 → 入队播放。未导入音源时服务端返回 NO_ACTIVE_SOURCE，给出提示。
-let lxBoardsLoaded=false,lxBoardBangid='255',lxBoardName='KTV点唱榜',lxSeq=0;
+let lxBoardsLoaded=false,lxBoardBangid='255',lxBoardName='KTV点唱榜',lxSeq=0,lxListSongs=[];
 async function initLX(){
   const bar=document.getElementById('lx-boardbar'),list=document.getElementById('lx-list');
   if(!lxBoardsLoaded){
@@ -2326,82 +2313,42 @@ async function lxLoadBoard(bangid,name){
 function lxRenderList(el,songs){
   el.innerHTML='';
   if(!songs.length){el.innerHTML='<div class="lx-empty">榜单暂无歌曲</div>';return;}
+  lxListSongs=songs; // 索引传参给 lxOrder，携带 pic（MV 模式合成封面用）
   const frag=document.createDocumentFragment();
   songs.forEach((s,i)=>{
     const d=document.createElement('div');d.className='lx-row';
     const hi=i<3?`color:${i===0?'#ffd479':i===1?'#cfd8e3':'#e8a06b'}`:'';
     d.innerHTML=`<div class="n" style="${hi}">${i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}</div>
       <div class="t">${s.name||''}</div><div class="a">${s.singer||''}</div>
-      <button class="btn-add" data-f onclick="lxOrder('${s.songmid}','${esc(s.name)}','${esc(s.singer||'')}',this)">点歌</button>`;
+      <button class="btn-add" data-f onclick="lxOrder(${i})">点歌</button>`;
     frag.appendChild(d);
   });
   el.appendChild(frag);
 }
-async function lxOrder(songmid,name,singer,btn){
-  const old=btn.textContent;btn.disabled=true;btn.textContent='…';
+async function lxOrder(idx){
+  const s=lxListSongs[idx];if(!s)return;
+  const btn=event&&event.target;
+  if(btn){btn.disabled=true;btn.textContent='…';}
   try{
-    const r=await fetch('/api/lx/queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({songmid,name,singer})}).then(x=>x.json());
-    if(r.error==='NO_ACTIVE_SOURCE'){showToast('⚠️ '+r.message);btn.disabled=false;btn.textContent=old;return;}
-    if(r.error){showToast('⚠️ '+r.error);btn.disabled=false;btn.textContent=old;return;}
-    showToast(r.downloaded?`《${name}》下载完成，已加入队列 🎶`:`《${name}》已加入队列 🎶`);
-    btn.textContent='已点 ✓';
-  }catch(e){showToast('⚠️ 点唱失败：'+e.message);btn.disabled=false;btn.textContent=old;}
+    const r=await fetch('/api/lx/queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({songmid:s.songmid,name:s.name,singer:s.singer,pic:s.pic,format:dlFormat})}).then(x=>x.json());
+    if(r.error==='NO_ACTIVE_SOURCE'){showToast('⚠️ '+r.message);if(btn){btn.disabled=false;btn.textContent='点歌';}return;}
+    if(r.error){showToast('⚠️ '+r.error);if(btn){btn.disabled=false;btn.textContent='点歌';}return;}
+    showToast(r.downloaded?`《${s.name}》下载完成，已加入队列 🎶`:`《${s.name}》已加入队列 🎶`);
+    if(btn)btn.textContent='已点 ✓';
+  }catch(e){showToast('⚠️ 点唱失败：'+e.message);if(btn){btn.disabled=false;btn.textContent='点歌';}}
 }
-// ===== LX 音源管理（设置面板） =====
-async function refreshLxSrcBadge(){
-  try{
-    const d=await fetch('/api/lx/source').then(r=>r.json());
-    const el=document.getElementById('s-lxsrc');
-    if(el)el.textContent=d.active?d.active.name:'未导入';
-    return d;
-  }catch(e){return null;}
+// ===== 点唱榜下载格式（设置面板开关） =====
+// MP3（默认）：下载 320K 音频；MV：同一 320K 音频 + 专辑封面合成视频（走 MV 播放路径）。
+// 两种模式都会同时下载 LRC 歌词。状态存本机 localStorage(tv-dl-format)。
+let dlFormat=localStorage.getItem('tv-dl-format')==='mv'?'mv':'mp3';
+function updateDlFmtUI(){const el=document.getElementById('s-dlfmt');if(el)el.textContent=dlFormat.toUpperCase();}
+function toggleDlFormat(){
+  dlFormat=dlFormat==='mp3'?'mv':'mp3';
+  localStorage.setItem('tv-dl-format',dlFormat);
+  updateDlFmtUI();
+  showToast(dlFormat==='mp3'?'✅ 点唱榜下载格式：MP3（320K 音频）':'✅ 点唱榜下载格式：MV（封面+320K 音频合成视频）');
 }
-async function openLXSrc(){
-  openPanel('lxsrc');
-  const d=await refreshLxSrcBadge();
-  await lxRenderSrcList(d);
-}
-async function lxRenderSrcList(pre){
-  const d=pre||await fetch('/api/lx/source').then(r=>r.json());
-  document.getElementById('lx-src-cur').textContent=d.active?`${d.active.name}（源:${Object.keys(d.active.sources).join('/')}）`:'未导入';
-  const el=document.getElementById('lx-src-list');
-  el.innerHTML='';
-  if(!d.list.length){el.innerHTML='<div style="color:var(--sub);font-size:14px;text-align:center;padding:8px 0">还没有导入音源</div>';return;}
-  d.list.forEach(s=>{
-    const isActive=d.active&&d.active.id===s.id;
-    const row=document.createElement('div');row.className='set-r';
-    row.innerHTML=`<span class="set-l">${s.name}${s.version?` <span style="color:var(--sub);font-size:13px">v${s.version}</span>`:''}${s.author?` <span style="color:var(--sub);font-size:13px">@${s.author}</span>`:''}</span>
-      <span style="display:flex;gap:8px">${isActive?'<span style="color:var(--ac);font-size:14px;align-self:center">使用中</span>':`<button class="btn-add" data-f onclick="lxActivateSrc(${s.id},this)">启用</button>`}<button class="ma ma-del" data-f onclick="lxDeleteSrc(${s.id})" title="删除">✕</button></span>`;
-    el.appendChild(row);
-  });
-}
-async function lxImportSrc(){
-  const inp=document.getElementById('lx-url'),url=inp.value.trim();
-  if(!url){showToast('请先粘贴音源脚本链接');return;}
-  showToast('音源导入中…');
-  try{
-    const r=await fetch('/api/lx/source',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})}).then(x=>x.json());
-    if(r.error){showToast('⚠️ '+r.error);return;}
-    showToast(`✅ 已导入并启用：${r.name}`);
-    inp.value='';
-    lxRenderSrcList();
-  }catch(e){showToast('⚠️ 导入失败：'+e.message);}
-}
-async function lxActivateSrc(id){
-  try{
-    const r=await fetch(`/api/lx/source/${id}/activate`,{method:'POST'}).then(x=>x.json());
-    if(r.error){showToast('⚠️ '+r.error);return;}
-    showToast(`✅ 已启用：${r.name}`);
-    lxRenderSrcList();
-  }catch(e){showToast('⚠️ 启用失败：'+e.message);}
-}
-async function lxDeleteSrc(id){
-  try{
-    await fetch(`/api/lx/source/${id}`,{method:'DELETE'});
-    showToast('已删除');
-    lxRenderSrcList();
-  }catch(e){showToast('⚠️ 删除失败：'+e.message);}
-}
+updateDlFmtUI();
 // ===== 首页自动播放（伴唱模式）=====
 // 开启后：TV 空闲在首页且队列无歌（无 playing/pending）时，延迟几秒自动从全曲库
 // 随机点一首进队列（nickname='自动播放'），走正常队列流程播出；避开最近自动播过的歌。
