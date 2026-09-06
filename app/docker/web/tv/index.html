@@ -956,6 +956,7 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
   <div class="pb" data-page-node-id="BEtUt0kZwB5mTCukybNGCD">
     <div class="set-r" data-page-node-id="nKT7Mh8HhsuBfyApCpkWLG"><span class="set-l" data-page-node-id="T3ueFT1R1bwTbPtZICupmN">服务器</span><span class="set-v" id="s-host" data-page-node-id="LcHtupKTlzCvBCrfpt52Ot">—</span></div>
     <div class="set-r" data-page-node-id="jQFmc22JUITFh70G7FMgqB"><span class="set-l" data-page-node-id="cm7WEluuYuRRwWcA6akc3t">曲库歌曲</span><span class="set-v" id="s-songs" data-page-node-id="MancH463s8fDUp3KER6rWg">—</span></div>
+    <div class="set-r" data-f style="cursor:pointer" onclick="toggleAutoPlay()"><span class="set-l">首页自动播放</span><span class="set-v" id="s-autoplay">关</span></div>
     <div class="set-r" data-f style="cursor:pointer" onclick="doScan()" data-page-node-id="h6eOYDLjT1y806yq5yzV4w"><span class="set-l" data-page-node-id="0lPmMUEA9nLgTt7ocIa4Pb">重新扫描曲库</span><span style="color:var(--ac2)" data-page-node-id="swWFQDPZvYroJ32yMv4cyN">▶ 扫描</span></div>
   </div></div>
 </div>
@@ -1496,7 +1497,7 @@ function renderAll(){
     document.getElementById('ov-title').textContent=playing.title;
     document.getElementById('ov-artist').textContent=`${playing.artist||''} · ${playing.nickname}`;
     if(!curSong||curSong.queue_id!==playing.queue_id){curSong=playing;loadSong(video,playing.song_id);endingNotified=false;}
-  }else{document.getElementById('now-idle').style.display='flex';video.style.display='none';document.getElementById('lyrics-panel').classList.remove('show','no-lyrics');document.getElementById('now-info').classList.remove('show');document.getElementById('video-loading').classList.remove('show');hideToast();curSong=null;resetLyrics();destroyHls();video.removeAttribute('src');video.load();if(scoreState.on){document.getElementById('score-wrap').classList.remove('show');document.getElementById('score-tick').classList.remove('show');document.getElementById('score-status').classList.remove('show');document.getElementById('score-result').classList.remove('show');}if(isFS)exitKtvFullscreen();}
+  }else{document.getElementById('now-idle').style.display='flex';video.style.display='none';document.getElementById('lyrics-panel').classList.remove('show','no-lyrics');document.getElementById('now-info').classList.remove('show');document.getElementById('video-loading').classList.remove('show');hideToast();curSong=null;resetLyrics();destroyHls();video.removeAttribute('src');video.load();if(scoreState.on){document.getElementById('score-wrap').classList.remove('show');document.getElementById('score-tick').classList.remove('show');document.getElementById('score-status').classList.remove('show');document.getElementById('score-result').classList.remove('show');}if(isFS)exitKtvFullscreen();maybeAutoPlay();}
 }
 // 播放
 // 播放/暂停按钮图标+文案的唯一更新入口：只由 <video> 的原生 play/pause 事件驱动，
@@ -2236,6 +2237,60 @@ function updateSearchMore(hasMore){
   if(b)b.style.display=hasMore?'inline-block':'none';
 }
 function loadSettings(){document.getElementById('s-host').textContent=location.host;fetch('/api/stats').then(r=>r.json()).then(d=>document.getElementById('s-songs').textContent=d.songCount+'首');}
+// ===== 首页自动播放（伴唱模式）=====
+// 开启后：TV 空闲在首页且队列无歌（无 playing/pending）时，延迟几秒自动从全曲库
+// 随机点一首进队列（nickname='自动播放'），走正常队列流程播出；避开最近自动播过的歌。
+// 开关状态存本机 localStorage（tv-autoplay），仅影响当前电视端。
+let autoPlay=localStorage.getItem('tv-autoplay')==='1';
+let autoPlayTimer=null,autoRecent=[];
+try{autoRecent=JSON.parse(localStorage.getItem('tv-autoplay-recent')||'[]');}catch(e){autoRecent=[];}
+function updateAutoPlayUI(){const el=document.getElementById('s-autoplay');if(el)el.textContent=autoPlay?'开':'关';}
+function toggleAutoPlay(){
+  autoPlay=!autoPlay;
+  localStorage.setItem('tv-autoplay',autoPlay?'1':'0');
+  updateAutoPlayUI();
+  showToast(autoPlay?'✅ 已开启首页自动播放：空闲时自动随机播放':'已关闭首页自动播放');
+  clearTimeout(autoPlayTimer);
+  if(autoPlay)maybeAutoPlay(3000); // 刚打开开关，3 秒后即生效
+}
+function rememberAutoPlayed(id){
+  autoRecent.push(id);
+  if(autoRecent.length>10)autoRecent=autoRecent.slice(-10);
+  try{localStorage.setItem('tv-autoplay-recent',JSON.stringify(autoRecent));}catch(e){}
+}
+async function pickRandomSong(){
+  let total=0;
+  try{const st=await fetch('/api/stats').then(r=>r.json());total=st.songCount||0;}catch(e){return null;}
+  if(!total)return null;
+  // 随机偏移取 1 首，均匀覆盖整个曲库；最多试 8 次避开最近播过的
+  for(let i=0;i<8;i++){
+    const offset=Math.floor(Math.random()*total);
+    try{
+      const s=await fetch(`/api/songs?limit=1&offset=${offset}`).then(r=>r.json());
+      const song=s&&s[0];
+      if(song&&!autoRecent.includes(song.id))return song;
+    }catch(e){return null;}
+  }
+  return null;
+}
+function maybeAutoPlay(delay){
+  if(!autoPlay)return;
+  clearTimeout(autoPlayTimer);
+  const idle=!queueData.some(q=>q.status==='playing'||q.status==='pending');
+  if(!idle)return;
+  autoPlayTimer=setTimeout(async()=>{
+    if(!autoPlay)return;
+    if(queueData.some(q=>q.status==='playing'||q.status==='pending'))return; // 期间有人点歌了
+    const song=await pickRandomSong();
+    if(!song)return;
+    rememberAutoPlayed(song.id);
+    try{
+      await fetch('/api/queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({song_id:song.id,nickname:'自动播放'})});
+      showToast(`🎶 自动播放《${song.title}》`);
+    }catch(e){}
+  },delay||8000);
+}
+updateAutoPlayUI();
 async function doScan(){showToast('扫描中…');let d;try{d=await fetch('/api/scan',{method:'POST'}).then(r=>r.json());}catch(e){showToast('⚠️ 扫描请求失败：'+e.message);return;}if(d.error==='MV_DIR_UNAVAILABLE'){showToast('⚠️ 曲库目录暂时无法访问，请检查挂载后重试');return;}if(d.ok===false){showToast('⚠️ 扫描出错：'+(d.error||'未知错误'));return;}showToast(`扫描完成：${d.total}首，新增${d.added}首，移除${d.removed||0}首`);allSongs=[];loadSettings();}
 // 遥控
 function handleRemote(m){switch(m.action){case 'play_pause':togglePause();break;case 'next':cutSong();break;case 'voice':toggleVoice();break;case 'repeat':restartSong();break;case 'score':toggleScore();break;case 'fullscreen':isFS?exitKtvFullscreen():enterFullscreen();break;case 'home':if(isFS)exitKtvFullscreen();break;case 'focus_up':moveFocus('up');break;case 'focus_down':moveFocus('down');break;case 'focus_left':moveFocus('left');break;case 'focus_right':moveFocus('right');break;case 'ok':activateFocused();break;case 'back':closeTopPanel();break;}}
