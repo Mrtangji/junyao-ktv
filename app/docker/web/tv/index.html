@@ -2651,7 +2651,13 @@ async function appLocalList(refresh){
   if(appLibCache&&!refresh)return appLibCache;
   try{
     const arr=JSON.parse(window.KtvBridge.localListJson()||'[]');
-    appLibCache=arr.map(it=>Object.assign(parseLocalName(it.name||''),{id:it.id,ext:it.ext||'',size:it.size||0}));
+    appLibCache=arr.map(it=>{
+      const p=parseLocalName(it.name||'');
+      // 原生层 ID3 元数据兜底：文件名解析不出歌手时，用音频标签里的歌手/歌名
+      if(it.artist)p.artist=String(it.artist);
+      if(it.title)p.title=String(it.title);
+      return Object.assign(p,{id:it.id,ext:it.ext||'',size:it.size||0});
+    });
   }catch(e){appLibCache=[];}
   return appLibCache;
 }
@@ -2683,11 +2689,15 @@ window.localScanDone=function(n){
   appLibCache=null;_artistsMerged=false;allArtists=[];
   localList(true).then(()=>{updateLocalBadge();hideToast();showToast(`✅ 本机曲库扫描完成：${n} 首`);});
 };
-// 文件名解析："歌手 - 歌名.mp3" → artist+title；无分隔符则整名当歌名
+// 文件名解析："歌手 - 歌名.mp3" → artist+title；无分隔符则整名当歌名。
+// 兼容：无空格连字符(歌手-歌名)、全角－、en/em 破折号、音轨序号前缀(01. / 01、/ 01 )。
 function parseLocalName(fn){
-  const base=fn.replace(/\.[^.]+$/,'');
-  const m=base.split(/\s+-\s+/);
-  if(m.length>=2)return{artist:m[0].trim(),title:m.slice(1).join(' - ').trim()};
+  let base=fn.replace(/\.[^.]+$/,'').trim();
+  // 音轨序号前缀："01."、"01．"、"01、"；"01 "仅在剩余部分仍含分隔符时剥除（避免误伤"99 Luftballons"类歌名）
+  base=base.replace(/^\d{1,3}\s*[.．、]\s*/,'');
+  base=base.replace(/^\d{1,3}\s+(?=[^-]*[-－–—―])/,'');
+  const m=base.split(/\s*[-－–—―]+\s*/).filter(x=>x!=='');
+  if(m.length>=2)return{artist:m[0].trim(),title:m.slice(1).join(' ').trim()};
   return{artist:'',title:base.trim()};
 }
 function pickLocalFolder(){

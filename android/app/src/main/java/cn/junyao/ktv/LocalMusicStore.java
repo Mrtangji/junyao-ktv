@@ -116,6 +116,8 @@ final class LocalMusicStore {
             o.put("ext", ext);
             o.put("size", size);
             o.put("uri", uriStr);
+            // 文件名不含"歌手 - 歌名"分隔符时，读 ID3 元数据兜底补歌手/歌名
+            if (!nameLooksTagged(name)) applyMediaMeta(ctx, o, Uri.parse(uriStr));
             out.add(o);
         }
         c.close();
@@ -128,6 +130,30 @@ final class LocalMusicStore {
         String ext = name.substring(dot + 1).toLowerCase();
         for (String a : AUDIO_EXT) if (a.equals(ext)) return ext;
         return null;
+    }
+
+    /** 文件名里含"歌手 - 歌名"式分隔符（半角/全角连字符、破折号，空格可有可无）→ 前端可直接解析，无需读元数据 */
+    private static boolean nameLooksTagged(String name) {
+        return name.matches("(?s).*\\S\\s*[-－–—―]+\\s*\\S.*");
+    }
+
+    /** 用 MediaMetadataRetriever 读音频标签（ID3 等），补 artist/title 字段到索引项 */
+    private static void applyMediaMeta(Context ctx, JSONObject o, Uri uri) {
+        android.media.MediaMetadataRetriever mmr = new android.media.MediaMetadataRetriever();
+        try {
+            mmr.setDataSource(ctx, uri);
+            String artist = mmr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ARTIST);
+            if (artist == null || artist.trim().isEmpty() || "<unknown>".equalsIgnoreCase(artist.trim()))
+                artist = mmr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST);
+            String title = mmr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_TITLE);
+            if (artist != null && !artist.trim().isEmpty() && !"<unknown>".equalsIgnoreCase(artist.trim()))
+                o.put("artist", artist.trim());
+            if (title != null && !title.trim().isEmpty() && !"<unknown>".equalsIgnoreCase(title.trim()))
+                o.put("title", title.trim());
+        } catch (Exception ignored) {
+        } finally {
+            try { mmr.release(); } catch (Exception ignored) {}
+        }
     }
 
     private static long crc32(String s) {
