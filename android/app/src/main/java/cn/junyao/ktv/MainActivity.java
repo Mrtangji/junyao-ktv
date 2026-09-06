@@ -49,6 +49,7 @@ public class MainActivity extends Activity {
     private static final String KEY_SERVER = "server";
     private static final int REQ_FILE_CHOOSER = 1001;
     private static final int REQ_MIC = 2001;
+    private static final int REQ_TREE = 1002;
     private static final int[] SCAN_PORTS = {8083, 8080};
     private static final String LOCAL_PAGE = "file:///android_asset/tv/index.html?local=1";
 
@@ -56,12 +57,17 @@ public class MainActivity extends Activity {
     private SharedPreferences prefs;
     private ValueCallback<Uri[]> fileCb;
     private PermissionRequest pendingPermission;
+    private LocalMediaServer mediaServer;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+
+        // 本地媒体服务：WebView 里本机曲库经 127.0.0.1:8090 流式播放
+        mediaServer = new LocalMediaServer(this, 8090);
+        mediaServer.start();
 
         web = new WebView(this);
         web.setBackgroundColor(Color.BLACK);
@@ -84,6 +90,31 @@ public class MainActivity extends Activity {
         String sv = prefs.getString(KEY_SERVER, "");
         if (sv.isEmpty()) showMenu(true);
         else loadServer(sv);
+    }
+
+    /** 沉浸式全屏：隐藏状态栏/导航栏，下滑临时呼出 */
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) hideSystemUi();
+    }
+
+    private void hideSystemUi() {
+        android.view.View d = getWindow().getDecorView();
+        if (Build.VERSION.SDK_INT >= 30) {
+            android.view.WindowInsetsController ic = d.getWindowInsetsController();
+            if (ic != null) {
+                ic.hide(android.view.WindowInsets.Type.statusBars() | android.view.WindowInsets.Type.navigationBars());
+                ic.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+        } else {
+            d.setSystemUiVisibility(android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    | android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+        }
     }
 
     private void loadServer(String sv) {
@@ -257,6 +288,16 @@ public class MainActivity extends Activity {
             }
             fileCb.onReceiveValue(out);
             fileCb = null;
+        } else if (requestCode == REQ_TREE && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            // SAF 文件夹选择成功：持久化读权限 → 后台递归扫描音频 → 通知页面刷新
+            try {
+                getContentResolver().takePersistableUriPermission(data.getData(),
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (Exception ignored) {}
+            Toast.makeText(this, "正在扫描本机曲库…", Toast.LENGTH_SHORT).show();
+            LocalMusicStore.scanAsync(this, data.getData(), count ->
+                    runOnUiThread(() -> web.evaluateJavascript(
+                            "window.localScanDone&&localScanDone(" + count + ")", null)));
         } else {
             super.onActivityResult(requestCode, resultCode, data);
         }
@@ -327,6 +368,36 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void editServer() {
             runOnUiThread(() -> showMenu(false));
+        }
+
+        /** 打开系统文件夹选择器（SAF 目录树），扫完回调 window.localScanDone(n) */
+        @JavascriptInterface
+        public void pickMusicFolder() {
+            runOnUiThread(() -> {
+                try {
+                    startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_TREE);
+                } catch (Exception e) {
+                    Toast.makeText(MainActivity.this, "本系统不支持文件夹选择器", Toast.LENGTH_LONG).show();
+                }
+            });
+        }
+
+        /** 本机曲库索引 JSON：[{id,name,ext,size,uri}] */
+        @JavascriptInterface
+        public String localListJson() {
+            return LocalMusicStore.listJson(MainActivity.this);
+        }
+
+        /** 本机音频播放地址（127.0.0.1 本地流服务，带 Range 支持拖动进度） */
+        @JavascriptInterface
+        public String localPlayUrl(int id) {
+            return "http://127.0.0.1:8090/local/" + id;
+        }
+
+        /** 清空本机曲库索引 */
+        @JavascriptInterface
+        public boolean clearLocal() {
+            return LocalMusicStore.clear(MainActivity.this);
         }
     }
 

@@ -335,6 +335,15 @@ html,body{width:100%;height:100%;width:100vw;height:100vh;overflow:hidden;backgr
 #lyrics-panel .lyrics-line.near{font-size:25px;color:rgba(255,255,255,.48)}
 #lyrics-panel.no-lyrics .lyrics-inner{display:none}
 #lyrics-panel.no-lyrics:after{content:'暂无 LRC 歌词';font-size:22px;color:rgba(255,255,255,.55)}
+/* 竖屏(mobile 布局)歌词尺寸：竖屏宽度只有横屏一半左右，固定 px 的字号会挤成
+   一团或超宽截断，改按视口宽度比例缩放（vw）。播放 MP3(纯音频)时歌词就是
+   主视觉，竖屏下同样适用这套尺寸。 */
+html[data-layout="mobile"] #lyrics-panel{padding:16px 5%}
+html[data-layout="mobile"] #lyrics-panel .lyrics-inner{width:96%;max-width:none;gap:6px}
+html[data-layout="mobile"] #lyrics-panel .lyrics-line{font-size:4vw;line-height:1.25;min-height:5vw}
+html[data-layout="mobile"] #lyrics-panel .lyrics-line.near{font-size:5.2vw}
+html[data-layout="mobile"] #lyrics-panel .lyrics-line.current{font-size:8vw}
+html[data-layout="mobile"] #lyrics-panel.no-lyrics:after{font-size:4.6vw}
 /* QR - 修复双码 */
 #qr-corner{position:absolute;top:10px;right:10px;background:rgba(0,0,0,.65);
   backdrop-filter:blur(8px);border-radius:12px;padding:8px;text-align:center;z-index:4;pointer-events:none}
@@ -995,9 +1004,14 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
   <div class="ps"><div class="ph"><h3>🎼 LX 音源</h3><div class="pc" data-f onclick="closePanel('lxsrc')">✕</div></div>
   <div class="pb">
     <div class="set-r"><span class="set-l">当前音源</span><span class="set-v" id="lx-src-cur">未导入</span></div>
-    <div style="display:flex;gap:10px;margin:14px 0">
-      <input id="lx-url" data-f placeholder="粘贴音源脚本链接（http… .js）" style="flex:1;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.2);border-radius:10px;padding:10px 14px;outline:none;color:#fff;font-size:16px">
+    <div style="display:flex;gap:10px;margin:14px 0 8px">
+      <input id="lx-url" data-f placeholder="在线导入：粘贴音源脚本链接（http… .js）" style="flex:1;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.2);border-radius:10px;padding:10px 14px;outline:none;color:#fff;font-size:16px">
       <button class="btn-add" data-f onclick="lxImportSrc()">导入</button>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;margin:0 0 6px">
+      <input type="file" id="lx-file" accept=".js,text/javascript" style="display:none" onchange="lxImportFile(this.files)">
+      <button class="btn-add" data-f onclick="document.getElementById('lx-file').click()">📁 从本机文件导入</button>
+      <span id="lx-file-name" style="color:var(--sub);font-size:13px"></span>
     </div>
     <div id="lx-src-list"></div>
     <div style="color:var(--sub);font-size:13px;margin-top:10px;line-height:1.6">支持 lx-music 自定义音源脚本（.js）。导入后「点唱榜」里的歌本地没有时会自动下载到曲库（/mv/歌手名/）。也可在电脑浏览器打开曲库管理后台导入。</div>
@@ -2439,6 +2453,22 @@ async function lxImportSrc(){
     refreshLxSrcBadge();
   }catch(e){showToast('⚠️ 导入失败：'+e.message);}
 }
+// 本地文件导入：读入 .js 脚本文本走 {script} 字段（服务端与 URL 导入同一入口）
+async function lxImportFile(files){
+  const f=files&&files[0];
+  if(!f)return;
+  document.getElementById('lx-file-name').textContent=f.name;
+  showToast('音源导入中…');
+  try{
+    const text=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(r.error);r.readAsText(f);});
+    const r=await fetch('/api/lx/source',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({script:text})}).then(x=>x.json());
+    if(r.error){showToast('⚠️ '+r.error);return;}
+    showToast(`✅ 已导入并启用：${r.name}`);
+    document.getElementById('lx-file-name').textContent='';
+    lxRenderSrcList();
+    refreshLxSrcBadge();
+  }catch(e){showToast('⚠️ 导入失败：'+e.message);}
+}
 async function lxActivateSrc(id){
   try{
     const r=await fetch(`/api/lx/source/${id}/activate`,{method:'POST'}).then(x=>x.json());
@@ -2467,11 +2497,29 @@ let localSongsCache=null;
 function localDB(){return new Promise((res,rej)=>{const r=indexedDB.open('tv-local-media',1);r.onupgradeneeded=()=>{r.result.createObjectStore('songs',{keyPath:'id',autoIncrement:true});};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
 function localStore(db,mode){return db.transaction('songs',mode).objectStore('songs');}
 async function localList(refresh){
+  if(HAS_APP_LIB())return appLocalList(refresh);
   if(localSongsCache&&!refresh)return localSongsCache;
   const db=await localDB();
   localSongsCache=await new Promise((res,rej)=>{const rq=localStore(db,'readonly').getAll();rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error);});
   return localSongsCache;
 }
+// App 内本机曲库：索引由原生层维护（SAF 目录树扫描 → JSON），音频流经
+// 127.0.0.1:8090 本地服务播放；浏览器端仍走 IndexedDB。两路对外结构一致。
+const HAS_APP_LIB=()=>!!(window.KtvBridge&&window.KtvBridge.localListJson);
+let appLibCache=null;
+async function appLocalList(refresh){
+  if(appLibCache&&!refresh)return appLibCache;
+  try{
+    const arr=JSON.parse(window.KtvBridge.localListJson()||'[]');
+    appLibCache=arr.map(it=>Object.assign(parseLocalName(it.name||''),{id:it.id,ext:it.ext||'',size:it.size||0}));
+  }catch(e){appLibCache=[];}
+  return appLibCache;
+}
+// 原生扫描完成回调（MainActivity 扫完目录树后 evaluateJavascript 调用）
+window.localScanDone=function(n){
+  appLibCache=null;
+  localList(true).then(()=>{updateLocalBadge();hideToast();showToast(`✅ 本机曲库扫描完成：${n} 首`);});
+};
 // 文件名解析："歌手 - 歌名.mp3" → artist+title；无分隔符则整名当歌名
 function parseLocalName(fn){
   const base=fn.replace(/\.[^.]+$/,'');
@@ -2479,7 +2527,12 @@ function parseLocalName(fn){
   if(m.length>=2)return{artist:m[0].trim(),title:m.slice(1).join(' - ').trim()};
   return{artist:'',title:base.trim()};
 }
-function pickLocalFolder(){const inp=document.getElementById('local-dir-input');inp.value='';inp.click();}
+function pickLocalFolder(){
+  // 安卓 App：原生 SAF 文件夹选择器（DocumentsContract 目录树扫描），扫完回调 window.localScanDone(n)；
+  // 浏览器：webkitdirectory 文件夹选择
+  if(window.KtvBridge&&window.KtvBridge.pickMusicFolder){showToast('正在打开文件夹选择器…');window.KtvBridge.pickMusicFolder();return;}
+  const inp=document.getElementById('local-dir-input');inp.value='';inp.click();
+}
 function pickLocalFiles(){const inp=document.getElementById('local-file-input');inp.value='';inp.click();}
 // Android 7~14 兼容：File → ArrayBuffer（FileReader 全版本支持，不用 file.arrayBuffer()）；
 // IndexedDB 存 ArrayBuffer（部分老内核不支持存 Blob）；播放时按扩展名还原 MIME 再建 Blob。
@@ -2505,23 +2558,36 @@ async function onLocalFilesChosen(files,mode){
   hideToast();showToast(`✅ 已导入 ${audio.length} 首本机音频`);
 }
 async function clearLocalSongs(){
+  if(HAS_APP_LIB()){
+    window.KtvBridge.clearLocal();
+    appLibCache=null;
+    await localList(true);updateLocalBadge();showToast('已清空本机曲库');
+    return;
+  }
   const db=await localDB();
   await new Promise((res,rej)=>{const rq=localStore(db,'readwrite').clear();rq.onsuccess=res;rq.onerror=()=>rej(rq.error);});
   localSongsCache=[];updateLocalBadge();showToast('已清空本机音频');
 }
-function updateLocalBadge(){const el=document.getElementById('s-locals');if(el)el.textContent=(localSongsCache||[]).length+'首';}
+function updateLocalBadge(){
+  const el=document.getElementById('s-locals');if(!el)return;
+  const n=HAS_APP_LIB()?((appLibCache||[]).length):((localSongsCache||[]).length);
+  el.textContent=n+'首';
+}
 // 本机插播：不动服务器队列（baseQueueId 记住插播时的队列状态），播完自动接队列下一首
 async function playLocalSong(id){
   const list=await localList();const s=list.find(x=>x.id===id);if(!s)return;
-  if(localPlay.url){try{URL.revokeObjectURL(localPlay.url);}catch(e){}}
-  const blob=new Blob([s.buf],{type:LOCAL_MIME[s.ext]||'audio/mpeg'});
-  localPlay.url=URL.createObjectURL(blob);
+  // App 内：原生本地服务流式播放；浏览器：IndexedDB blob → objectURL
+  if(!HAS_APP_LIB()){
+    if(localPlay.url){try{URL.revokeObjectURL(localPlay.url);}catch(e){}}
+    const blob=new Blob([s.buf],{type:LOCAL_MIME[s.ext]||'audio/mpeg'});
+    localPlay.url=URL.createObjectURL(blob);
+  }
   localPlay.active=true;localPlay.baseQueueId=curSong?curSong.queue_id:null;
   // 本机歌曲无参考音高曲线，评分挂起（UI 隐藏，ended 结算跳过）
   scoreState.ended=true;
   document.querySelectorAll('.pd.open,.pd-full.open').forEach(p=>p.classList.remove('open'));
   destroyHls();
-  video.src=localPlay.url;
+  video.src=HAS_APP_LIB()?('http://127.0.0.1:8090/local/'+id):localPlay.url;
   document.getElementById('now-idle').style.display='none';
   video.style.display='none';
   document.getElementById('lyrics-panel').classList.remove('show','no-lyrics');
@@ -2560,11 +2626,13 @@ async function appendLocalMatches(el,q){
 }
 if(IS_ANDROID){
   const rs=document.getElementById('row-local-scan'),rf=document.getElementById('row-local-files'),rc=document.getElementById('row-local-clear');
-  // webkitdirectory 属性不存在（老内核/部分安卓 WebView）时隐藏文件夹入口，文件多选始终可用
+  // App 内：文件夹走原生 SAF（真文件夹选择）；"选择音频文件"仅留给浏览器，
+  // 避免 App 里出现两套本机曲库来源。老浏览器无 webkitdirectory 时隐藏文件夹入口。
   const canDir='webkitdirectory' in document.createElement('input');
-  if(rs&&canDir)rs.style.display='';
-  if(rf)rf.style.display='';if(rc)rc.style.display='';
-  localList().then(updateLocalBadge).catch(()=>{});
+  if(rs&&(canDir||HAS_APP_LIB()))rs.style.display='';
+  if(rf&&!HAS_APP_LIB())rf.style.display='';
+  if(rc)rc.style.display='';
+  localList(true).then(updateLocalBadge).catch(()=>{});
 }
 // 安卓 APK 桥接：显示「服务器地址」行（点击唤起原生重新配置对话框）
 if(window.KtvBridge){
