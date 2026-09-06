@@ -981,6 +981,7 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
     <div class="set-r" data-f style="cursor:pointer" onclick="toggleAutoPlay()"><span class="set-l">首页自动播放</span><span class="set-v" id="s-autoplay">关</span></div>
     <div class="set-r" data-f style="cursor:pointer" onclick="toggleDlFormat()"><span class="set-l">点唱榜下载格式</span><span class="set-v" id="s-dlfmt">MP3</span></div>
     <div class="set-r" data-f style="cursor:pointer" onclick="doScan()" data-page-node-id="h6eOYDLjT1y806yq5yzV4w"><span class="set-l" data-page-node-id="0lPmMUEA9nLgTt7ocIa4Pb">重新扫描曲库</span><span style="color:var(--ac2)" data-page-node-id="swWFQDPZvYroJ32yMv4cyN">▶ 扫描</span></div>
+    <div class="set-r" data-f id="row-app-server" style="cursor:pointer;display:none" onclick="window.KtvBridge&&window.KtvBridge.editServer()"><span class="set-l">服务器地址</span><span class="set-v" id="s-app-server">—</span></div>
     <div class="set-r" data-f id="row-local-scan" style="cursor:pointer;display:none" onclick="pickLocalFolder()"><span class="set-l">扫描本机文件夹</span><span class="set-v" id="s-locals">0首</span></div>
     <div class="set-r" data-f id="row-local-files" style="cursor:pointer;display:none" onclick="pickLocalFiles()"><span class="set-l">选择音频文件</span><span style="color:var(--ac2)">＋</span></div>
     <div class="set-r" data-f id="row-local-clear" style="cursor:pointer;display:none" onclick="clearLocalSongs()"><span class="set-l">清空本机音频</span><span style="color:#ff7a93">🗑</span></div>
@@ -1188,6 +1189,9 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
 <div id="toast" data-page-node-id="VF2hSgCkDUsShzUkRIvq79"></div>
 <script>
 const BASE=location.origin,MOBILE=BASE+'/m';
+// 本地模式：安卓 APK 无服务器时从 file:///android_asset/tv/index.html 加载。
+// 此时只保留本机音频扫描/播放等本地能力，服务端相关功能（队列/WS/点唱榜/自动播放）全部跳过。
+const LOCAL_MODE=location.protocol==='file:'||/[?&]local=/.test(location.search);
 const nowPanel=document.getElementById('now-panel');
 const video=document.getElementById('ktv-video');
 // 右上角时钟
@@ -1200,12 +1204,14 @@ function updateClock(){
 updateClock();
 setInterval(updateClock,1000);
 function devId(){let id=localStorage.getItem('jydev');if(!id){id='tv-'+Math.random().toString(36).substr(2,9);localStorage.setItem('jydev',id);}return id;}
-// QR
+// QR（本地模式下无服务器，二维码无意义，且可能离线没有 CDN 的 qrcode 库）
+if(!LOCAL_MODE){
 (function(){const q=document.getElementById('home-qr');q.innerHTML='';new QRCode(q,{text:MOBILE,width:88,height:88,colorDark:'#07071a',correctLevel:QRCode.CorrectLevel.M});})();
 // 需求4：手机端点击"扫码点歌"文字后弹出的浮层里，另外渲染一份更大尺寸的二维码
 // （同一个 MOBILE 链接），供观看者自己截图/让同伴扫码，不依赖上面那个已被
 // CSS 隐藏的小二维码节点。
 (function(){const q=document.getElementById('home-qr-popup');if(!q)return;q.innerHTML='';new QRCode(q,{text:MOBILE,width:200,height:200,colorDark:'#07071a',correctLevel:QRCode.CorrectLevel.M});})();
+}
 // ═══════════════════════════════════════════════
 // VoiceManager：统一原唱/伴唱切换接口
 // 类型1（声道型）：单音频流立体声，左=伴唱，右=原唱，切换时复制声道到双耳
@@ -1517,7 +1523,7 @@ function setConnStatus(ok){
   el.title=ok?'已连接到后端服务器':'与后端服务器连接已断开，正在自动重连…';
 }
 function connectWS(){const ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws`);ws.onopen=()=>setConnStatus(true);ws.onmessage=ev=>{const m=JSON.parse(ev.data);if(m.type==='queue'){queueData=m.data;renderAll();}if(m.type==='control')handleRemote(m);};ws.onclose=()=>{setConnStatus(false);setTimeout(connectWS,2000);};ws.onerror=()=>setConnStatus(false);window._ws=ws;}
-connectWS();
+if(!LOCAL_MODE)connectWS();
 function renderAll(){
   const playing=queueData.find(q=>q.status==='playing');
   document.getElementById('qbadge').textContent=queueData.length;
@@ -2237,6 +2243,17 @@ let st2;
 // 这里改为"首屏 60 首 + 加载更多"：每屏仍只渲染/传输一小批，既不卡又能翻到底。
 let searchRequestId=0,searchQ='',searchOffset=0;const SEARCH_PG=60;
 function doSearch(q){
+  if(LOCAL_MODE){ // 本地模式：无服务器，只搜本机音频
+    clearTimeout(st2);
+    st2=setTimeout(()=>{
+      searchQ=q.trim();searchOffset=0;
+      const el=document.getElementById('pl-search');el.innerHTML='';
+      appendLocalMatches(el,searchQ);
+      if(!el.children.length)el.innerHTML='<div style="color:var(--sub);text-align:center;padding:30px">暂无歌曲</div>';
+      updateSearchMore(false);
+    },200);
+    return;
+  }
   clearTimeout(st2);
   st2=setTimeout(async()=>{
     const requestId=++searchRequestId;
@@ -2278,7 +2295,13 @@ function updateSearchMore(hasMore){
   const b=document.getElementById('search-more');
   if(b)b.style.display=hasMore?'inline-block':'none';
 }
-function loadSettings(){document.getElementById('s-host').textContent=location.host;fetch('/api/stats').then(r=>r.json()).then(d=>document.getElementById('s-songs').textContent=d.songCount+'首');}
+function loadSettings(){
+  document.getElementById('s-host').textContent=LOCAL_MODE?'本地模式':location.host;
+  const srv=document.getElementById('s-app-server');
+  if(srv)srv.textContent=(window.KtvBridge&&window.KtvBridge.getServer())||'—';
+  if(LOCAL_MODE)return;
+  fetch('/api/stats').then(r=>r.json()).then(d=>document.getElementById('s-songs').textContent=d.songCount+'首');
+}
 // ===== LX Music 点唱榜 =====
 // 榜单来自服务端内置酷我源（KTV点唱榜默认置前）；点歌时服务端先查本地曲库，
 // 没有则用已导入的 LX 音源解析下载链接 → 转码 mp3 → 存到曲库目录（/mv/歌手名/）
@@ -2448,7 +2471,7 @@ function localStop(){localPlay.active=false;if(localPlay.url){try{URL.revokeObje
 video.addEventListener('ended',()=>{if(!localPlay.active)return;localStop();fetch('/api/queue/next',{method:'POST'});});
 // 搜索结果里追加本机音频匹配（「本地」标签 + 播放按钮）
 async function appendLocalMatches(el,q){
-  if(!IS_ANDROID)return;
+  if(!IS_ANDROID&&!LOCAL_MODE)return;
   const list=await localList();
   const kw=(q||'').trim().toLowerCase();
   const hits=kw?list.filter(s=>(s.title+' '+(s.artist||'')).toLowerCase().includes(kw)):[];
@@ -2468,6 +2491,12 @@ if(IS_ANDROID){
   if(rs&&canDir)rs.style.display='';
   if(rf)rf.style.display='';if(rc)rc.style.display='';
   localList().then(updateLocalBadge).catch(()=>{});
+}
+// 安卓 APK 桥接：显示「服务器地址」行（点击唤起原生重新配置对话框）
+if(window.KtvBridge){
+  const row=document.getElementById('row-app-server');
+  if(row)row.style.display='';
+  if(loadSettings)loadSettings();
 }
 // 开启后：TV 空闲在首页且队列无歌（无 playing/pending）时，延迟几秒自动从全曲库
 // 随机点一首进队列（nickname='自动播放'），走正常队列流程播出；避开最近自动播过的歌。
@@ -2505,7 +2534,7 @@ async function pickRandomSong(){
   return null;
 }
 function maybeAutoPlay(delay){
-  if(!autoPlay)return;
+  if(!autoPlay||LOCAL_MODE)return;
   clearTimeout(autoPlayTimer);
   const idle=!queueData.some(q=>q.status==='playing'||q.status==='pending');
   if(!idle)return;
@@ -2522,7 +2551,7 @@ function maybeAutoPlay(delay){
   },delay||8000);
 }
 updateAutoPlayUI();
-async function doScan(){showToast('扫描中…');let d;try{d=await fetch('/api/scan',{method:'POST'}).then(r=>r.json());}catch(e){showToast('⚠️ 扫描请求失败：'+e.message);return;}if(d.error==='MV_DIR_UNAVAILABLE'){showToast('⚠️ 曲库目录暂时无法访问，请检查挂载后重试');return;}if(d.ok===false){showToast('⚠️ 扫描出错：'+(d.error||'未知错误'));return;}showToast(`扫描完成：${d.total}首，新增${d.added}首，移除${d.removed||0}首`);allSongs=[];loadSettings();}
+async function doScan(){if(LOCAL_MODE){showToast('本地模式下无需扫描曲库');return;}showToast('扫描中…');let d;try{d=await fetch('/api/scan',{method:'POST'}).then(r=>r.json());}catch(e){showToast('⚠️ 扫描请求失败：'+e.message);return;}if(d.error==='MV_DIR_UNAVAILABLE'){showToast('⚠️ 曲库目录暂时无法访问，请检查挂载后重试');return;}if(d.ok===false){showToast('⚠️ 扫描出错：'+(d.error||'未知错误'));return;}showToast(`扫描完成：${d.total}首，新增${d.added}首，移除${d.removed||0}首`);allSongs=[];loadSettings();}
 // 遥控
 function handleRemote(m){switch(m.action){case 'play_pause':togglePause();break;case 'next':cutSong();break;case 'voice':toggleVoice();break;case 'repeat':restartSong();break;case 'score':toggleScore();break;case 'fullscreen':isFS?exitKtvFullscreen():enterFullscreen();break;case 'home':if(isFS)exitKtvFullscreen();break;case 'focus_up':moveFocus('up');break;case 'focus_down':moveFocus('down');break;case 'focus_left':moveFocus('left');break;case 'focus_right':moveFocus('right');break;case 'ok':activateFocused();break;case 'back':closeTopPanel();break;}}
 // Fix2：全屏时焦点只在全屏覆盖层，主页时排除全屏层
@@ -2763,7 +2792,7 @@ function fitArtistGrid(){
 window.fitArtistGrid=fitArtistGrid;
 window.addEventListener('resize',fitArtistGrid);
 window.addEventListener('orientationchange',fitArtistGrid);
-fetch('/api/queue').then(r=>r.json()).then(d=>{queueData=d;renderAll();});
+if(!LOCAL_MODE)fetch('/api/queue').then(r=>r.json()).then(d=>{queueData=d;renderAll();});else renderAll();
 </script>
 </body>
 </html>

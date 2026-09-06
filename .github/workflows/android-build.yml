@@ -1,0 +1,50 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # TV 页面以服务端 web/tv 为唯一来源，构建时打进 APK assets（本地模式用）
+      - name: Bundle TV web page into assets
+        run: |
+          mkdir -p android/app/src/main/assets/tv
+          cp app/docker/web/tv/index.html android/app/src/main/assets/tv/
+          cp -r app/docker/web/tv/fonts android/app/src/main/assets/tv/fonts
+          cp app/docker/web/tv/silent-loop.mp4 android/app/src/main/assets/tv/
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Build debug APK
+        run: gradle -p android assembleDebug --no-daemon
+
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk junyao-ktv.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: junyao-ktv-apk
+          path: junyao-ktv.apk
+
+      - name: Release on tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: junyao-ktv.apk

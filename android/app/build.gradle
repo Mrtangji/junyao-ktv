@@ -1,0 +1,28 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'cn.junyao.ktv'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'cn.junyao.ktv'
+        minSdk 21          // Android 5+；实际覆盖 Android 7~14
+        targetSdk 34
+        versionCode 1
+        versionName '1.0.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+}
+
+// 零第三方依赖：纯 android.app.Activity + WebView，无需 AndroidX
+dependencies {}
