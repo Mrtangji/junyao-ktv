@@ -1,7 +1,7 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<html lang="zh-CN" data-page-node-id="ACQPtoGUSWuZNlJYHnWmbk">
+<head data-page-node-id="cOxjlvaGqxUyY5mHvm23sq">
+<meta charset="UTF-8" data-page-node-id="086iskn51G8EzzzbXD2QjH"><meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" data-page-node-id="DClLiATJFwbVtRKUE1vODo">
 <script>
 // Bug6修复：部分电视/机顶盒内置浏览器的内核比较老，对 <meta name="viewport"> 的
 // "width=device-width" 支持不完整或干脆不生效——网页依然按某个固定的、比实际
@@ -495,6 +495,10 @@ html,body{width:100%;height:100%;width:100vw;height:100vh;overflow:hidden;backgr
   background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.12);transition:.15s;color:#fff}
 .ak:hover,.ak[data-f].focused{background:var(--g6);border-color:transparent;transform:scale(1.08)}
 .ak.sel{background:var(--g6);border-color:transparent}
+/* 语言筛选条：6 个两字标签(全部/中文/粤语/英语/韩语/日语)用 flex 自适应换行，
+   避免套用字母键盘的固定网格导致换行后参差不齐。 */
+.lang-bar{display:flex;flex-wrap:wrap;gap:7px;padding:4px}
+.lang-bar .ak{height:44px;font-size:18px;min-width:64px;flex:0 0 auto;font-weight:600}
 .ak-clr{background:rgba(255,79,155,.15);border-color:rgba(255,79,155,.3);color:#fff;grid-column:span 2;font-size:17px;font-weight:600}
 .ak-clr:hover,.ak-clr[data-f].focused{background:rgba(255,79,155,.4);border-color:var(--pink);color:#fff;transform:scale(1.08)}
 /* 歌手网格 */
@@ -818,281 +822,309 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
 }
 </style>
 </head>
-<body>
-<div id="bg"></div>
-<div id="home">
-  <nav id="topbar">
-    <div class="logo">骏耀K歌</div>
-    <button class="nb" data-f onclick="openPanel('search')"><span class="nbi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span> 搜索</button>
-    <button class="nb" data-f onclick="openPanel('queue')"><span class="nbi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span> 已点<span class="badge" id="qbadge">0</span></button>
-    <div id="conn-status" class="conn-badge bad" title="与后端服务器连接状态"><span class="nbi" id="conn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg></span><span id="conn-lbl">连接中…</span></div>
-    <div class="sp"></div>
-    <div id="clock-badge"><div id="clock-time">--:--</div><div id="clock-date">----/--/-- 星期-</div></div>
+<body data-page-node-id="Ilno3zzU7bDySpH0pPHqC3">
+<div id="bg" data-page-node-id="i9aIQLsT1HynLAWYCLXnaC"></div>
+<div id="home" data-page-node-id="8oOTmL8A3sj2ElbWYBms9a">
+  <nav id="topbar" data-page-node-id="EBr6ylJUrKr6EIdvmvkIrZ">
+    <div class="logo" data-page-node-id="YLKCXvwIO23u3tR04QDXaG">骏耀K歌</div>
+    <button class="nb" data-f onclick="openPanel('search')" data-page-node-id="GSaZpgd0UpQaeY6Kyl38Rs"><span class="nbi" data-page-node-id="WvdU8Tu9zTbQGifQM96Gfa"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="7JflCP5JqoPXp7QzrfhtZd"><circle cx="11" cy="11" r="8" data-page-node-id="enH92CJ2GjOQDqikYJa8oE"/><line x1="21" y1="21" x2="16.65" y2="16.65" data-page-node-id="ALvBaoEFh8DsgVm27CzgS6"/></svg></span> 搜索</button>
+    <button class="nb" data-f onclick="openPanel('queue')" data-page-node-id="1zNRtboVDkD1SB8ql61K4k"><span class="nbi" data-page-node-id="OXWCAicjnV8vQEbQ9jFo5E"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="2EXAswOYuUhn3XNkLZoFDa"><line x1="8" y1="6" x2="21" y2="6" data-page-node-id="MoQeIU5JBA7pgv99xHjUi9"/><line x1="8" y1="12" x2="21" y2="12" data-page-node-id="xMKemmIbUy0NbcYPL5CmIW"/><line x1="8" y1="18" x2="21" y2="18" data-page-node-id="pb2cEx2hfVPByayvtp7P9B"/><line x1="3" y1="6" x2="3.01" y2="6" data-page-node-id="mMs6X8PCCaBuvlFw3jZDxK"/><line x1="3" y1="12" x2="3.01" y2="12" data-page-node-id="KASvWi9jFyqHeSfdWBtZOE"/><line x1="3" y1="18" x2="3.01" y2="18" data-page-node-id="COkG9ZGVootMeCtMg62Thv"/></svg></span> 已点<span class="badge" id="qbadge" data-page-node-id="RY5mHWXM4hCUTKhLMKZ9NU">0</span></button>
+    <div id="conn-status" class="conn-badge bad" title="与后端服务器连接状态" data-page-node-id="vgL6oR40cn7bcM1tRpMbZ8"><span class="nbi" id="conn-icon" data-page-node-id="WtE2QwzJa8hqZo6w69MEJD"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="bHSPxQzRFEN5moHpzaJ1RW"><line x1="1" y1="1" x2="23" y2="23" data-page-node-id="0YupJei1yvG0ur9JVmuleq"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55" data-page-node-id="yNkChTByxaGpPEzkfWsyom"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39" data-page-node-id="7BvxmushcFIHpbfxBFfqFX"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9" data-page-node-id="0F6CCQNncx4KTa3RSW0dYp"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88" data-page-node-id="atORBOE49xRWvoRmW0PxWS"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0" data-page-node-id="6KNKGQNmXD63iUGps2qD9d"/><line x1="12" y1="20" x2="12.01" y2="20" data-page-node-id="jKX6GqFSZkjBAUjobcIewb"/></svg></span><span id="conn-lbl" data-page-node-id="okyuHZzVoUs7tc9cMJkBsW">连接中…</span></div>
+    <div class="sp" data-page-node-id="y0xqKwTUbUwSPeBxHAEdWH"></div>
+    <div id="clock-badge" data-page-node-id="00ohDmruIGpYpY6GJ74A8o"><div id="clock-time" data-page-node-id="xYnPPGs8MSv5kFD0VOwB4y">--:--</div><div id="clock-date" data-page-node-id="8hMECVAyN7AQCjxofqGnF9">----/--/-- 星期-</div></div>
   </nav>
-  <div id="grid">
-    <div id="now-col">
-      <div id="now-panel" data-f onclick="enterFullscreen()">
-        <video id="ktv-video" class="video-home" playsinline></video>
-        <div id="lyrics-panel"><div class="lyrics-inner"></div></div>
-        <div id="video-loading"><div class="vl-spinner"></div><div class="vl-text">加载中…</div></div>
-        <div id="now-idle"><div class="idle-big">骏耀K歌</div><div class="idle-sub">扫码点歌 · 大屏沉浸演唱</div></div>
-        <div id="now-info"><div class="ni-t" id="ni-title">—</div><div class="ni-m" id="ni-meta">—</div></div>
-        <div id="qr-corner" onclick="event.stopPropagation();openPanel('qr')"><div id="home-qr"></div><div class="qr-lbl">扫码点歌</div></div>
+  <div id="grid" data-page-node-id="qAT2Q3Q12IeKG7KxqzVKCM">
+    <div id="now-col" data-page-node-id="UDYQZACVnTcGiR41Gx0UXi">
+      <div id="now-panel" data-f onclick="enterFullscreen()" data-page-node-id="9BFcbzKQ5GuFkciJdHgcsP">
+        <video id="ktv-video" class="video-home" playsinline data-page-node-id="d43pf3Sm8ciauyP9xQ73Aq"></video>
+        <div id="lyrics-panel" data-page-node-id="h5Aaq1A2mpMlWfzmb2rRa6"><div class="lyrics-inner" data-page-node-id="F43q6UukU0IIiZ1HKytMZQ"></div></div>
+        <div id="video-loading" data-page-node-id="NEb1OS7JJXbHATFAdPnkIh"><div class="vl-spinner" data-page-node-id="Fc1f44Dr25zHRFxOTfYtD3"></div><div class="vl-text" data-page-node-id="DbilR9hBMJUN9ZAi5WuTFC">加载中…</div></div>
+        <div id="now-idle" data-page-node-id="xBcJhF7Oq0WR5toa0MUQ1Q"><div class="idle-big" data-page-node-id="RULzbYxLwsAeZn2ptiBZEM">骏耀K歌</div><div class="idle-sub" data-page-node-id="Wh0k3Tncx2C9fhJBhGggXS">扫码点歌 · 大屏沉浸演唱</div></div>
+        <div id="now-info" data-page-node-id="QHFGco8GotH7KvedlbBlxJ"><div class="ni-t" id="ni-title" data-page-node-id="d0WK23u1kGleGUeq6wZ1ZW">—</div><div class="ni-m" id="ni-meta" data-page-node-id="Qtr5aJaSpqEU9vscFhnhYT">—</div></div>
+        <div id="qr-corner" onclick="event.stopPropagation();openPanel('qr')" data-page-node-id="P0eHgJTQAO47pOFlv4f6Fw"><div id="home-qr" data-page-node-id="brgi7vMiMQjeO14zhEUGN4"></div><div class="qr-lbl" data-page-node-id="8ToTlRf6Pc7sWMgr37NIeo">扫码点歌</div></div>
       </div>
-      <div id="mv-ctrl">
-        <button class="mvbtn" data-f onclick="openPanel('eq')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg><span class="mvlbl">均衡器</span></button>
-        <button class="mvbtn" data-f id="btn-voice" onclick="toggleVoice()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg><span class="mvlbl">原/伴唱</span></button>
-        <button class="mvbtn" data-f onclick="adjVolume(-0.1)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="10 5 5.5 9 2 9 2 15 5.5 15 10 19 10 5" fill="currentColor" stroke="none"/><line x1="15" y1="12" x2="22" y2="12"/></svg><span class="mvlbl">音量-</span></button>
-        <button class="mvbtn" data-f id="mv-pause-btn" onclick="togglePause()"><span id="picon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"/></svg></span><span class="mvlbl" id="plbl2">播放</span></button>
-        <button class="mvbtn" data-f onclick="adjVolume(0.1)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="10 5 5.5 9 2 9 2 15 5.5 15 10 19 10 5" fill="currentColor" stroke="none"/><line x1="15" y1="12" x2="22" y2="12"/><line x1="18.5" y1="8.5" x2="18.5" y2="15.5"/></svg><span class="mvlbl">音量+</span></button>
-        <button class="mvbtn" data-f onclick="cutSong()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 14 12 5 20 5 4" fill="currentColor" stroke="none"/><line x1="18" y1="4" x2="18" y2="20"/></svg><span class="mvlbl">切歌</span></button>
-        <button class="mvbtn" data-f onclick="restartSong()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg><span class="mvlbl">重唱</span></button>
+      <div id="mv-ctrl" data-page-node-id="BZ0kjKZ2ZX0DWI3ImYxeTE">
+        <button class="mvbtn" data-f onclick="openPanel('eq')" data-page-node-id="SYVpu5TRMwez1wf6M70PGU"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="RQtvp4DgZXp3FMULmWq3yk"><line x1="4" y1="21" x2="4" y2="14" data-page-node-id="r0HCpRdBrthFtu6yvcvzLJ"/><line x1="4" y1="10" x2="4" y2="3" data-page-node-id="3ftu1DcusIPnVrvc9gPfIA"/><line x1="12" y1="21" x2="12" y2="12" data-page-node-id="BipWpwyHTY88fiQO15rBN0"/><line x1="12" y1="8" x2="12" y2="3" data-page-node-id="4H6gDUKS0qRJMHPKVUyofr"/><line x1="20" y1="21" x2="20" y2="16" data-page-node-id="LTbz3gzxi1tfWGVnlCV5RG"/><line x1="20" y1="12" x2="20" y2="3" data-page-node-id="pypb35tritdAuhFDRNPVXZ"/><line x1="1" y1="14" x2="7" y2="14" data-page-node-id="DWgMrzKwTh1bPmLjjU8HLx"/><line x1="9" y1="8" x2="15" y2="8" data-page-node-id="beBR2El7ZdqASWzMVIAKeu"/><line x1="17" y1="16" x2="23" y2="16" data-page-node-id="l4BQkQTjWLiZ4igkR6lkhz"/></svg><span class="mvlbl" data-page-node-id="s7fF7fySpNrHGYwJFuIFST">均衡器</span></button>
+        <button class="mvbtn" data-f id="btn-voice" onclick="toggleVoice()" data-page-node-id="6T3gjE9wqhqjHjm1gGBMWf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" data-page-node-id="pqcoT1JABesN62zFMvlkxh"><circle cx="12" cy="12" r="9" data-page-node-id="yImnT5CYCllKuiFhL474bC"/><circle cx="12" cy="12" r="4" data-page-node-id="D1P6oUMIltqGvguzNrEvqx"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" data-page-node-id="Sj6jbx8dh6dxY1Vu8SGonq"/></svg><span class="mvlbl" data-page-node-id="6Ahs2mQtKzw5Io09S2PKKR">原/伴唱</span></button>
+        <button class="mvbtn" data-f onclick="adjVolume(-0.1)" data-page-node-id="vCuYyOuSRRA4BUpgXYilwx"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="akgEo2nyd3fDIHoYhYYyL9"><polygon points="10 5 5.5 9 2 9 2 15 5.5 15 10 19 10 5" fill="currentColor" stroke="none" data-page-node-id="6AyDpaI5yOZu6AuATyej73"/><line x1="15" y1="12" x2="22" y2="12" data-page-node-id="xcZTdO2O0FvJbIQPAfSB82"/></svg><span class="mvlbl" data-page-node-id="HDBLbs56PGMizwk8V2xrBi">音量-</span></button>
+        <button class="mvbtn" data-f id="mv-pause-btn" onclick="togglePause()" data-page-node-id="vBoRyR3T1XFnUO1FvEXsOX"><span id="picon" data-page-node-id="UIPgRsKFBxuqOBQoBzslE9"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" data-page-node-id="FR96e5GuNNZQeAyOqacpRy"><circle cx="12" cy="12" r="10" data-page-node-id="saqkQTajocnDjNPLJOJpo4"/><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none" data-page-node-id="9kFtyEcdD87E9hNaSygbBr"/></svg></span><span class="mvlbl" id="plbl2" data-page-node-id="GNvj0aV89B91l7JcTf2VYt">播放</span></button>
+        <button class="mvbtn" data-f onclick="adjVolume(0.1)" data-page-node-id="8sAhiddeaRB9EUKJgmtK8n"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="s0gjs6AaelcJFYy2ko6Kmb"><polygon points="10 5 5.5 9 2 9 2 15 5.5 15 10 19 10 5" fill="currentColor" stroke="none" data-page-node-id="Q2Jn29TY4xE0ip2FhYyMWI"/><line x1="15" y1="12" x2="22" y2="12" data-page-node-id="JGkWYaMsZ6w5ypf8y6KLzy"/><line x1="18.5" y1="8.5" x2="18.5" y2="15.5" data-page-node-id="kVivTJn6FbxZY03hLAOdqX"/></svg><span class="mvlbl" data-page-node-id="w0JGPSzDWYgUWz3Q5y5HEX">音量+</span></button>
+        <button class="mvbtn" data-f onclick="cutSong()" data-page-node-id="IL1AncOakSTDLLfSGaS7oc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="eUXT9Fv1k6FauEqgV6Na1u"><polygon points="5 4 14 12 5 20 5 4" fill="currentColor" stroke="none" data-page-node-id="KPDWlyaCJ4GFuIMmbSPKXa"/><line x1="18" y1="4" x2="18" y2="20" data-page-node-id="UMbWv3siK3QuGYGP9FpVqp"/></svg><span class="mvlbl" data-page-node-id="gewWMDKuhtzXFcVNaMFoWc">切歌</span></button>
+        <button class="mvbtn" data-f onclick="restartSong()" data-page-node-id="N1CvZv3YvQ9ioKOESry067"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="bKmMd8yrr6w3oRrioNCnhD"><polyline points="23 4 23 10 17 10" data-page-node-id="pSDPWvnCIkPL8dBpeOI3Dl"/><polyline points="1 20 1 14 7 14" data-page-node-id="ipCgnOvCkwe9ScFm4F9SdB"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" data-page-node-id="rWaTc5Ig2Fh8KMWsbzIBVr"/></svg><span class="mvlbl" data-page-node-id="MZyYDYtaHuuaDVFLnICKNg">重唱</span></button>
       </div>
     </div>
-    <div id="mid-cards">
-      <div class="mc mc-name" data-f onclick="openPF('order')"><span class="cn">歌名</span><span class="ci">🎵</span></div>
-      <div class="mc mc-artist" data-f onclick="openPF('artists')"><span class="cn">歌星</span><span class="ci">🎤</span></div>
-      <div class="mc mc-history" data-f onclick="openPF('history')"><span class="cn">常唱</span><span class="ci">⭐</span></div>
-      <div class="mc mc-fav" data-f onclick="openPF('favorites')"><span class="cn">收藏</span><span class="ci">❤️</span></div>
+    <div id="mid-cards" data-page-node-id="JE4Htjq07nWBH6ZOU03yZb">
+      <div class="mc mc-name" data-f onclick="openPF('order')" data-page-node-id="BUsaOUl5SvavM8yC8LfdRM"><span class="cn" data-page-node-id="nol3mOuWLJ3L1m5PBeM4E9">歌名</span><span class="ci" data-page-node-id="lBh5ZthK1p4qyW8bQYTBTE">🎵</span></div>
+      <div class="mc mc-artist" data-f onclick="openPF('artists')" data-page-node-id="dAWGG2xzDfQaShxpXKgrju"><span class="cn" data-page-node-id="dJceYZrWZQHxWKOfUi7Rtn">歌星</span><span class="ci" data-page-node-id="OLtNDAo7Sj0B7rEnLx07cS">🎤</span></div>
+      <div class="mc mc-history" data-f onclick="openPF('history')" data-page-node-id="nnJm8v1HwSEfkcrcfyjA5S"><span class="cn" data-page-node-id="B7GwSt1cYk4XWy5Uwne8x1">常唱</span><span class="ci" data-page-node-id="2orbiQEXbiFaHkpFukKF0T">⭐</span></div>
+      <div class="mc mc-fav" data-f onclick="openPF('favorites')" data-page-node-id="2gUMv3kXb6VnwubXmxRtTe"><span class="cn" data-page-node-id="qgUd5sRolEg25PU4XOQ8DT">收藏</span><span class="ci" data-page-node-id="WA4uXDfGfyMFScwyUnHNkn">❤️</span></div>
     </div>
-    <div id="right-queue">
-      <div class="rq-h">♪ 已点队列<span class="rq-cnt" id="rq-cnt">0首</span></div>
-      <div id="rq-list"><div style="color:var(--sub);font-size:16px;text-align:center;padding:16px">暂无点歌</div></div>
+    <div id="right-queue" data-page-node-id="EtkLRzRQQrf4C7F6pfp4EY">
+      <div class="rq-h" data-page-node-id="29DUP5Nz0KaN2LhLlqOgCB">♪ 已点队列<span class="rq-cnt" id="rq-cnt" data-page-node-id="SkTBIyfsuAaaFNV7twqlGh">0首</span></div>
+      <div id="rq-list" data-page-node-id="VcD09Lc7Qu6d35UVwya6CJ"><div style="color:var(--sub);font-size:16px;text-align:center;padding:16px" data-page-node-id="TP3NAuPUbA0nK7quM6s2nY">暂无点歌</div></div>
     </div>
   </div>
-  <div id="footer">
-    <div class="fb-r">
-      <div class="fb" data-f onclick="openPanel('settings')">⚙ 设置</div>
+  <div id="footer" data-page-node-id="GuYGv4GDO4mWHrsP2JHPoe">
+    <div class="fb-r" data-page-node-id="t3zWoExHajZpKqQCiEoL8U">
+      <div class="fb" data-f onclick="openPanel('settings')" data-page-node-id="NbwtiyjKAGyXGi4uuMpI95">⚙ 设置</div>
     </div>
   </div>
 </div>
-<div id="fs-tap" onclick="showOverlay()"></div>
-<div id="fs-ov">
-  <div id="fs-lyrics"><div class="lyrics-inner"></div></div>
-  <div id="ov-top">
-    <div id="ov-back" onclick="exitKtvFullscreen()">←</div>
-    <div><div id="ov-title">—</div><div id="ov-artist">—</div></div>
+<div id="fs-tap" onclick="showOverlay()" data-page-node-id="iC5pDrpUd0UNbBY3s7gZSE"></div>
+<div id="fs-ov" data-page-node-id="sEmt8YIMWu5HHp6Kd390H1">
+  <div id="fs-lyrics" data-page-node-id="MTCOiQkzzAeeggXpejU3Tc"><div class="lyrics-inner" data-page-node-id="T2xBh5xx6jyl2X0tFAvx1S"></div></div>
+  <div id="ov-top" data-page-node-id="arTRUxi5X7yCZHjNRq1ABC">
+    <div id="ov-back" onclick="exitKtvFullscreen()" data-page-node-id="4mEEIHjhDVtGlsWLOHKp3i">←</div>
+    <div data-page-node-id="UOEEICxbhuCXawTMHJ8HKW"><div id="ov-title" data-page-node-id="BNOLBGi6rqEAV5aumwpMPV">—</div><div id="ov-artist" data-page-node-id="61IEE0t3lCnxFLl6GgIcI7">—</div></div>
   </div>
-  <div id="ov-bot">
-    <div id="prog-bar" onclick="seekVideo(event)"><div id="prog-fill"></div></div>
-    <div class="tr"><span id="tcur">0:00</span><span id="ttot">0:00</span></div>
-    <div id="ov-btns">
-      <div class="ob" data-f onclick="exitKtvFullscreen()"><span class="oi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></span>主页</div>
-      <div class="ob" data-f onclick="restartSong()"><span class="oi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span>重唱</div>
-      <div class="ob" data-f id="ob-pause" onclick="togglePause()"><span class="oi" id="op-icon"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></span><span id="op-lbl">暂停</span></div>
-      <div class="ob" data-f id="ob-voice" onclick="toggleVoice()"><span class="oi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></span><span id="ov-vlbl">原/伴唱</span></div>
-      <div class="ob" data-f onclick="cutSong()"><span class="oi"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><rect x="17" y="4" width="2" height="16"/></svg></span>切歌</div>
-      <div class="ob" data-f onclick="toggleFsQueue()"><span class="oi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span>队列</div>
+  <div id="ov-bot" data-page-node-id="KmDKrs4CJtffGz5ma52a9X">
+    <div id="prog-bar" onclick="seekVideo(event)" data-page-node-id="42qQEIwOjkf1FOXtXI0KJ0"><div id="prog-fill" data-page-node-id="ixSxSAyDy6hgYNaVC2nr5X"></div></div>
+    <div class="tr" data-page-node-id="MFieZFv4EKatbafxgutzOL"><span id="tcur" data-page-node-id="ZFQj4CGGNFRCb4gzY4XBPo">0:00</span><span id="ttot" data-page-node-id="7g0391KfqVqtMFHm4jPWj8">0:00</span></div>
+    <div id="ov-btns" data-page-node-id="fHH5OAx812UFk8qEFdEhUo">
+      <div class="ob" data-f onclick="exitKtvFullscreen()" data-page-node-id="RLeuhT3Puxw9TUKoRwG3ZC"><span class="oi" data-page-node-id="ME9RGPHSq93YRiKoRnLrcv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="70bGnpkahFJVRMjN1XnF5D"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" data-page-node-id="qzLYWCjARuslsrlZug6mUn"/><polyline points="9 22 9 12 15 12 15 22" data-page-node-id="IthdzSay8qIr3yWmPR86sg"/></svg></span>主页</div>
+      <div class="ob" data-f onclick="restartSong()" data-page-node-id="mj3xTLr3o4T6EX5IM0IiFl"><span class="oi" data-page-node-id="H2Fh6FbMJeCcOA1Q2vW9wc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="WtDZF9ZCvUB2FCLGiKO4bh"><polyline points="23 4 23 10 17 10" data-page-node-id="VRwwtMrnt2NKbTO1hyf8qu"/><polyline points="1 20 1 14 7 14" data-page-node-id="rNavaqWI9T3bMQoji1hCw3"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" data-page-node-id="Xo7f7x0WfF8gIzTVFKtcFk"/></svg></span>重唱</div>
+      <div class="ob" data-f id="ob-pause" onclick="togglePause()" data-page-node-id="OcEPsBWHdRhzPEcnUI1E2p"><span class="oi" id="op-icon" data-page-node-id="pkO7wfdaQinlK6mIBSrHAk"><svg viewBox="0 0 24 24" fill="currentColor" data-page-node-id="tW9AQfm2qkNsnfto5gzj9a"><rect x="6" y="4" width="4" height="16" data-page-node-id="0UmyIi3tzB7MCKQgnjWFAz"/><rect x="14" y="4" width="4" height="16" data-page-node-id="stwsBBgC6OGIZWBvrXglf6"/></svg></span><span id="op-lbl" data-page-node-id="yYJGDabHjEqOBmHYnQeOBW">暂停</span></div>
+      <div class="ob" data-f id="ob-voice" onclick="toggleVoice()" data-page-node-id="D8JW8RC3WYnELCOTlE2eHf"><span class="oi" data-page-node-id="A8AkETpim13Le1oXFOJQd0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="1SusVfRaTFIi4KAAVeKQzz"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" data-page-node-id="wGPoWa2hRGumEypDRECfr3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2" data-page-node-id="ddCnMO9r7KEwIfTGBFfj6j"/><line x1="12" y1="19" x2="12" y2="23" data-page-node-id="dGGnETiSSTpekDnqhbi1Cl"/><line x1="8" y1="23" x2="16" y2="23" data-page-node-id="hngxUzXKL0yWPDWwlQAktg"/></svg></span><span id="ov-vlbl" data-page-node-id="3XZITFHtJx2m2fQBesRUS4">原/伴唱</span></div>
+      <div class="ob" data-f onclick="cutSong()" data-page-node-id="XtAXTg1McstFBJzEtSEW7j"><span class="oi" data-page-node-id="DWnEkvNSjJE82NktiE9hIX"><svg viewBox="0 0 24 24" fill="currentColor" data-page-node-id="b0PJA1c44DC7kyCc5AO7Oz"><polygon points="5 4 15 12 5 20 5 4" data-page-node-id="0EQUbQilE2GAqehpai5DuA"/><rect x="17" y="4" width="2" height="16" data-page-node-id="iVLrriQZUPjtUuriiE8xQr"/></svg></span>切歌</div>
+      <div class="ob" data-f onclick="toggleFsQueue()" data-page-node-id="D3oo3rhGxvvPiQiSVMYNeM"><span class="oi" data-page-node-id="kjbZusEVHBAiaFErOF9qFw"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="TC7HYGS9NL9hSDrVhQhNhd"><line x1="8" y1="6" x2="21" y2="6" data-page-node-id="R8j3k98iUL4diO050RCRrF"/><line x1="8" y1="12" x2="21" y2="12" data-page-node-id="sqZIDClZfEAhGxiEagL5OL"/><line x1="8" y1="18" x2="21" y2="18" data-page-node-id="eXqm5KmBx9IszF5UXRxE0c"/><line x1="3" y1="6" x2="3.01" y2="6" data-page-node-id="2nuY1Eh85rZN0rX5jBtCN1"/><line x1="3" y1="12" x2="3.01" y2="12" data-page-node-id="1khpmd6tf7Df5MJFeaIzWI"/><line x1="3" y1="18" x2="3.01" y2="18" data-page-node-id="ML2Il91YVF2A2OCIBZ1W9O"/></svg></span>队列</div>
     </div>
   </div>
 </div>
-<div id="fsq">
-  <div class="fsq-h">♪ 点歌队列<div class="fsq-close" onclick="closeFsQueue()">✕</div></div>
-  <div class="fsq-body" id="fsq-list"></div>
+<div id="fsq" data-page-node-id="fME6Xa6UTcxwuSXlmaIojZ">
+  <div class="fsq-h" data-page-node-id="8MzqlgDTXHaa7b52EA7bEu">♪ 点歌队列<div class="fsq-close" onclick="closeFsQueue()" data-page-node-id="uAYkc29MWLAwdwONDh7s3W">✕</div></div>
+  <div class="fsq-body" id="fsq-list" data-page-node-id="lvcADlfbxRRLTDzCw6CA3d"></div>
 </div>
 <!-- 底部面板 -->
-<div class="pd pd-center" id="pd-queue" onclick="if(event.target===this)closePanel('queue')">
-  <div class="ps"><div class="ph"><h3>🎵 点歌队列</h3><div class="pc" data-f onclick="closePanel('queue')">✕</div></div><div class="pb" id="pl-queue"></div></div>
+<div class="pd pd-center" id="pd-queue" onclick="if(event.target===this)closePanel('queue')" data-page-node-id="CU1UodPXXdZ80b4HrNAZJ8">
+  <div class="ps" data-page-node-id="Y6dv2NeLrjLFFxY0BCgz1B"><div class="ph" data-page-node-id="7AvAEOXQoF84eK3YJEPxGA"><h3 data-page-node-id="rqQ14sAeDGZyDTMW6z4hC8">🎵 点歌队列</h3><div class="pc" data-f onclick="closePanel('queue')" data-page-node-id="jcUEyd3GOfcm1HLBZMKEdJ">✕</div></div><div class="pb" id="pl-queue" data-page-node-id="N3GapHkcVnfEY0V9gaEFc0"></div></div>
 </div>
-<div class="pd" id="pd-charts" onclick="if(event.target===this)closePanel('charts')">
-  <div class="ps"><div class="ph"><h3>🏆 爱唱榜 TOP10</h3><div class="pc" data-f onclick="closePanel('charts')">✕</div></div><div class="pb" id="pl-charts"></div></div>
+<div class="pd" id="pd-charts" onclick="if(event.target===this)closePanel('charts')" data-page-node-id="5Qcr7zPD3N7mgR3LkoPG5E">
+  <div class="ps" data-page-node-id="MgqyTUOHOHT2Jg4QfgkecT"><div class="ph" data-page-node-id="z1xeBZ9aSCE5nFzbu4vVdV"><h3 data-page-node-id="zZQ4sooeAwz3UMAmonF6LI">🏆 爱唱榜 TOP10</h3><div class="pc" data-f onclick="closePanel('charts')" data-page-node-id="RTVA75n3D55Ahq8BM3F5Ry">✕</div></div><div class="pb" id="pl-charts" data-page-node-id="KkPaUmD6uBfSvDJJCF4RoP"></div></div>
 </div>
-<div class="pd pd-center" id="pd-qr" onclick="if(event.target===this)closePanel('qr')">
-  <div class="ps"><div class="ph"><h3>📱 扫码点歌</h3><div class="pc" data-f onclick="closePanel('qr')">✕</div></div>
-  <div class="pb" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px">
-    <div id="home-qr-popup" style="background:#fff;padding:14px;border-radius:14px"></div>
-    <div style="color:var(--sub);font-size:16px;text-align:center">用手机扫描二维码<br>在手机上搜歌 · 点歌</div>
+<div class="pd pd-center" id="pd-qr" onclick="if(event.target===this)closePanel('qr')" data-page-node-id="Ccc35crgF4DXNaEehBGKP5">
+  <div class="ps" data-page-node-id="ShpYseFK6ib9MkK9kBIOEU"><div class="ph" data-page-node-id="avJO6dO03Wl4sHoSQLViNe"><h3 data-page-node-id="FOSfzxMZnoHveL7so8PfbR">📱 扫码点歌</h3><div class="pc" data-f onclick="closePanel('qr')" data-page-node-id="Zk2rlDAFTEvQMc7uAzyI0i">✕</div></div>
+  <div class="pb" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px" data-page-node-id="QJwlWNZrA0CZdmHuDmhuif">
+    <div id="home-qr-popup" style="background:#fff;padding:14px;border-radius:14px" data-page-node-id="hCqQ4iiPcKIP41yHEH3El9"></div>
+    <div style="color:var(--sub);font-size:16px;text-align:center" data-page-node-id="znhh8hsFRKUGJEZgorBetc">用手机扫描二维码<br data-page-node-id="JFVQUppWUMw7hfNsyyeKBi">在手机上搜歌 · 点歌</div>
   </div></div>
 </div>
-<div class="pd pd-center" id="pd-search" onclick="if(event.target===this)closePanel('search')">
-  <div class="ps"><div class="ph"><h3>🔍 搜歌点歌</h3><div class="pc" data-f onclick="closePanel('search')">✕</div></div>
-  <div class="pb"><div class="search-box" style="background:rgba(255,255,255,.07);border-radius:12px;padding:9px 13px;margin-bottom:12px;border:1px solid rgba(255,255,255,.1)">
-    <span>🔍</span><input id="si" style="flex:1;background:transparent;border:none;outline:none;color:#fff;font-size:19px" placeholder="输入歌名或歌手…" oninput="doSearch(this.value)">
-  </div><div id="pl-search"></div></div></div>
+<div class="pd pd-center" id="pd-search" onclick="if(event.target===this)closePanel('search')" data-page-node-id="smhQw0fISfcvIPTe7DuXPa">
+  <div class="ps" data-page-node-id="MrK2cJKc1bMchV2B4FVnQM"><div class="ph" data-page-node-id="nHVclF9B1jg4otYSEMmBOX"><h3 data-page-node-id="ZJOhNhwSYtBRbtj7fBBHlI">🔍 搜歌点歌</h3><div class="pc" data-f onclick="closePanel('search')" data-page-node-id="YoJombiPkzv4LRmqebTq0h">✕</div></div>
+  <div class="pb" data-page-node-id="GIFFvh3OGftcxCxS3SrT3C"><div class="search-box" style="background:rgba(255,255,255,.07);border-radius:12px;padding:9px 13px;margin-bottom:12px;border:1px solid rgba(255,255,255,.1)" data-page-node-id="MPcJuABU756COkbKtzODZN">
+    <span data-page-node-id="LUg9rTj08YA2GbXFx0MrXb">🔍</span><input id="si" style="flex:1;background:transparent;border:none;outline:none;color:#fff;font-size:19px" placeholder="输入歌名或歌手…" oninput="doSearch(this.value)" data-page-node-id="95btOZSb4EXaf1GioAGICM">
+  </div><div class="alpha-keys lang-bar" id="pl-lang" style="margin:4px 0 10px">
+        <div class="ak sel" data-f data-lang="" onclick="handleLang('pl','')">全部</div>
+        <div class="ak" data-f data-lang="中文" onclick="handleLang('pl','中文')">中文</div>
+        <div class="ak" data-f data-lang="粤语" onclick="handleLang('pl','粤语')">粤语</div>
+        <div class="ak" data-f data-lang="英语" onclick="handleLang('pl','英语')">英语</div>
+        <div class="ak" data-f data-lang="韩语" onclick="handleLang('pl','韩语')">韩语</div>
+        <div class="ak" data-f data-lang="日语" onclick="handleLang('pl','日语')">日语</div>
+      </div><div id="pl-search" data-page-node-id="bsbCuNL9AVdgcrsP3QOkei"></div><div class="pf-foot" style="justify-content:center" data-page-node-id="IE5yG2RV0CoqUruYieQY7L"><button class="pf-pg-btn" id="search-more" data-f style="display:none" onclick="searchMore()" data-page-node-id="usL2gV6o4myQXrhl41sxnv">加载更多 ↓</button></div></div></div>
 </div>
-<div class="pd pd-center" id="pd-eq" onclick="if(event.target===this)closePanel('eq')">
-  <div class="ps"><div class="ph"><h3>🎚 均衡器</h3><div class="pc" data-f onclick="closePanel('eq')">✕</div></div>
-  <div class="pb"><div class="eq-list">
-    <div class="eq-opt sel" data-f data-eq="flat" onclick="setEQ('flat')">标准（关闭）</div>
-    <div class="eq-opt" data-f data-eq="vocal" onclick="setEQ('vocal')">人声增强</div>
-    <div class="eq-opt" data-f data-eq="bass" onclick="setEQ('bass')">低音增强</div>
-    <div class="eq-opt" data-f data-eq="bright" onclick="setEQ('bright')">明亮清晰</div>
+<div class="pd pd-center" id="pd-eq" onclick="if(event.target===this)closePanel('eq')" data-page-node-id="DovlnIQ5FJ7qeWleljC7dv">
+  <div class="ps" data-page-node-id="osaQbKNvr8IUiHCfvwDoF5"><div class="ph" data-page-node-id="Irqes32HM6EAkjdrFkvuBu"><h3 data-page-node-id="I4CZCLS2JSik9die1TRoVG">🎚 均衡器</h3><div class="pc" data-f onclick="closePanel('eq')" data-page-node-id="egZvAKEQ78tBS3SoGUtFlZ">✕</div></div>
+  <div class="pb" data-page-node-id="D2y3AThcNhZpmfAiLOLYdy"><div class="eq-list" data-page-node-id="Pik21HAxFsRvJ0kqgbBsK3">
+    <div class="eq-opt sel" data-f data-eq="flat" onclick="setEQ('flat')" data-page-node-id="ZNk79QjgYeJtCFELiXPl11">标准（关闭）</div>
+    <div class="eq-opt" data-f data-eq="vocal" onclick="setEQ('vocal')" data-page-node-id="OykXLjQGsnzeePvgibfzZO">人声增强</div>
+    <div class="eq-opt" data-f data-eq="bass" onclick="setEQ('bass')" data-page-node-id="El28xQl5KHvsWRIex9UOhA">低音增强</div>
+    <div class="eq-opt" data-f data-eq="bright" onclick="setEQ('bright')" data-page-node-id="qC9NmihGkk5SVxAWwjIKWh">明亮清晰</div>
   </div></div></div>
 </div>
-<div class="pd" id="pd-settings" onclick="if(event.target===this)closePanel('settings')">
-  <div class="ps"><div class="ph"><h3>⚙ 设置</h3><div class="pc" data-f onclick="closePanel('settings')">✕</div></div>
-  <div class="pb">
-    <div class="set-r"><span class="set-l">服务器</span><span class="set-v" id="s-host">—</span></div>
-    <div class="set-r"><span class="set-l">曲库歌曲</span><span class="set-v" id="s-songs">—</span></div>
-    <div class="set-r" data-f style="cursor:pointer" onclick="doScan()"><span class="set-l">重新扫描曲库</span><span style="color:var(--ac2)">▶ 扫描</span></div>
+<div class="pd" id="pd-settings" onclick="if(event.target===this)closePanel('settings')" data-page-node-id="O7xPE1XHlofNe7kfgCF0fu">
+  <div class="ps" data-page-node-id="RUlTSML6RfIxM0MQhsHquy"><div class="ph" data-page-node-id="cGd5OLuSYY1Y2qx2hcjnnt"><h3 data-page-node-id="6hPUiAPX8tJnxYoXn96EIi">⚙ 设置</h3><div class="pc" data-f onclick="closePanel('settings')" data-page-node-id="7swnt30cDoBdWMFavcHOIa">✕</div></div>
+  <div class="pb" data-page-node-id="BEtUt0kZwB5mTCukybNGCD">
+    <div class="set-r" data-page-node-id="nKT7Mh8HhsuBfyApCpkWLG"><span class="set-l" data-page-node-id="T3ueFT1R1bwTbPtZICupmN">服务器</span><span class="set-v" id="s-host" data-page-node-id="LcHtupKTlzCvBCrfpt52Ot">—</span></div>
+    <div class="set-r" data-page-node-id="jQFmc22JUITFh70G7FMgqB"><span class="set-l" data-page-node-id="cm7WEluuYuRRwWcA6akc3t">曲库歌曲</span><span class="set-v" id="s-songs" data-page-node-id="MancH463s8fDUp3KER6rWg">—</span></div>
+    <div class="set-r" data-f style="cursor:pointer" onclick="doScan()" data-page-node-id="h6eOYDLjT1y806yq5yzV4w"><span class="set-l" data-page-node-id="0lPmMUEA9nLgTt7ocIa4Pb">重新扫描曲库</span><span style="color:var(--ac2)" data-page-node-id="swWFQDPZvYroJ32yMv4cyN">▶ 扫描</span></div>
   </div></div>
 </div>
 <!-- 全屏面板 -->
-<div class="pd-full" id="pf-artists">
-  <div class="pf-head"><h2>🎙 歌星</h2><div class="pf-back" data-f onclick="closePF('artists')">返回</div></div>
-  <div class="pf-body">
-    <div class="alpha-panel">
-      <div class="alpha-disp"><span class="di">🔍</span><span class="ad-txt" id="ar-keys-txt">歌星搜索</span></div>
-      <div class="alpha-keys" id="ar-keys"><div class="ak" data-f onclick="handleAlpha('ar','A')">A</div>
-<div class="ak" data-f onclick="handleAlpha('ar','B')">B</div>
-<div class="ak" data-f onclick="handleAlpha('ar','C')">C</div>
-<div class="ak" data-f onclick="handleAlpha('ar','D')">D</div>
-<div class="ak" data-f onclick="handleAlpha('ar','E')">E</div>
-<div class="ak" data-f onclick="handleAlpha('ar','F')">F</div>
-<div class="ak" data-f onclick="handleAlpha('ar','G')">G</div>
-<div class="ak" data-f onclick="handleAlpha('ar','H')">H</div>
-<div class="ak" data-f onclick="handleAlpha('ar','J')">J</div>
-<div class="ak" data-f onclick="handleAlpha('ar','K')">K</div>
-<div class="ak" data-f onclick="handleAlpha('ar','L')">L</div>
-<div class="ak" data-f onclick="handleAlpha('ar','M')">M</div>
-<div class="ak" data-f onclick="handleAlpha('ar','N')">N</div>
-<div class="ak" data-f onclick="handleAlpha('ar','O')">O</div>
-<div class="ak" data-f onclick="handleAlpha('ar','P')">P</div>
-<div class="ak" data-f onclick="handleAlpha('ar','Q')">Q</div>
-<div class="ak" data-f onclick="handleAlpha('ar','R')">R</div>
-<div class="ak" data-f onclick="handleAlpha('ar','S')">S</div>
-<div class="ak" data-f onclick="handleAlpha('ar','T')">T</div>
-<div class="ak" data-f onclick="handleAlpha('ar','W')">W</div>
-<div class="ak" data-f onclick="handleAlpha('ar','X')">X</div>
-<div class="ak" data-f onclick="handleAlpha('ar','Y')">Y</div>
-<div class="ak" data-f onclick="handleAlpha('ar','Z')">Z</div>
-<div class="ak ak-clr" data-f onclick="handleAlpha('ar','DEL')">删除</div></div>
+<div class="pd-full" id="pf-artists" data-page-node-id="FeCNxtY9NIvwrOCRjtEfQJ">
+  <div class="pf-head" data-page-node-id="Msy69abDI9GBv1IY3iiIho"><h2 data-page-node-id="Hj0xrbWNUDKovcF2pE0QrY">🎙 歌星</h2><div class="pf-back" data-f onclick="closePF('artists')" data-page-node-id="6pTuby71NZsolFUjTOBs7d">返回</div></div>
+  <div class="pf-body" data-page-node-id="Ddw40rzSBwqjZOGnMFcDiC">
+    <div class="alpha-panel" data-page-node-id="QsjubgebdV5XbODVHZX7fJ">
+      <div class="alpha-disp" data-page-node-id="KE8gYdpfAtEN7tdIIPdmvH"><span class="di" data-page-node-id="TUNS6FnqHfjL9ETy5dXite">🔍</span><span class="ad-txt" id="ar-keys-txt" data-page-node-id="kpxGuqAkW7BnVlhu6UfoHk">歌星搜索</span></div>
+      <div class="alpha-keys" id="ar-keys" data-page-node-id="ApIlEWzrDBiOQl3yhyqJgT"><div class="ak" data-f onclick="handleAlpha('ar','A')" data-page-node-id="G98LOeZEHLEG8Li6aH8xws">A</div>
+<div class="ak" data-f onclick="handleAlpha('ar','B')" data-page-node-id="Lc9hRqBCUgrHw9a9NvCAum">B</div>
+<div class="ak" data-f onclick="handleAlpha('ar','C')" data-page-node-id="2oSTfDqOTG8ttDkN2vdHbp">C</div>
+<div class="ak" data-f onclick="handleAlpha('ar','D')" data-page-node-id="4RCVHtY8j3Nl8m15FhrJof">D</div>
+<div class="ak" data-f onclick="handleAlpha('ar','E')" data-page-node-id="7FYNyKAHZzjjjXixNFGLzj">E</div>
+<div class="ak" data-f onclick="handleAlpha('ar','F')" data-page-node-id="USYxiks7HlkKldEDjrhYok">F</div>
+<div class="ak" data-f onclick="handleAlpha('ar','G')" data-page-node-id="CmGV3niptAvgWDnIyKp09b">G</div>
+<div class="ak" data-f onclick="handleAlpha('ar','H')" data-page-node-id="J65FfnO9p3vVBJwdUnKr4T">H</div>
+<div class="ak" data-f onclick="handleAlpha('ar','J')" data-page-node-id="jsDAkI11BNxK0z6LPbt2zY">J</div>
+<div class="ak" data-f onclick="handleAlpha('ar','K')" data-page-node-id="hVQ48CVyk86A79oRcPp0Ag">K</div>
+<div class="ak" data-f onclick="handleAlpha('ar','L')" data-page-node-id="PmaCcNIQANwZCRWru4zdKa">L</div>
+<div class="ak" data-f onclick="handleAlpha('ar','M')" data-page-node-id="UoQPeCVjkQEQ1SALyyGbor">M</div>
+<div class="ak" data-f onclick="handleAlpha('ar','N')" data-page-node-id="lkzZqNOGAUDvfLzAZLsts9">N</div>
+<div class="ak" data-f onclick="handleAlpha('ar','O')" data-page-node-id="DD9T1XG6GNr3nLlTGnjlrg">O</div>
+<div class="ak" data-f onclick="handleAlpha('ar','P')" data-page-node-id="gwZRucQaGd8i9MV34PQM9f">P</div>
+<div class="ak" data-f onclick="handleAlpha('ar','Q')" data-page-node-id="Rtenyc6CuME3Ee3GFpckwS">Q</div>
+<div class="ak" data-f onclick="handleAlpha('ar','R')" data-page-node-id="urwVbyUFxdSUId05Pbkftz">R</div>
+<div class="ak" data-f onclick="handleAlpha('ar','S')" data-page-node-id="H0ytTCxGyAZxDCcFmc0yxD">S</div>
+<div class="ak" data-f onclick="handleAlpha('ar','T')" data-page-node-id="5cY7XZ6l2T8XPmNQ5U7vj6">T</div>
+<div class="ak" data-f onclick="handleAlpha('ar','W')" data-page-node-id="EZEYTS0rbMSHnofBiHZdxp">W</div>
+<div class="ak" data-f onclick="handleAlpha('ar','X')" data-page-node-id="McdQUMacyG1Y6PRhcvu17B">X</div>
+<div class="ak" data-f onclick="handleAlpha('ar','Y')" data-page-node-id="TdEUE31rcxF63TFD9NcsB9">Y</div>
+<div class="ak" data-f onclick="handleAlpha('ar','Z')" data-page-node-id="vMiRF2pw47aQ9pGnvfvrCD">Z</div>
+<div class="ak ak-clr" data-f onclick="handleAlpha('ar','DEL')" data-page-node-id="xnDiYH1SAqpdBfapebzxXc">删除</div></div>
+      <div class="alpha-keys lang-bar" id="ar-lang" style="margin-top:8px">
+        <div class="ak sel" data-f data-lang="" onclick="handleLang('ar','')">全部</div>
+        <div class="ak" data-f data-lang="中文" onclick="handleLang('ar','中文')">中文</div>
+        <div class="ak" data-f data-lang="粤语" onclick="handleLang('ar','粤语')">粤语</div>
+        <div class="ak" data-f data-lang="英语" onclick="handleLang('ar','英语')">英语</div>
+        <div class="ak" data-f data-lang="韩语" onclick="handleLang('ar','韩语')">韩语</div>
+        <div class="ak" data-f data-lang="日语" onclick="handleLang('ar','日语')">日语</div>
+      </div>
     </div>
-    <div class="pf-main">
-      <div class="ag" id="artist-grid"></div>
-      <div class="pf-foot">
-        <button class="pf-pg-btn" data-f onclick="artistPage(-1)">上一页</button>
-        <span class="pf-pg-info" id="artist-pg-info">1/1</span>
-        <button class="pf-pg-btn" data-f onclick="artistPage(1)">下一页</button>
+    <div class="pf-main" data-page-node-id="l21GWiKgwMbvADbXU6Dr0s">
+      <div class="ag" id="artist-grid" data-page-node-id="SqxwFlVTKBGsPx1q8q716B"></div>
+      <div class="pf-foot" data-page-node-id="H2HiXqmgr9M3j95llD90z3">
+        <button class="pf-pg-btn" data-f onclick="artistPage(-1)" data-page-node-id="ZMm1PCbWcf0PfmK5Ge2Z3d">上一页</button>
+        <span class="pf-pg-info" id="artist-pg-info" data-page-node-id="Mmtj4EcdlM7liw5z3NXy1z">1/1</span>
+        <button class="pf-pg-btn" data-f onclick="artistPage(1)" data-page-node-id="4hInCI4CIVch3ReN11vOjN">下一页</button>
       </div>
     </div>
   </div>
 </div>
-<div class="pd-full" id="pf-order">
-  <div class="pf-head"><h2>🎵 立即点歌</h2><div class="pf-back" data-f onclick="closePF('order')">返回</div></div>
-  <div class="pf-body">
-    <div class="alpha-panel">
-      <div class="alpha-disp"><span class="di">🔍</span><span class="ad-txt" id="od-keys-txt">歌名搜索</span></div>
-      <div class="alpha-keys" id="od-keys"><div class="ak" data-f onclick="handleAlpha('od','A')">A</div>
-<div class="ak" data-f onclick="handleAlpha('od','B')">B</div>
-<div class="ak" data-f onclick="handleAlpha('od','C')">C</div>
-<div class="ak" data-f onclick="handleAlpha('od','D')">D</div>
-<div class="ak" data-f onclick="handleAlpha('od','E')">E</div>
-<div class="ak" data-f onclick="handleAlpha('od','F')">F</div>
-<div class="ak" data-f onclick="handleAlpha('od','G')">G</div>
-<div class="ak" data-f onclick="handleAlpha('od','H')">H</div>
-<div class="ak" data-f onclick="handleAlpha('od','J')">J</div>
-<div class="ak" data-f onclick="handleAlpha('od','K')">K</div>
-<div class="ak" data-f onclick="handleAlpha('od','L')">L</div>
-<div class="ak" data-f onclick="handleAlpha('od','M')">M</div>
-<div class="ak" data-f onclick="handleAlpha('od','N')">N</div>
-<div class="ak" data-f onclick="handleAlpha('od','O')">O</div>
-<div class="ak" data-f onclick="handleAlpha('od','P')">P</div>
-<div class="ak" data-f onclick="handleAlpha('od','Q')">Q</div>
-<div class="ak" data-f onclick="handleAlpha('od','R')">R</div>
-<div class="ak" data-f onclick="handleAlpha('od','S')">S</div>
-<div class="ak" data-f onclick="handleAlpha('od','T')">T</div>
-<div class="ak" data-f onclick="handleAlpha('od','W')">W</div>
-<div class="ak" data-f onclick="handleAlpha('od','X')">X</div>
-<div class="ak" data-f onclick="handleAlpha('od','Y')">Y</div>
-<div class="ak" data-f onclick="handleAlpha('od','Z')">Z</div>
-<div class="ak ak-clr" data-f onclick="handleAlpha('od','DEL')">删除</div></div>
+<div class="pd-full" id="pf-order" data-page-node-id="QMvggaaKN4eE3WjflBWSnK">
+  <div class="pf-head" data-page-node-id="dcEoYw3K0DECnmYfw0a4vp"><h2 data-page-node-id="75AuwctDnBxHWcOjZGLGzR">🎵 立即点歌</h2><div class="pf-back" data-f onclick="closePF('order')" data-page-node-id="tfh5bAyggHcFDoo5V1P7l0">返回</div></div>
+  <div class="pf-body" data-page-node-id="LZgMwUwKZ5jFUUcS6cfSuk">
+    <div class="alpha-panel" data-page-node-id="mAcFw5X52d9qTnnkpmVWCI">
+      <div class="alpha-disp" data-page-node-id="1q1aTX5dZaDiUEncBD8pis"><span class="di" data-page-node-id="9Ltgm4UQxvkJq2f4P81EMl">🔍</span><span class="ad-txt" id="od-keys-txt" data-page-node-id="e3XiRx9DWaH8qAoDpnvgNn">歌名搜索</span></div>
+      <div class="alpha-keys" id="od-keys" data-page-node-id="jeJWMFD2wz1gf0WKarAoDs"><div class="ak" data-f onclick="handleAlpha('od','A')" data-page-node-id="08hAvDymqYq7bZoh7DIS3Q">A</div>
+<div class="ak" data-f onclick="handleAlpha('od','B')" data-page-node-id="ckRhGBioYncQAapCMCaPpN">B</div>
+<div class="ak" data-f onclick="handleAlpha('od','C')" data-page-node-id="xWsfe2rL1OzQLP10uIRbdj">C</div>
+<div class="ak" data-f onclick="handleAlpha('od','D')" data-page-node-id="MIIbkIikxPB54hB7CuTgYI">D</div>
+<div class="ak" data-f onclick="handleAlpha('od','E')" data-page-node-id="491PWgJunF4mYMOISjCvZc">E</div>
+<div class="ak" data-f onclick="handleAlpha('od','F')" data-page-node-id="evArfn25rNDAv5B64Z1RK3">F</div>
+<div class="ak" data-f onclick="handleAlpha('od','G')" data-page-node-id="vH6HEqwcCNfgfsJpcVVkXE">G</div>
+<div class="ak" data-f onclick="handleAlpha('od','H')" data-page-node-id="5twwPdkKuE8dOULgtH6jNb">H</div>
+<div class="ak" data-f onclick="handleAlpha('od','J')" data-page-node-id="55Rausk4rUCT7bbaIj2jl4">J</div>
+<div class="ak" data-f onclick="handleAlpha('od','K')" data-page-node-id="t157AfCBKPBZchGbtBtyRm">K</div>
+<div class="ak" data-f onclick="handleAlpha('od','L')" data-page-node-id="QzQcmLp5dJwpSKQReoe99N">L</div>
+<div class="ak" data-f onclick="handleAlpha('od','M')" data-page-node-id="bXyxaedYFVXoVnvHJzxHkT">M</div>
+<div class="ak" data-f onclick="handleAlpha('od','N')" data-page-node-id="qeAEjvjweRHcdGZrUKrV1E">N</div>
+<div class="ak" data-f onclick="handleAlpha('od','O')" data-page-node-id="yaGQEriK9mglhJU6ECwzNh">O</div>
+<div class="ak" data-f onclick="handleAlpha('od','P')" data-page-node-id="ovmJGnWQdigGtGQchekJT4">P</div>
+<div class="ak" data-f onclick="handleAlpha('od','Q')" data-page-node-id="dYUL0udJCjrRu5rP21n2cY">Q</div>
+<div class="ak" data-f onclick="handleAlpha('od','R')" data-page-node-id="KXYHOL8hZZLF8xRU9oVCNu">R</div>
+<div class="ak" data-f onclick="handleAlpha('od','S')" data-page-node-id="gLZwop8XiYZunygq6JoImm">S</div>
+<div class="ak" data-f onclick="handleAlpha('od','T')" data-page-node-id="kQSyKvVBX3KkEyfeFtD6oC">T</div>
+<div class="ak" data-f onclick="handleAlpha('od','W')" data-page-node-id="AOXUxOO5MPMhvhIKUazrH1">W</div>
+<div class="ak" data-f onclick="handleAlpha('od','X')" data-page-node-id="KZvGdckpjYagVe2GzoCuB8">X</div>
+<div class="ak" data-f onclick="handleAlpha('od','Y')" data-page-node-id="ee0k74YHFvO8vy5bU3wqBm">Y</div>
+<div class="ak" data-f onclick="handleAlpha('od','Z')" data-page-node-id="XPHrCY4hbwygcrRJvGPado">Z</div>
+<div class="ak ak-clr" data-f onclick="handleAlpha('od','DEL')" data-page-node-id="4DjCVLGs6lGgROMn6fKl99">删除</div></div>
+      <div class="alpha-keys lang-bar" id="od-lang" style="margin-top:8px">
+        <div class="ak sel" data-f data-lang="" onclick="handleLang('od','')">全部</div>
+        <div class="ak" data-f data-lang="中文" onclick="handleLang('od','中文')">中文</div>
+        <div class="ak" data-f data-lang="粤语" onclick="handleLang('od','粤语')">粤语</div>
+        <div class="ak" data-f data-lang="英语" onclick="handleLang('od','英语')">英语</div>
+        <div class="ak" data-f data-lang="韩语" onclick="handleLang('od','韩语')">韩语</div>
+        <div class="ak" data-f data-lang="日语" onclick="handleLang('od','日语')">日语</div>
+      </div>
     </div>
-    <div class="pf-main">
-      <div class="song-list song-list-2col" id="order-song-list"></div>
-      <div class="pf-foot">
-        <button class="pf-pg-btn" data-f onclick="orderPage(-1)">上一页</button>
-        <span class="pf-pg-info" id="order-pg-info">1/1</span>
-        <button class="pf-pg-btn" data-f onclick="orderPage(1)">下一页</button>
+    <div class="pf-main" data-page-node-id="UnajhhNmET8B3iVOKbAEO2">
+      <div class="song-list song-list-2col" id="order-song-list" data-page-node-id="Jay6RtctiOyAPY3CsUBf0Z"></div>
+      <div class="pf-foot" data-page-node-id="dIvK3E6mJxRPKV2KEPSfyH">
+        <button class="pf-pg-btn" data-f onclick="orderPage(-1)" data-page-node-id="Esd1UAhK7p7GiTVqEmKFZl">上一页</button>
+        <span class="pf-pg-info" id="order-pg-info" data-page-node-id="Ycfsw3WplWUh387FUgUKFj">1/1</span>
+        <button class="pf-pg-btn" data-f onclick="orderPage(1)" data-page-node-id="nId8Ndgt9HEghJdDElVkHA">下一页</button>
       </div>
     </div>
   </div>
 </div>
-<div class="pd-full" id="pf-history">
-  <div class="pf-head"><h2>⭐ 常唱</h2><div class="pf-back" data-f onclick="closePF('history')">返回</div></div>
-  <div class="pf-body">
-    <div class="alpha-panel">
-      <div class="alpha-disp"><span class="di">🔍</span><span class="ad-txt" id="hs-keys-txt">常唱搜索</span></div>
-      <div class="alpha-keys" id="hs-keys"><div class="ak" data-f onclick="handleAlpha('hs','A')">A</div>
-<div class="ak" data-f onclick="handleAlpha('hs','B')">B</div>
-<div class="ak" data-f onclick="handleAlpha('hs','C')">C</div>
-<div class="ak" data-f onclick="handleAlpha('hs','D')">D</div>
-<div class="ak" data-f onclick="handleAlpha('hs','E')">E</div>
-<div class="ak" data-f onclick="handleAlpha('hs','F')">F</div>
-<div class="ak" data-f onclick="handleAlpha('hs','G')">G</div>
-<div class="ak" data-f onclick="handleAlpha('hs','H')">H</div>
-<div class="ak" data-f onclick="handleAlpha('hs','J')">J</div>
-<div class="ak" data-f onclick="handleAlpha('hs','K')">K</div>
-<div class="ak" data-f onclick="handleAlpha('hs','L')">L</div>
-<div class="ak" data-f onclick="handleAlpha('hs','M')">M</div>
-<div class="ak" data-f onclick="handleAlpha('hs','N')">N</div>
-<div class="ak" data-f onclick="handleAlpha('hs','O')">O</div>
-<div class="ak" data-f onclick="handleAlpha('hs','P')">P</div>
-<div class="ak" data-f onclick="handleAlpha('hs','Q')">Q</div>
-<div class="ak" data-f onclick="handleAlpha('hs','R')">R</div>
-<div class="ak" data-f onclick="handleAlpha('hs','S')">S</div>
-<div class="ak" data-f onclick="handleAlpha('hs','T')">T</div>
-<div class="ak" data-f onclick="handleAlpha('hs','W')">W</div>
-<div class="ak" data-f onclick="handleAlpha('hs','X')">X</div>
-<div class="ak" data-f onclick="handleAlpha('hs','Y')">Y</div>
-<div class="ak" data-f onclick="handleAlpha('hs','Z')">Z</div>
-<div class="ak ak-clr" data-f onclick="handleAlpha('hs','DEL')">删除</div></div>
+<div class="pd-full" id="pf-history" data-page-node-id="VGG8HAt8fEPEFQ2tBaNeMf">
+  <div class="pf-head" data-page-node-id="rACA9wUPHJ2aB2WgcE1irM"><h2 data-page-node-id="Gnk2hkNrmyHabGgXWhMMWo">⭐ 常唱</h2><div class="pf-back" data-f onclick="closePF('history')" data-page-node-id="PfdubtgprZaj97ShMWqfcJ">返回</div></div>
+  <div class="pf-body" data-page-node-id="ICr52LSsPRjAFodo66J6vo">
+    <div class="alpha-panel" data-page-node-id="aQKE54pTFjOYFzLO0x8mg4">
+      <div class="alpha-disp" data-page-node-id="cHvUACLmqvAZQnlif9jWow"><span class="di" data-page-node-id="BU5l1oVaehqMqUhLPSFNqf">🔍</span><span class="ad-txt" id="hs-keys-txt" data-page-node-id="SUKt5X1gAYqKEBz79pvjTH">常唱搜索</span></div>
+      <div class="alpha-keys" id="hs-keys" data-page-node-id="WemtJ7KyHGICUHKTMDw2Y2"><div class="ak" data-f onclick="handleAlpha('hs','A')" data-page-node-id="OYMbkricRdHN5EMDsgQRTF">A</div>
+<div class="ak" data-f onclick="handleAlpha('hs','B')" data-page-node-id="Hk559AaKgQxil7Tw4ne8Tj">B</div>
+<div class="ak" data-f onclick="handleAlpha('hs','C')" data-page-node-id="Oq6OHehhRQacdx4oaliCUk">C</div>
+<div class="ak" data-f onclick="handleAlpha('hs','D')" data-page-node-id="yFpIARZZE62J1KN4k6TJYq">D</div>
+<div class="ak" data-f onclick="handleAlpha('hs','E')" data-page-node-id="K1LmYBJE8VGxGh54972IJj">E</div>
+<div class="ak" data-f onclick="handleAlpha('hs','F')" data-page-node-id="HkuCO7YhBUEztbRawtLXnn">F</div>
+<div class="ak" data-f onclick="handleAlpha('hs','G')" data-page-node-id="6vj8QH9X6Yla6wLz0FV9rm">G</div>
+<div class="ak" data-f onclick="handleAlpha('hs','H')" data-page-node-id="p6kqR69gElrfApTeL2ajQY">H</div>
+<div class="ak" data-f onclick="handleAlpha('hs','J')" data-page-node-id="m9tjucIxVrkp6BGWFjZmjf">J</div>
+<div class="ak" data-f onclick="handleAlpha('hs','K')" data-page-node-id="M1hiNtTFfmXQbYdCEdeimT">K</div>
+<div class="ak" data-f onclick="handleAlpha('hs','L')" data-page-node-id="CMAX5jbE9uHwiZpGuxGXej">L</div>
+<div class="ak" data-f onclick="handleAlpha('hs','M')" data-page-node-id="AzE5zMeNW7eD35LNGNrSAS">M</div>
+<div class="ak" data-f onclick="handleAlpha('hs','N')" data-page-node-id="Gp9eLOS0hooXxxMp4Mg3cs">N</div>
+<div class="ak" data-f onclick="handleAlpha('hs','O')" data-page-node-id="9YUdzFkFvjnfClTGvWEu2y">O</div>
+<div class="ak" data-f onclick="handleAlpha('hs','P')" data-page-node-id="wkY0vsxhZrQjyfT3AII87v">P</div>
+<div class="ak" data-f onclick="handleAlpha('hs','Q')" data-page-node-id="3UggvxxwAzyHGGUzYUWHcP">Q</div>
+<div class="ak" data-f onclick="handleAlpha('hs','R')" data-page-node-id="O2e7t4VMD60tKaDeGqURoY">R</div>
+<div class="ak" data-f onclick="handleAlpha('hs','S')" data-page-node-id="G1egTkQJ9xNomBShuxENFc">S</div>
+<div class="ak" data-f onclick="handleAlpha('hs','T')" data-page-node-id="vP3KPy5cCh5REglMBmhdag">T</div>
+<div class="ak" data-f onclick="handleAlpha('hs','W')" data-page-node-id="A1U8BTbXKZ0HENvaD6DXgH">W</div>
+<div class="ak" data-f onclick="handleAlpha('hs','X')" data-page-node-id="RAHqWFAk5V5ZmGICbENo1f">X</div>
+<div class="ak" data-f onclick="handleAlpha('hs','Y')" data-page-node-id="JPbhOsfgWP0nsDsKhVVs4D">Y</div>
+<div class="ak" data-f onclick="handleAlpha('hs','Z')" data-page-node-id="YRx0nz1aot5J8AM6lAxpFF">Z</div>
+<div class="ak ak-clr" data-f onclick="handleAlpha('hs','DEL')" data-page-node-id="ziW8siPPbgA7Cy3l7eWpbt">删除</div></div>
     </div>
-    <div class="pf-main">
-      <div class="song-list" id="hist-song-list"></div>
-      <div class="pf-foot">
-        <button class="pf-pg-btn" data-f onclick="histPage(-1)">上一页</button>
-        <span class="pf-pg-info" id="hist-pg-info">1/1</span>
-        <button class="pf-pg-btn" data-f onclick="histPage(1)">下一页</button>
+    <div class="pf-main" data-page-node-id="weuGgNPTAt0gVQq5ypRadC">
+      <div class="song-list" id="hist-song-list" data-page-node-id="mmHhODZ6hCyYS0DtQL6Nh1"></div>
+      <div class="pf-foot" data-page-node-id="Qar8EvO7HIlFERjk6tCGLj">
+        <button class="pf-pg-btn" data-f onclick="histPage(-1)" data-page-node-id="jpU2CcvnWT0kvKKq63mgTD">上一页</button>
+        <span class="pf-pg-info" id="hist-pg-info" data-page-node-id="TLlCUrOgLw4r91ufiamN9e">1/1</span>
+        <button class="pf-pg-btn" data-f onclick="histPage(1)" data-page-node-id="mv3CKwLvccXjZxr3D68vxs">下一页</button>
       </div>
     </div>
   </div>
 </div>
-<div class="pd-full" id="pf-favorites">
-  <div class="pf-head"><h2>❤️ 我的收藏</h2><div class="pf-back" data-f onclick="closePF('favorites')">返回</div></div>
-  <div class="pf-body">
-    <div class="alpha-panel">
-      <div class="alpha-disp"><span class="di">🔍</span><span class="ad-txt" id="fv-keys-txt">收藏搜索</span></div>
-      <div class="alpha-keys" id="fv-keys"><div class="ak" data-f onclick="handleAlpha('fv','A')">A</div>
-<div class="ak" data-f onclick="handleAlpha('fv','B')">B</div>
-<div class="ak" data-f onclick="handleAlpha('fv','C')">C</div>
-<div class="ak" data-f onclick="handleAlpha('fv','D')">D</div>
-<div class="ak" data-f onclick="handleAlpha('fv','E')">E</div>
-<div class="ak" data-f onclick="handleAlpha('fv','F')">F</div>
-<div class="ak" data-f onclick="handleAlpha('fv','G')">G</div>
-<div class="ak" data-f onclick="handleAlpha('fv','H')">H</div>
-<div class="ak" data-f onclick="handleAlpha('fv','J')">J</div>
-<div class="ak" data-f onclick="handleAlpha('fv','K')">K</div>
-<div class="ak" data-f onclick="handleAlpha('fv','L')">L</div>
-<div class="ak" data-f onclick="handleAlpha('fv','M')">M</div>
-<div class="ak" data-f onclick="handleAlpha('fv','N')">N</div>
-<div class="ak" data-f onclick="handleAlpha('fv','O')">O</div>
-<div class="ak" data-f onclick="handleAlpha('fv','P')">P</div>
-<div class="ak" data-f onclick="handleAlpha('fv','Q')">Q</div>
-<div class="ak" data-f onclick="handleAlpha('fv','R')">R</div>
-<div class="ak" data-f onclick="handleAlpha('fv','S')">S</div>
-<div class="ak" data-f onclick="handleAlpha('fv','T')">T</div>
-<div class="ak" data-f onclick="handleAlpha('fv','W')">W</div>
-<div class="ak" data-f onclick="handleAlpha('fv','X')">X</div>
-<div class="ak" data-f onclick="handleAlpha('fv','Y')">Y</div>
-<div class="ak" data-f onclick="handleAlpha('fv','Z')">Z</div>
-<div class="ak ak-clr" data-f onclick="handleAlpha('fv','DEL')">删除</div></div>
+<div class="pd-full" id="pf-favorites" data-page-node-id="LzlAoGG6kzVwPEzONzqEAR">
+  <div class="pf-head" data-page-node-id="mIca7f9PjWzz7emwVvDYnE"><h2 data-page-node-id="8uhpQ98betzfXho5ystVMu">❤️ 我的收藏</h2><div class="pf-back" data-f onclick="closePF('favorites')" data-page-node-id="BPD4mgDXKEZiAblQ2FX5ps">返回</div></div>
+  <div class="pf-body" data-page-node-id="fH0Ug5XxMQ1VLuwwmow3WX">
+    <div class="alpha-panel" data-page-node-id="IN2PJAhzX8iMEYOA7OyCiO">
+      <div class="alpha-disp" data-page-node-id="Vj0yxZ61DiOCBxu6bSWKFv"><span class="di" data-page-node-id="gmU8DcijmQYsc3FBq3LT1R">🔍</span><span class="ad-txt" id="fv-keys-txt" data-page-node-id="elznwYWwphX48CV9KCoCbo">收藏搜索</span></div>
+      <div class="alpha-keys" id="fv-keys" data-page-node-id="BKMciniaAxHTN0W2sfWPf0"><div class="ak" data-f onclick="handleAlpha('fv','A')" data-page-node-id="EeJgFH3DsmzHZ9Y7NDZXxj">A</div>
+<div class="ak" data-f onclick="handleAlpha('fv','B')" data-page-node-id="P0SJdMqI6JCUiBk0g8n3h3">B</div>
+<div class="ak" data-f onclick="handleAlpha('fv','C')" data-page-node-id="7ab0tuPYPqji37P8ApnrkG">C</div>
+<div class="ak" data-f onclick="handleAlpha('fv','D')" data-page-node-id="znDXxpJGuu3GD2AZIjT8Lf">D</div>
+<div class="ak" data-f onclick="handleAlpha('fv','E')" data-page-node-id="EZFTFtsdYtPEVAz85oBGna">E</div>
+<div class="ak" data-f onclick="handleAlpha('fv','F')" data-page-node-id="ZzRchmvq9gHnj7brGWX0pG">F</div>
+<div class="ak" data-f onclick="handleAlpha('fv','G')" data-page-node-id="GYgEx8E3c9HxzXt88FnFk0">G</div>
+<div class="ak" data-f onclick="handleAlpha('fv','H')" data-page-node-id="HAUtFeV4DDTxgH1X1DeKAI">H</div>
+<div class="ak" data-f onclick="handleAlpha('fv','J')" data-page-node-id="rFLM8TJil6OHhOr5yxOx0e">J</div>
+<div class="ak" data-f onclick="handleAlpha('fv','K')" data-page-node-id="q8ChrcnEDncEHYl90XFwbC">K</div>
+<div class="ak" data-f onclick="handleAlpha('fv','L')" data-page-node-id="bfidfUAeGeaaizxtm5eutj">L</div>
+<div class="ak" data-f onclick="handleAlpha('fv','M')" data-page-node-id="HCRMfMjMBr6gQFnjJdowKc">M</div>
+<div class="ak" data-f onclick="handleAlpha('fv','N')" data-page-node-id="Lt20uEiUDA4wzAmEFbbB2g">N</div>
+<div class="ak" data-f onclick="handleAlpha('fv','O')" data-page-node-id="ebG8BfgG3N27hzfKeMCiiQ">O</div>
+<div class="ak" data-f onclick="handleAlpha('fv','P')" data-page-node-id="DaHeSlccmAPtwEPD9BuIUf">P</div>
+<div class="ak" data-f onclick="handleAlpha('fv','Q')" data-page-node-id="ASvcANXkS3dVEcr4jLSrHb">Q</div>
+<div class="ak" data-f onclick="handleAlpha('fv','R')" data-page-node-id="i1HtUUnFV6iC6C8cTiGDnu">R</div>
+<div class="ak" data-f onclick="handleAlpha('fv','S')" data-page-node-id="OXnzo7TdV23XFZWvlO40Hz">S</div>
+<div class="ak" data-f onclick="handleAlpha('fv','T')" data-page-node-id="919SifBvxWgOPHkjjXeQYt">T</div>
+<div class="ak" data-f onclick="handleAlpha('fv','W')" data-page-node-id="CT8190X4u35EIx8rqBjBwl">W</div>
+<div class="ak" data-f onclick="handleAlpha('fv','X')" data-page-node-id="biyhvOjCis8hOwTJEvuJ7Z">X</div>
+<div class="ak" data-f onclick="handleAlpha('fv','Y')" data-page-node-id="o2D11dioHufBoLzbwcOAJq">Y</div>
+<div class="ak" data-f onclick="handleAlpha('fv','Z')" data-page-node-id="YLs1oZQT5sHInPCbFfxZ3j">Z</div>
+<div class="ak ak-clr" data-f onclick="handleAlpha('fv','DEL')" data-page-node-id="ECAe4FSI1dTkobHZgpb6HB">删除</div></div>
     </div>
-    <div class="pf-main">
-      <div class="song-list" id="fav-song-list"></div>
-      <div class="pf-foot">
-        <button class="pf-pg-btn" data-f onclick="favPage(-1)">上一页</button>
-        <span class="pf-pg-info" id="fav-pg-info">1/1</span>
-        <button class="pf-pg-btn" data-f onclick="favPage(1)">下一页</button>
+    <div class="pf-main" data-page-node-id="2scC2STd34P9Ed9pw3Tmnz">
+      <div class="song-list" id="fav-song-list" data-page-node-id="Lt2KhsiDQHwM8bpdjT2QyC"></div>
+      <div class="pf-foot" data-page-node-id="g6P3HhpH3VnpyYOanPYqyi">
+        <button class="pf-pg-btn" data-f onclick="favPage(-1)" data-page-node-id="4NCVKZ6AudOIqXdnd54i6t">上一页</button>
+        <span class="pf-pg-info" id="fav-pg-info" data-page-node-id="9bD4Hts4RU8yVCvVoqyRdG">1/1</span>
+        <button class="pf-pg-btn" data-f onclick="favPage(1)" data-page-node-id="MdKo1AZO24mFJQNKDlo7AB">下一页</button>
       </div>
     </div>
   </div>
 </div>
-<div class="pd-full" id="pf-artist-songs" style="z-index:61">
-  <div class="pf-head"><h2 id="as-title">歌手作品</h2><div class="pf-back" data-f onclick="closePF('artist-songs')">返回</div></div>
-  <div class="pf-body"><div class="pf-main"><div class="song-list song-list-2col" id="as-list"></div></div></div>
+<div class="pd-full" id="pf-artist-songs" style="z-index:61" data-page-node-id="Phyqm3xinCzjjJXFYFPMJd">
+  <div class="pf-head" data-page-node-id="uEYCcyF9NB8eaGnWGOs0Kp"><h2 id="as-title" data-page-node-id="aHbsFGgKF3mZlCGYwAfNFh">歌手作品</h2><div class="pf-back" data-f onclick="closePF('artist-songs')" data-page-node-id="Zd72Tky4eua57soLyPHzNL">返回</div></div>
+  <div class="pf-body" data-page-node-id="H50b8tmzIyA6LOY881lDFp"><div class="pf-main" data-page-node-id="1kuaKKv37rGoRdnadSJxmp"><div class="song-list song-list-2col" id="as-list" data-page-node-id="fOGqFkNDYXpBBOETPC7c1k"></div>
+    <div class="pf-foot" data-page-node-id="GJi63LBy1CZ3HSLMoN8Nip">
+      <button class="pf-pg-btn" data-f onclick="artistSongsPage(-1)" data-page-node-id="vMJp5sr48qs7o5r64qxAVE">上一页</button>
+      <span class="pf-pg-info" id="as-pg-info" data-page-node-id="U7LAZmfzbzbV8KGkvlHLOE">1/1</span>
+      <button class="pf-pg-btn" data-f onclick="artistSongsPage(1)" data-page-node-id="36hkuhaygA80Fg4M7lYKP3">下一页</button>
+    </div></div></div>
 </div>
-<div id="toast"></div>
+<div id="toast" data-page-node-id="VF2hSgCkDUsShzUkRIvq79"></div>
 <script>
 const BASE=location.origin,MOBILE=BASE+'/m';
 const nowPanel=document.getElementById('now-panel');
@@ -1279,6 +1311,17 @@ function getPY(char){if(!char)return'#';const c=char.charCodeAt(0);if(c<0x4E00||
 // 空白字符直接跳过（不产生占位符），这样"水 中 花"这类带空格的标题拼出来的
 // 首字母序列依然是连续的"SZH"，不会被空格打断导致匹配不上。
 function getInitials(str){let out='';for(const ch of String(str||'')){if(/\s/.test(ch))continue;out+=getPY(ch);}return out;}
+// 拼音首字母缓存：getPY 每个字都要跑一次 localeCompare('zh-CN') 二分查表，
+// 而字母面板每点一次字母就会对全部条目重算一遍首字母——几千条目 × 每条目数个字
+// = 上万次 localeCompare，是"点字母卡顿"的主因之一。按字符串缓存后，第二次起
+// 过滤就退化成普通的 startsWith，几乎零成本。
+const _initialsCache=new Map();
+function initialsOf(str){
+  const s=String(str||'');
+  let v=_initialsCache.get(s);
+  if(v===undefined){v=getInitials(s);_initialsCache.set(s,v);}
+  return v;
+}
 // 状态
 let queueData=[],curSong=null,isPaused=false,isFS=false,endingNotified=false;
 let hlsInstance=null;
@@ -1450,6 +1493,37 @@ function syncPauseUI(){
 video.addEventListener('play',syncPauseUI);
 video.addEventListener('playing',()=>document.getElementById('video-loading').classList.remove('show'));
 video.addEventListener('pause',syncPauseUI);
+// ===== 播放时保持屏幕常亮（防手机/平板锁屏熄屏）=====
+// 主方案：Screen Wake Lock API（Android / Chrome / Edge 等移动浏览器支持）。
+// 兜底方案：iOS Safari 不支持 Wake Lock，但页面内有视频在播放时系统不会熄屏，
+// 因此用一段 1x1 静音循环小视频在后台播放来保持屏幕常亮。
+const _wakeVideo=document.createElement('video');
+_wakeVideo.loop=true;_wakeVideo.muted=true;_wakeVideo.setAttribute('playsinline','');_wakeVideo.setAttribute('webkit-playsinline','');
+_wakeVideo.style.cssText='position:fixed;width:2px;height:2px;top:-3px;left:-3px;opacity:0;pointer-events:none;z-index:-1';
+let _wakeVideoReady=false,_wakeLockSentinel=null,_wakeLockOk=true;
+async function acquireWakeLock(){
+  if(_wakeLockOk && 'wakeLock' in navigator){
+    try{
+      if(!_wakeLockSentinel){
+        _wakeLockSentinel=await navigator.wakeLock.request('screen');
+        _wakeLockSentinel.addEventListener('release',()=>{_wakeLockSentinel=null;});
+      }
+      _wakeVideo.pause();return;
+    }catch(e){_wakeLockOk=false;}
+  }
+  // 不支持 Wake Lock（如 iOS）：后台播静音循环视频，系统便不会熄屏
+  if(!_wakeVideoReady){_wakeVideo.src='/tv/silent-loop.mp4';_wakeVideoReady=true;}
+  _wakeVideo.play().catch(()=>{});
+}
+function releaseWakeLock(){
+  if(_wakeLockSentinel){try{_wakeLockSentinel.release();}catch(e){}_wakeLockSentinel=null;}
+  _wakeVideo.pause();
+}
+video.addEventListener('play',acquireWakeLock);
+video.addEventListener('playing',acquireWakeLock);
+video.addEventListener('pause',releaseWakeLock);
+video.addEventListener('ended',releaseWakeLock);
+document.addEventListener('visibilitychange',()=>{ if(document.hidden) releaseWakeLock(); else if(!video.paused) acquireWakeLock(); });
 function togglePause(){VoiceManager.wake(video);if(video.paused)video.play().catch(()=>{});else video.pause();}
 function cutSong(){fetch('/api/queue/next',{method:'POST'});}
 function restartSong(){VoiceManager.wake(video);video.currentTime=0;isPaused=false;video.play().catch(()=>{});showToast('重唱 🔄');}
@@ -1692,14 +1766,28 @@ function openPF(name){pushFocus();document.querySelectorAll('.pd-full').forEach(
 // (还是歌星网格那个)，导致遥控器上下左右移动的其实是被歌曲列表盖住的歌星
 // 网格，看起来"选完歌手却点不到歌"，要按一次返回让重复的 open 消掉之后才恢复
 // 正常。现在统一走 openPF 同款的"只留一个面板处于 open"逻辑。
-function openArtistSongs(artist){
+// 40,000+ 曲库修复：原来这里 /api/songs?artist= 不带 limit/offset，歌手作品多时
+// 会一次性把该歌手全部歌曲取回并渲染进 DOM，是"点进歌手后卡顿"的根因。
+// 改成跟点歌页一样的分页：每页 30 首，翻页再向后台要下一页。
+let asArtist='',asPg=0;const AS_PG=30;
+async function openArtistSongs(artist){
+  asArtist=artist;asPg=0;
   pushFocus();
   document.getElementById('pf-artists').classList.remove('open');
   document.getElementById('as-title').textContent='🎤 '+artist;
   document.getElementById('pf-artist-songs').classList.add('open');
   focIdx=0;
-  fetch(`/api/songs?artist=${encodeURIComponent(artist)}`).then(r=>r.json()).then(s=>renderSongs(document.getElementById('as-list'),s));
+  await loadArtistSongs();
 }
+async function loadArtistSongs(){
+  const params=new URLSearchParams({artist:asArtist,limit:String(AS_PG),offset:String(asPg*AS_PG)});
+  const songs=await fetch(`/api/songs?${params}`).then(r=>r.json());
+  const hasMore=songs.length===AS_PG;
+  renderSongs(document.getElementById('as-list'),songs);
+  const info=document.getElementById('as-pg-info');
+  if(info)info.textContent=`第 ${asPg+1} 页${hasMore?' · 还有更多':''}`;
+}
+function artistSongsPage(d){asPg=Math.max(0,asPg+d);loadArtistSongs();}
 function closePF(name){
   const el=document.getElementById(`pf-${name}`);
   if(!el.classList.contains('open'))return; // 已经是关着的，避免重复触发popFocus打乱焦点栈
@@ -1709,6 +1797,26 @@ function closePF(name){
   if(map[name])document.getElementById(`pf-${map[name]}`).classList.add('open');
   blurRealInput();
   popFocus();
+}
+// 字母键盘响应优化（"字母操作不应该卡顿，要和左边的显示分开"）：
+// 点字母后按钮高亮/输入文本在下面 handleAlpha 里已经同步更新完了，但"过滤 + 渲染
+// 左侧列表"是重活——如果紧接着同步做，浏览器必须等它做完才绘制，用户手感上就是
+// 按键"粘住""迟滞"。这里做三件事：
+//   1) 防抖 ~90ms：连续快点字母只跑最后一次，避免每个字母都触发一遍过滤/请求
+//   2) requestAnimationFrame：把重活推到下一帧，让本次按键的高亮先上屏
+//   3) token 校验：新一轮排队后，上一轮已排进 rAF 的任务不再执行
+// 说明：这里刻意没有用 Web Worker。渲染必须操作 DOM，Worker 里做不了；实测真正的
+// 开销是"每次都重算拼音首字母"和"逐个元素读写导致的强制同步布局"，把这两处消掉
+// （见 _initialsCache / _nameFitCache）比开线程有效得多。
+const _alphaTimers={},_alphaTokens={};
+function scheduleAlphaWork(prefix,fn,delay){
+  clearTimeout(_alphaTimers[prefix]);
+  _alphaTimers[prefix]=setTimeout(()=>{
+    const token=(_alphaTokens[prefix]||0)+1;
+    _alphaTokens[prefix]=token;
+    const run=()=>{if(_alphaTokens[prefix]===token)fn();};
+    if(window.requestAnimationFrame)requestAnimationFrame(run);else setTimeout(run,0);
+  },delay===undefined?90:delay);
 }
 // 字母处理（通用）
 function handleAlpha(prefix,k){
@@ -1727,7 +1835,8 @@ function handleAlpha(prefix,k){
     if(txtEl)txtEl.textContent=alphaState[prefix];
     event&&event.target&&event.target.classList.add('sel');
   }
-  alphaFilter[prefix]();
+  // 重活延后到下一帧，保证本次按键的高亮先绘制出来（scheduleAlphaWork 见上方）
+  scheduleAlphaWork(prefix,alphaFilter[prefix]);
 }
 const ALPHA_PLACEHOLDER={ar:'歌星搜索',od:'歌名搜索',hs:'常唱搜索',fv:'收藏搜索'};
 const alphaState={};
@@ -1738,8 +1847,28 @@ const AG_COLS=6; // 要和 .ag 网格的 grid-template-columns 列数保持一�
 const ARTIST_PG=24; // 6列x4行/页，跟"常唱/收藏"一样做分页，避免歌手很多时一次性渲染几百个卡片卡顿
 let allArtists=[],filtArtists=[],arPg=0;
 alphaState['ar']='';
-alphaFilter['ar']=()=>{const q=alphaState['ar'];filtArtists=!q?[...allArtists]:allArtists.filter(a=>getInitials(a.artist).startsWith(q));arPg=0;renderArtists();};
-async function initArtists(){if(!allArtists.length){allArtists=await fetch('/api/artists').then(r=>r.json());sortArtistsByPinyin(allArtists);}alphaState['ar']='';filtArtists=[...allArtists];arPg=0;document.getElementById('ar-keys-txt').textContent=ALPHA_PLACEHOLDER['ar'];document.querySelectorAll('#ar-keys .ak').forEach(b=>b.classList.remove('sel'));renderArtists();}
+alphaFilter['ar']=()=>{applyArtistFilter();};
+// 语言筛选：歌星按语言(中文/粤语/英语/韩语/日语)过滤，与字母首字母筛选叠加。
+// /api/artists 已为每位歌手返回其主导语言(lang 字段)，这里纯前端过滤即可。
+const langState={};
+const LANGS=['中文','粤语','英语','韩语','日语'];
+function applyArtistFilter(){
+  const q=alphaState['ar']||''; const lang=langState['ar']||'';
+  // 第一个字母不查找：单字母会命中大量歌手导致一次性渲染卡顿，从第二个字母起才过滤。
+  filtArtists=(!q||q.length<2)?[...allArtists]:allArtists.filter(a=>initialsOf(a.artist).startsWith(q));
+  if(lang) filtArtists=filtArtists.filter(a=>(a.lang||'')===lang);
+  arPg=0; renderArtists();
+}
+function handleLang(panel, lang){
+  langState[panel]=lang;
+  const bar=document.getElementById(panel+'-lang');
+  if(bar)bar.querySelectorAll('.ak').forEach(b=>b.classList.toggle('sel',(b.getAttribute('data-lang')||'')===lang));
+  // 同样延后到下一帧：语言切换会触发整列表重渲染，同步做会把按钮高亮压到最后才画
+  if(panel==='ar'){ scheduleAlphaWork(panel,applyArtistFilter); }
+  else if(panel==='od'){ odPg=0; scheduleAlphaWork(panel,loadOrderPage); }
+  else if(panel==='pl'){ scheduleAlphaWork(panel,()=>doSearch(searchQ)); }
+}
+async function initArtists(){if(!allArtists.length){allArtists=await fetch('/api/artists').then(r=>r.json());sortArtistsByPinyin(allArtists);}alphaState['ar']='';langState['ar']='';filtArtists=[...allArtists];arPg=0;const al=document.getElementById('ar-lang');if(al)al.querySelectorAll('.ak').forEach(b=>b.classList.toggle('sel',(b.getAttribute('data-lang')||'')===''));document.getElementById('ar-keys-txt').textContent=ALPHA_PLACEHOLDER['ar'];document.querySelectorAll('#ar-keys .ak').forEach(b=>b.classList.remove('sel'));renderArtists();}
 // 按歌手名第一个字的拼音首字母排序（A-Z），首字母相同的再按完整名称排序，
 // 让"歌星"列表呈现出常见的拼音首字母顺序，而不是接口返回的原始顺序。
 function sortArtistsByPinyin(list){
@@ -1772,8 +1901,8 @@ function renderArtists(){
   // 定义见文件底部），再让艺人名根据缩小后的新宽度自动缩字号保证完整显示一行
   // （fitTextOneLine，同样在文件底部定义）——顺序不能反，不然名称还是按旧的
   // 104px 宽度去算，缩小头像之后名称反而会变得比头像还宽。
-  fitArtistGrid();
-  g.querySelectorAll('.ag-name').forEach(el=>fitTextOneLine(el,10));
+  const _agSize=fitArtistGrid();
+  g.querySelectorAll('.ag-name').forEach(el=>fitArtistNameCached(el,_agSize,10));
 }
 function updateArtistPgInfo(){
   const el=document.getElementById('artist-pg-info');
@@ -1788,16 +1917,25 @@ alphaState['od']='';
 alphaFilter['od']=()=>{odPg=0;loadOrderPage();};
 async function initOrder(){
   // 不再一次性加载整个曲库；首字母按钮按需向后端分页查询，避免 40,000 首歌曲撑爆浏览器内存。
-  alphaState['od']='';filtSongs=[];odPg=0;
+  alphaState['od']='';langState['od']='';filtSongs=[];odPg=0;
+  const ol=document.getElementById('od-lang');if(ol)ol.querySelectorAll('.ak').forEach(b=>b.classList.toggle('sel',(b.getAttribute('data-lang')||'')===''));
   document.getElementById('od-keys-txt').textContent=ALPHA_PLACEHOLDER['od'];
   document.querySelectorAll('#od-keys .ak').forEach(b=>b.classList.remove('sel'));
   await loadOrderPage();
 }
+// 请求令牌：连点字母/翻页时会有多个请求同时在飞，网络返回顺序不保证与发出顺序一致，
+// 没有守卫的话先发的慢请求回来会把后发的新结果覆盖掉（列表显示错内容），而且每个
+// 返回都会触发一次整列表重渲染。用递增令牌丢弃过期结果。
+let _orderReqId=0;
 async function loadOrderPage(){
+  const reqId=++_orderReqId;
   const params=new URLSearchParams({limit:String(ORDER_PG),offset:String(odPg*ORDER_PG)});
   const q=alphaState['od']||'';
-  if(q)params.set('q',q);
+  if(q.length>=2)params.set('q',q); // 仅 2 个字母及以上才真正向后端搜索（第一个字母不查找）
+  const lang=langState['od']||'';
+  if(lang)params.set('lang',lang); // 按语言(中文/粤语/英语/韩语/日语)筛选
   const songs=await fetch(`/api/songs?${params}`).then(r=>r.json());
+  if(reqId!==_orderReqId)return; // 已有更新的请求发出，丢弃这次的过期结果
   filtSongs=songs;renderOrder();
 }
 // Bug：点歌(立即点歌)列表没有分页，曲库一大(几百上千首)就要一次性渲染全部
@@ -1813,14 +1951,14 @@ function orderPage(d){odPg=Math.max(0,odPg+d);loadOrderPage();}
 // 常唱（Bug1修复：二级菜单）
 let allHist=[],filtHist=[],hsPg=0;const HS_PG=15;
 alphaState['hs']='';
-alphaFilter['hs']=()=>{const q=alphaState['hs'];filtHist=!q?[...allHist]:allHist.filter(s=>getInitials(s.title).startsWith(q));hsPg=0;renderHist();};
+alphaFilter['hs']=()=>{const q=alphaState['hs'];filtHist=(!q||q.length<2)?[...allHist]:allHist.filter(s=>initialsOf(s.title).startsWith(q));hsPg=0;renderHist();};
 async function initHistory(){allHist=await fetch('/api/history').then(r=>r.json());alphaState['hs']='';filtHist=[...allHist];hsPg=0;document.getElementById('hs-keys-txt').textContent=ALPHA_PLACEHOLDER['hs'];document.querySelectorAll('#hs-keys .ak').forEach(b=>b.classList.remove('sel'));renderHist();}
 function renderHist(){const t=Math.ceil(filtHist.length/HS_PG)||1;document.getElementById('hist-pg-info').textContent=`${hsPg+1}/${t} (共${filtHist.length}首)`;renderSongs(document.getElementById('hist-song-list'),filtHist.slice(hsPg*HS_PG,(hsPg+1)*HS_PG));}
 function histPage(d){const t=Math.ceil(filtHist.length/HS_PG)||1;hsPg=Math.max(0,Math.min(t-1,hsPg+d));renderHist();}
 // 收藏（Bug1修复：二级菜单）
 let allFav=[],filtFav=[],fvPg=0;const FV_PG=15;
 alphaState['fv']='';
-alphaFilter['fv']=()=>{const q=alphaState['fv'];filtFav=!q?[...allFav]:allFav.filter(s=>getInitials(s.title).startsWith(q));fvPg=0;renderFav();};
+alphaFilter['fv']=()=>{const q=alphaState['fv'];filtFav=(!q||q.length<2)?[...allFav]:allFav.filter(s=>initialsOf(s.title).startsWith(q));fvPg=0;renderFav();};
 async function initFavorites(){allFav=await fetch(`/api/favorites?device=${devId()}`).then(r=>r.json());alphaState['fv']='';filtFav=[...allFav];fvPg=0;document.getElementById('fv-keys-txt').textContent=ALPHA_PLACEHOLDER['fv'];document.querySelectorAll('#fv-keys .ak').forEach(b=>b.classList.remove('sel'));renderFav();}
 function renderFav(){const t=Math.ceil(filtFav.length/FV_PG)||1;document.getElementById('fav-pg-info').textContent=`${fvPg+1}/${t} (共${filtFav.length}首)`;renderSongs(document.getElementById('fav-song-list'),filtFav.slice(fvPg*FV_PG,(fvPg+1)*FV_PG));}
 function favPage(d){const t=Math.ceil(filtFav.length/FV_PG)||1;fvPg=Math.max(0,Math.min(t-1,fvPg+d));renderFav();}
@@ -1850,16 +1988,50 @@ async function topQ(id){await fetch(`/api/queue/${id}/top`,{method:'POST'});}
 async function delQ(id){await fetch(`/api/queue/${id}`,{method:'DELETE'});}
 async function loadCharts(){const el=document.getElementById('pl-charts');el.innerHTML='';const songs=(await fetch('/api/charts').then(r=>r.json())).slice(0,10);if(!songs.length){el.innerHTML='<div style="color:#555;text-align:center;padding:30px">还没有人唱过歌</div>';return;}songs.forEach((s,i)=>{const d=document.createElement('div');d.className='chart-row';const rk=i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}`;d.innerHTML=`<div class="ck ${i<3?'r'+(i+1):''}"> ${rk}</div><div class="chart-info"><div class="ct">${s.title}</div><div class="cm">${s.artist||'未知歌手'}</div></div><span class="cp">${s.play_count}次</span><button class="btn-add" onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button>`;el.appendChild(d);});}
 let st2;
-let searchRequestId=0;
+// 40,000+ 曲库修复：搜索结果原本被硬限在 60 首、且无法翻看更多——一个宽泛
+// 关键词（如歌手姓、单字）能命中成千上万首，却永远只看到前 60 首。
+// 这里改为"首屏 60 首 + 加载更多"：每屏仍只渲染/传输一小批，既不卡又能翻到底。
+let searchRequestId=0,searchQ='',searchOffset=0;const SEARCH_PG=60;
 function doSearch(q){
   clearTimeout(st2);
   st2=setTimeout(async()=>{
     const requestId=++searchRequestId;
-    const params=new URLSearchParams({limit:'60'});
-    if(q.trim())params.set('q',q.trim());
+    searchQ=q.trim();searchOffset=0;
+    const params=new URLSearchParams({limit:String(SEARCH_PG)});
+    if(searchQ)params.set('q',searchQ);
+    const lang=langState['pl']||'';
+    if(lang)params.set('lang',lang); // 按语言筛选
     const songs=await fetch(`/api/songs?${params}`).then(r=>r.json());
-    if(requestId===searchRequestId)renderSongs(document.getElementById('pl-search'),songs);
+    if(requestId!==searchRequestId)return; // 输入已变化，丢弃过期结果
+    renderSongs(document.getElementById('pl-search'),songs);
+    updateSearchMore(songs.length===SEARCH_PG);
   },320);
+}
+async function searchMore(){
+  const btn=document.getElementById('search-more');
+  if(!btn||btn.style.display==='none')return;
+  const requestId=++searchRequestId; // 作废进行中的输入查询，避免乱序
+  searchOffset+=SEARCH_PG;
+  const params=new URLSearchParams({limit:String(SEARCH_PG),offset:String(searchOffset)});
+  if(searchQ)params.set('q',searchQ);
+  const lang=langState['pl']||'';
+  if(lang)params.set('lang',lang);
+  const songs=await fetch(`/api/songs?${params}`).then(r=>r.json());
+  if(requestId!==searchRequestId)return;
+  const el=document.getElementById('pl-search');
+  const frag=document.createDocumentFragment();
+  songs.forEach((s,i)=>{
+    const fk='fav_'+s.id,isFaved=localStorage.getItem(fk)==='1';
+    const d=document.createElement('div');d.className='so-row';
+    d.innerHTML=`<div class="so-num">${searchOffset+i+1}</div><div class="so-info"><div class="so-t">${s.title}</div><div class="so-a">${s.artist||''}</div></div><div class="so-acts"><button class="btn-fav${isFaved?' faved':''}" data-f onclick="toggleFav(${s.id},this)">❤</button><button class="btn-add" data-f onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button></div>`;
+    frag.appendChild(d);
+  });
+  el.appendChild(frag);
+  updateSearchMore(songs.length===SEARCH_PG);
+}
+function updateSearchMore(hasMore){
+  const b=document.getElementById('search-more');
+  if(b)b.style.display=hasMore?'inline-block':'none';
 }
 function loadSettings(){document.getElementById('s-host').textContent=location.host;fetch('/api/stats').then(r=>r.json()).then(d=>document.getElementById('s-songs').textContent=d.songCount+'首');}
 async function doScan(){showToast('扫描中…');let d;try{d=await fetch('/api/scan',{method:'POST'}).then(r=>r.json());}catch(e){showToast('⚠️ 扫描请求失败：'+e.message);return;}if(d.error==='MV_DIR_UNAVAILABLE'){showToast('⚠️ 曲库目录暂时无法访问，请检查挂载后重试');return;}if(d.ok===false){showToast('⚠️ 扫描出错：'+(d.error||'未知错误'));return;}showToast(`扫描完成：${d.total}首，新增${d.added}首，移除${d.removed||0}首`);allSongs=[];loadSettings();}
@@ -2025,6 +2197,21 @@ function fitTextOneLine(el,minPx){
   }
 }
 window.fitTextOneLine=fitTextOneLine;
+// 艺人名字号缓存：fitTextOneLine 内部是"写 fontSize -> 读 scrollWidth/clientWidth"
+// 的往返循环，每读一次都触发一次强制同步布局；renderArtists 对整页 24 个名字逐个
+// 调用，就是几十上百次强制布局（布局抖动 layout thrashing），这是歌星面板点字母
+// 卡顿的另一个主因。而字号只取决于「列宽(size) + 文本内容」，所以按 size|文本
+// 缓存结果——命中缓存时只剩一次纯写入，完全不读布局，重复渲染几乎零成本。
+// 窗口尺寸变化会算出不同的 size，自然落到不同的 key，无需手动失效。
+const _nameFitCache=new Map();
+function fitArtistNameCached(el,size,minPx){
+  const key=size+'|'+(el.textContent||'');
+  const hit=_nameFitCache.get(key);
+  if(hit!==undefined){el.style.fontSize=hit;return;} // 纯写入，零布局读取
+  fitTextOneLine(el,minPx===undefined?10:minPx);
+  if(el.style.fontSize)_nameFitCache.set(key,el.style.fontSize);
+}
+window.fitArtistNameCached=fitArtistNameCached;
 // MV下方控制按钮的文字标签：只有横屏(电视)布局才会出现"7个按钮挤在一整排、
 // 屏幕越窄按钮越窄"的问题——竖屏(手机)下按钮已经改成4列网格，每个按钮宽度相对
 // 固定，不存在这个问题。
@@ -2069,18 +2256,21 @@ setTimeout(fitMvLabels,1000);
 // 更大。设了 56px 下限，避免屏幕极端窄时头像小到认不出人脸缩写字母。
 // 只在横屏(电视)生效——竖屏(手机)是固定4列+60px头像，已经够小，不需要再套
 // 这层动态计算。
+// 返回实际采用的头像直径(size)，供调用方拼字号缓存的 key；早退时返回 null
+// （调用方会退化成按 'null|文本' 缓存，与任何真实 size 都不冲突）。
 function fitArtistGrid(){
-  if(document.documentElement.getAttribute('data-layout')==='mobile')return;
+  if(document.documentElement.getAttribute('data-layout')==='mobile')return null;
   const g=document.getElementById('artist-grid');
-  if(!g||!g.children.length)return;
+  if(!g||!g.children.length)return null;
   const gapX=10; // 跟 .ag 的 gap 里横向那个 10px 保持一致
   const avail=g.clientWidth-gapX*(AG_COLS-1);
-  if(avail<=0)return;
+  if(avail<=0)return null;
   let size=Math.floor(avail/AG_COLS);
   size=Math.max(56,Math.min(104,size));
   const fontSize=Math.max(18,Math.round(32*size/104));
   g.querySelectorAll('.ag-av').forEach(el=>{el.style.width=size+'px';el.style.height=size+'px';el.style.fontSize=fontSize+'px';});
   g.querySelectorAll('.ag-name').forEach(el=>{el.style.maxWidth=size+'px';});
+  return size;
 }
 window.fitArtistGrid=fitArtistGrid;
 window.addEventListener('resize',fitArtistGrid);

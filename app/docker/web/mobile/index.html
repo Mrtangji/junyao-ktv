@@ -164,6 +164,7 @@ header{
     <input id="nickname-input" placeholder="点歌昵称（可选）">
   </div>
   <div id="song-list"></div>
+  <button id="search-more" style="display:none;width:100%;padding:12px;margin:10px 0;border:none;border-radius:10px;background:#ff2255;color:#fff;font-size:15px" onclick="loadMoreSongs()">加载更多 ↓</button>
   <div id="empty" style="display:none">没有找到相关歌曲</div>
 </div>
 
@@ -317,23 +318,42 @@ async function topSong(id){ await fetch(`/api/queue/${id}/top`,{method:'POST'});
 async function delSong(id){ await fetch(`/api/queue/${id}`,{method:'DELETE'}); }
 
 // ===== Song search & add =====
-let searchTimer, searchRequest = 0;
+// 40,000+ 曲库修复：搜索原本硬限 60 首、无法翻看更多。改为"首屏 60 + 加载更多"，
+// 每批只取一小页，列表再长也不会一次性渲染全部 DOM。
+let searchTimer, searchRequest = 0, searchQ='', searchOffset=0; const SEARCH_PG=60;
 searchInput.addEventListener('input',()=>{
   clearTimeout(searchTimer);
   searchTimer=setTimeout(()=>loadSongs(searchInput.value.trim()),320);
 });
 async function loadSongs(q=''){
   const requestId=++searchRequest;
-  const params=new URLSearchParams({limit:'60'});
+  searchQ=q; searchOffset=0;
+  const params=new URLSearchParams({limit:String(SEARCH_PG)});
   if(q)params.set('q',q);
   const res=await fetch(`/api/songs?${params}`);
   const songs=await res.json();
-  if(requestId===searchRequest)renderSongs(songs);
+  if(requestId===searchRequest){
+    renderSongs(songs,true);
+    const more=document.getElementById('search-more');
+    if(more)more.style.display = songs.length===SEARCH_PG ? 'block':'none';
+  }
 }
-function renderSongs(list){
+async function loadMoreSongs(){
+  const requestId=++searchRequest; // 作废进行中的输入查询
+  searchOffset+=SEARCH_PG;
+  const params=new URLSearchParams({limit:String(SEARCH_PG),offset:String(searchOffset)});
+  if(searchQ)params.set('q',searchQ);
+  const res=await fetch(`/api/songs?${params}`);
+  const songs=await res.json();
+  if(requestId!==searchRequest)return;
+  renderSongs(songs,false);
+  const more=document.getElementById('search-more');
+  if(more)more.style.display = songs.length===SEARCH_PG ? 'block':'none';
+}
+function renderSongs(list, replace=true){
   const el=document.getElementById('song-list');
   document.getElementById('empty').style.display=list.length?'none':'block';
-  el.innerHTML='';
+  if(replace)el.innerHTML='';
   list.forEach(s=>{
     const c=document.createElement('div');
     c.className='song-card';

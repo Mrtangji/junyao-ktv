@@ -3,6 +3,8 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const db = require('./db');
 const { removeHLS } = require('./hlsgen');
+const { toPinyin, toPinyinInitial } = require('./pinyin');
+const { detectLang } = require('./lang');
 
 const MV_DIR = process.env.MV_DIR || '/mv';
 // 新增对 .mpg (MPEG-1/2 Program Stream) 格式的支持：曲库扫描环节只需要把
@@ -125,8 +127,8 @@ async function scanLibrary() {
   }
   const files = listFilesRecursive(MV_DIR);
   const insert = db.prepare(`
-    INSERT INTO songs (title, artist, filename, filepath, audio_tracks, media_type, lyrics_path)
-    VALUES (@title, @artist, @filename, @filepath, @audio_tracks, @media_type, @lyrics_path)
+    INSERT INTO songs (title, artist, filename, filepath, audio_tracks, media_type, lyrics_path, pinyin, pinyin_initial, lang)
+    VALUES (@title, @artist, @filename, @filepath, @audio_tracks, @media_type, @lyrics_path, @pinyin, @pinyin_initial, @lang)
     ON CONFLICT(filename) DO NOTHING
   `);
   const existing = db.prepare('SELECT filename FROM songs').all().map(r => r.filename);
@@ -153,7 +155,7 @@ async function scanLibrary() {
         const audio_tracks = media_type === 'audio' ? 1 : probeAudioTracks(f);
         const lyrics = findLyricsPath(f);
         const lyrics_path = lyrics ? path.relative(MV_DIR, lyrics) : null;
-        const r = insert.run({ title, artist, filename: rel, filepath: f, audio_tracks, media_type, lyrics_path });
+        const r = insert.run({ title, artist, filename: rel, filepath: f, audio_tracks, media_type, lyrics_path, pinyin: toPinyin(title), pinyin_initial: toPinyinInitial(title), lang: detectLang(title, artist) });
         if (r.changes > 0) added++;
       } catch (e) {
         console.error('曲库扫描-新增文件入库失败(' + rel + '):', e.message);
