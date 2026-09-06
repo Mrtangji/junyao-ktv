@@ -1,0 +1,57 @@
+name: Build & Publish Docker image
+
+# 每次 push 到 main 或打 v* 标签时，云端构建镜像并推送到 Docker Hub。
+# 镜像地址：docker.io/<DOCKERHUB_USERNAME>/junyao-ktv
+# 需要在仓库 Settings -> Secrets and variables -> Actions 里配置：
+#   DOCKERHUB_USERNAME : Docker Hub 用户名
+#   DOCKERHUB_TOKEN    : Docker Hub -> Account Settings -> Security -> New Access Token 生成的令牌
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Generate tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/junyao-ktv
+          tags: |
+            # main 分支推送 -> latest
+            type=raw,value=latest,enable={{is_default_branch}}
+            # 打 v1.0.9 标签 -> 1.0.9 / 1.0 / 1
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            # 每次构建的短 SHA，便于回滚定位
+            type=sha,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          # Dockerfile 在 app/docker/ 下
+          context: app/docker
+          # 部署目标是 x86 NAS（VAAPI 核显转码），仅构建 amd64
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # 用 GitHub Actions 缓存加速 apt / npm 层
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
