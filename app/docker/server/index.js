@@ -446,6 +446,103 @@ app.get('/api/scores/recent', (req, res) => {
   res.json(rows);
 });
 
+// ---------- LX Music（音源导入 / 网络搜索 / 榜单 / 下载点唱） ----------
+const lxmusic = require('./lxmusic');
+lxmusic.initActiveSource();
+
+// 当前激活源 + 已导入源列表
+app.get('/api/lx/source', (req, res) => {
+  const act = lxmusic.activeSource();
+  const list = db.prepare('SELECT id,name,description,version,author,homepage,created_at FROM lx_sources ORDER BY id DESC').all();
+  res.json({
+    active: act ? { id: act.id, name: act.meta.name, sources: act.sources } : null,
+    list,
+  });
+});
+
+// 导入源：{ script: '源脚本内容' } 或 { url: 'http://.../source.js' }
+app.post('/api/lx/source', async (req, res) => {
+  try {
+    let script = req.body.script;
+    if (!script && req.body.url) {
+      const resp = await fetch(req.body.url).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); });
+      script = resp;
+    }
+    if (!script || typeof script !== 'string' || script.length < 50) return res.status(400).json({ error: '缺少有效脚本内容' });
+    const inst = lxmusic.activateScript(script); // 校验可运行后才入库
+    const info = db.prepare('INSERT INTO lx_sources (name,description,version,author,homepage,script) VALUES (?,?,?,?,?,?)')
+      .run(inst.meta.name, inst.meta.description, inst.meta.version, inst.meta.author, inst.meta.homepage, script);
+    lxmusic.activateSourceById(info.lastInsertRowid);
+    res.json({ ok: true, id: info.lastInsertRowid, name: inst.meta.name, sources: inst.sources });
+  } catch (e) {
+    res.status(400).json({ error: '源导入失败: ' + e.message });
+  }
+});
+
+app.delete('/api/lx/source/:id', (req, res) => {
+  const id = parseInt(req.params.id);
+  const act = lxmusic.activeSource();
+  db.prepare('DELETE FROM lx_sources WHERE id=?').run(id);
+  if (act && act.id === id) {
+    db.prepare("DELETE FROM settings WHERE key='lx_active_source'").run();
+    lxmusic.deactivateSource();
+  }
+  res.json({ ok: true });
+});
+
+app.post('/api/lx/source/:id/activate', (req, res) => {
+  try {
+    const act = lxmusic.activateSourceById(parseInt(req.params.id));
+    res.json({ ok: true, name: act.meta.name, sources: act.sources });
+  } catch (e) { res.status(400).json({ error: '源启用失败: ' + e.message }); }
+});
+
+// 榜单列表（KTV点唱榜等）
+app.get('/api/lx/boards', (req, res) => {
+  res.json(lxmusic.KW_BOARDS);
+});
+
+// 榜单歌曲
+app.get('/api/lx/board', async (req, res) => {
+  try {
+    const r = await lxmusic.kwBoardSongs(req.query.bangid || '255', parseInt(req.query.page) || 1, parseInt(req.query.limit) || 100);
+    res.json(r);
+  } catch (e) { res.status(502).json({ error: '榜单获取失败: ' + e.message }); }
+});
+
+// 网络搜索
+app.get('/api/lx/search', async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q) return res.json({ list: [], total: 0, page: 1, limit: 30 });
+  try {
+    res.json(await lxmusic.kwSearch(q, parseInt(req.query.page) || 1, parseInt(req.query.limit) || 30));
+  } catch (e) { res.status(502).json({ error: '网络搜索失败: ' + e.message }); }
+});
+
+// 点唱：本地有直接入队；没有则下载入库再入队。body: {songmid,name,singer}
+app.post('/api/lx/queue', async (req, res) => {
+  const { songmid, name, singer } = req.body || {};
+  if (!songmid || !name) return res.status(400).json({ error: '缺少 songmid/name' });
+  let song = lxmusic.findLocalSong(name, singer);
+  let downloaded = false;
+  if (!song) {
+    try {
+      song = await lxmusic.downloadSong({ songmid, name, singer });
+      downloaded = true;
+    } catch (e) {
+      if (e.message === 'NO_ACTIVE_SOURCE') return res.status(400).json({ error: 'NO_ACTIVE_SOURCE', message: '尚未导入 LX 音源，请先在设置中导入' });
+      if (e.message === 'MV_DIR_UNAVAILABLE') return res.status(503).json({ error: '曲库目录不可访问' });
+      return res.status(502).json({ error: '下载失败: ' + e.message });
+    }
+  }
+  const q = db.prepare('INSERT INTO queue (song_id,nickname) VALUES (?,?)').run(song.id, '网络点唱');
+  db.prepare('UPDATE songs SET play_count=play_count+1 WHERE id=?').run(song.id);
+  const playing = db.prepare("SELECT * FROM queue WHERE status='playing'").get();
+  if (!playing) db.prepare("UPDATE queue SET status='playing' WHERE id=?").run(q.lastInsertRowid);
+  broadcastQueue();
+  res.json({ ok: true, downloaded, song });
+});
+
 // ---------- 爱唱榜 (按播放次数) ----------
 app.get('/api/charts', (req, res) => {
   const rows = db.prepare('SELECT * FROM songs WHERE play_count > 0 ORDER BY play_count DESC LIMIT 50').all();
