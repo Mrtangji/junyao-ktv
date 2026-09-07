@@ -105,8 +105,21 @@ function lxUtils() {
   };
 }
 
-// 解析脚本头部注释 @name/@description/@version/@author/@homepage
-// 兼容性：社区音源头部写法五花八门——官方文档是 /** */，但墨澜/星海/独家音源等
+// 社区源对 lx.request 回调 body 的消费方式不一：有的直接取属性（需 JSON 对象，
+// 如独家音源 v5，取到字符串会抛 unknow error），有的无条件 JSON.parse(body)
+//（需字符串，如长青），有的 Buffer.from(body)/typeof 判断（需原始串）。
+// 用 String 包装对象：JSON.parse/字符串操作走原始串，属性来自解析后的 JSON。
+function lxResponseBody(raw) {
+  if (typeof raw !== 'string') return raw;
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch (e) { return raw; }
+  if (!parsed || typeof parsed !== 'object') return raw;
+  const obj = new String(raw);
+  Object.assign(obj, parsed);
+  return obj;
+}
+
+// 解析脚本头部注释 @name/@description/@version/@author/@homepage// 兼容性：社区音源头部写法五花八门——官方文档是 /** */，但墨澜/星海/独家音源等
 // 大量脚本用 /*! */ 或 /* */，还有的用 // 行注释，且文件可能带 BOM 或前置空行。
 // 策略：去掉 BOM 后在文件前 16KB 内依次扫描所有块注释（每个注释块内提取 @key），
 // 都找不到 name 再退化到 // 行注释里找；再找不到才报"不是有效的音源脚本"。
@@ -145,12 +158,18 @@ async function runSourceScript(script) {
     on: (name, handler) => { if (name === EVENT_NAMES.request) requestHandler = handler; },
     send: (name, data) => { if (name === EVENT_NAMES.inited) initedInfo = data; },
     request: (url, options, callback) => {
-      httpReq(url, options || {}).then(resp => callback(null, resp, resp.body)).catch(err => callback(err));
+      // 音源脚本的网络请求默认放宽到 30s（部分源接口响应慢，15s 常超时）
+      httpReq(url, Object.assign({ timeout: 30000 }, options || {})).then(resp => {
+        if ((options && options.responseType) === 'buffer') return callback(null, resp, resp.body);
+        const body = lxResponseBody(resp.body);
+        callback(null, Object.assign({}, resp, { body }), body);
+      }).catch(err => callback(err));
       return () => {};
     },
     utils: lxUtils(),
   };
-  const sandbox = { globalThis: {}, lx, console: { log: () => {}, error: () => {}, warn: () => {}, info: () => {} }, setTimeout, clearTimeout, Buffer, TextEncoder, TextDecoder, URL, URLSearchParams };
+  // 部分社区源（如独家音源 v5）直接使用 Node 的 crypto（createHash 等）
+  const sandbox = { globalThis: {}, lx, console: { log: () => {}, error: () => {}, warn: () => {}, info: () => {} }, setTimeout, clearTimeout, Buffer, TextEncoder, TextDecoder, URL, URLSearchParams, crypto };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(script, sandbox, { timeout: 8000, filename: `${meta.name || 'lx-source'}.js` });
@@ -207,8 +226,11 @@ function deactivateSource() {
 // 通过 LX 源解析 musicUrl（quality 降级重试）
 async function resolveMusicUrl(musicInfo, preferQuality = '320k') {
   if (!activeSource) throw new Error('NO_ACTIVE_SOURCE');
-  // 选脚本声明的第一个源 key（一般只有一个）
-  const sourceKey = Object.keys(activeSource.sources)[0];
+  // 网络点唱/榜单的曲目来自内置酷我(kw)源（kwSearch/kwBoardSongs 的 songmid），
+  // 因此必须用脚本声明的 kw 源解析；仅当脚本不支持 kw 时才退回其第一个源
+  //（此时平台不匹配大概率失败，报错会注明平台，方便换源）。
+  const keys = Object.keys(activeSource.sources);
+  const sourceKey = keys.includes('kw') ? 'kw' : keys[0];
   const qualitys = activeSource.sources[sourceKey].qualitys;
   const order = [preferQuality, ...qualitys.filter(q => q !== preferQuality)];
   let lastErr;
@@ -219,7 +241,8 @@ async function resolveMusicUrl(musicInfo, preferQuality = '320k') {
       lastErr = new Error('脚本返回无效 url');
     } catch (e) { lastErr = e; }
   }
-  throw lastErr || new Error('musicUrl 解析失败');
+  const plat = keys.includes('kw') ? 'kw' : `${sourceKey}(非kw，与榜单平台不匹配)`;
+  throw new Error(`音源「${activeSource.meta.name}」${plat} 解析失败：${(lastErr && lastErr.message) || '未知原因'}，可在曲库管理换音源重试`);
 }
 
 // ---------- 内置酷我(kw)源：搜索 + 榜单 ----------
