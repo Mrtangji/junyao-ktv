@@ -356,6 +356,18 @@ async function downloadCover(picUrl) {
 
 const sanitize = (s) => String(s || '').replace(/[\\/:*?"<>|.]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || '未知';
 
+// 跨设备安全的移动：rename 在 tmp 目录(/data/k_tmp)与曲库(/mv)挂在不同文件系统时
+// 会抛 EXDEV: cross-device link not permitted，此时退化为复制+删除
+function moveFile(src, dst) {
+  try {
+    fs.renameSync(src, dst);
+  } catch (e) {
+    if (e.code !== 'EXDEV') throw e;
+    fs.copyFileSync(src, dst);
+    try { fs.unlinkSync(src); } catch (e2) {}
+  }
+}
+
 // 识别下载内容是否为有效音频。社区音源的取链接口常返回 JSON/HTML 错误页、
 // 防盗链提示甚至加密数据，直接丢给 ffmpeg 只会报晦涩的
 // "Invalid data found when processing input"，且坏内容可能被当歌曲改名入库。
@@ -412,7 +424,7 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   fs.writeFileSync(tmpPath, resp.body);
   try {
     if (!isMv) {
-      if (isMp3Src) fs.renameSync(tmpPath, finalPath);
+      if (isMp3Src) moveFile(tmpPath, finalPath);
       else { await ffmpegToMp3(tmpPath, finalPath); try { fs.unlinkSync(tmpPath); } catch (e) {} }
     } else {
       // MV 模式：先统一为 mp3，再与封面合成 mp4；mp3 一并保留入库
@@ -420,7 +432,7 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
       //   LRC 为两者共用同名文件。扫描器会把 mp4 记为 MV、mp3 记为 audio）
       const tmpMp3 = finalPath + '.tmp.mp3';
       const mp3Path = finalPath.replace(/\.mp4$/i, '.mp3');
-      if (isMp3Src) fs.renameSync(tmpPath, tmpMp3);
+      if (isMp3Src) moveFile(tmpPath, tmpMp3);
       else await ffmpegToMp3(tmpPath, tmpMp3);
       try {
         const cover = await downloadCover(pic);
