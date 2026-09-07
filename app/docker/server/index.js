@@ -520,7 +520,8 @@ app.get('/api/lx/search', async (req, res) => {
 });
 
 // 点唱：本地有直接入队；没有则下载入库再入队。body: {songmid,name,singer,pic,format}
-// format: 'mp3'（默认，320K 优先）| 'mv'（320K 音频+封面合成视频，走 MV 播放路径）
+// format: 'mp3'（默认，320K 优先）| 'mv'（320K 音频+封面合成视频，走 MV 播放路径；
+//         同时保留同名 .mp3 与 .lrc，曲库自动入库双版本）
 app.post('/api/lx/queue', async (req, res) => {
   const { songmid, name, singer, pic, format } = req.body || {};
   if (!songmid || !name) return res.status(400).json({ error: '缺少 songmid/name' });

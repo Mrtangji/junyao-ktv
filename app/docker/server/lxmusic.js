@@ -339,7 +339,8 @@ async function downloadCover(picUrl) {
 const sanitize = (s) => String(s || '').replace(/[\\/:*?"<>|.]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || '未知';
 
 // 下载一首网络歌曲到曲库（MV_DIR/歌手名/歌手名 - 歌名.mp3|.mp4），返回 songs 表行
-// format: 'mp3'（默认，320K 音质优先）| 'mv'（同一 320K 音频 + 封面合成为视频）
+// format: 'mp3'（默认，320K 音质优先）| 'mv'（同一 320K 音频 + 封面合成为视频，
+//         并同时保留同名 .mp3 与 .lrc——MV/MP3 双版本入库）
 async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, format = 'mp3' }) {
   if (!fs.existsSync(MV_DIR)) throw new Error('MV_DIR_UNAVAILABLE');
   const artist = sanitize(singer) || '未知歌手';
@@ -364,13 +365,17 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
       if (isMp3Src) fs.renameSync(tmpPath, finalPath);
       else { await ffmpegToMp3(tmpPath, finalPath); try { fs.unlinkSync(tmpPath); } catch (e) {} }
     } else {
-      // MV 模式：先统一为 mp3，再与封面合成 mp4（只留 mp4，避免同一首歌两份入库）
+      // MV 模式：先统一为 mp3，再与封面合成 mp4；mp3 一并保留入库
+      // （需求：下载 MV 时同时得到对应 MP3 与 LRC——曲库里 MV/MP3 双版本可用，
+      //   LRC 为两者共用同名文件。扫描器会把 mp4 记为 MV、mp3 记为 audio）
       const tmpMp3 = finalPath + '.tmp.mp3';
+      const mp3Path = finalPath.replace(/\.mp4$/i, '.mp3');
       if (isMp3Src) fs.renameSync(tmpPath, tmpMp3);
       else await ffmpegToMp3(tmpPath, tmpMp3);
       try {
         const cover = await downloadCover(pic);
         await ffmpegMp3ToMv(tmpMp3, cover, finalPath);
+        try { fs.renameSync(tmpMp3, mp3Path); } catch (e) {}
       } finally { try { fs.unlinkSync(tmpMp3); } catch (e) {} }
       try { fs.unlinkSync(tmpPath); } catch (e) {}
     }
