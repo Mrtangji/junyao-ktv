@@ -350,6 +350,19 @@ html[data-layout="mobile"] .audio-mode #lyrics-panel .lyrics-line{font-size:3.4v
 html[data-layout="mobile"] .audio-mode #lyrics-panel .lyrics-line.near{font-size:4.4vw}
 html[data-layout="mobile"] .audio-mode #lyrics-panel .lyrics-line.current{font-size:6.6vw}
 html[data-layout="mobile"] .audio-mode #lyrics-panel.no-lyrics:after{font-size:4vw}
+/* MV 模式 KTV 双行歌词：贴底两行——上行当前句靠左、下行下一句靠右（经典 KTV 版式）。
+   仅在 LRC 加载成功后才挂 ktv 类，无歌词的 MV 不显示任何遮挡。 */
+#lyrics-panel.ktv{align-items:flex-end;justify-content:center;padding:0 4% 3.2%;
+  background:linear-gradient(180deg,transparent 58%,rgba(0,0,0,.6))}
+#lyrics-panel.ktv .lyrics-inner{height:auto;max-height:60%;max-width:none;justify-content:flex-end;align-items:stretch;gap:8px}
+#lyrics-panel.ktv .lyrics-line{min-height:0;text-align:left;transition:none}
+#lyrics-panel.ktv .lyrics-line.kcur{font-size:34px;line-height:1.25;font-weight:800;color:#fff;
+  text-shadow:0 2px 12px rgba(0,0,0,.85),0 0 22px rgba(255,79,154,.5)}
+#lyrics-panel.ktv .lyrics-line.knxt{font-size:25px;line-height:1.25;color:rgba(255,255,255,.72);text-align:right;
+  text-shadow:0 2px 10px rgba(0,0,0,.85)}
+html[data-layout="mobile"] #lyrics-panel.ktv{padding:0 5% 3.5%}
+html[data-layout="mobile"] #lyrics-panel.ktv .lyrics-line.kcur{font-size:5vw}
+html[data-layout="mobile"] #lyrics-panel.ktv .lyrics-line.knxt{font-size:3.9vw}
 /* QR - 修复双码 */
 #qr-corner{position:absolute;top:10px;right:10px;background:rgba(0,0,0,.65);
   backdrop-filter:blur(8px);border-radius:12px;padding:8px;text-align:center;z-index:4;pointer-events:none}
@@ -415,6 +428,16 @@ html[data-layout="mobile"] .audio-mode #lyrics-panel.no-lyrics:after{font-size:4
 #fs-ov.audio-mode #ov-top,#fs-ov.audio-mode #ov-bot{position:relative;z-index:2}
 #fs-ov.audio-mode #ov-top{background:linear-gradient(180deg,rgba(0,0,0,.45),transparent)}
 #fs-ov.audio-mode #ov-bot{background:linear-gradient(0,rgba(0,0,0,.65),transparent)}
+/* MV 全屏 KTV 双行歌词：#fs-lyrics 变为贴底透明层，上行靠左/下行靠右；
+   控制层保持自动隐藏，歌词常驻。 */
+#fs-ov.ktv #fs-lyrics{display:flex;z-index:1;align-items:flex-end;justify-content:center;
+  padding:0 5vw 7vh;background:transparent;text-align:left}
+#fs-ov.ktv #fs-lyrics .lyrics-inner{height:auto;max-width:none;justify-content:flex-end;align-items:stretch;gap:10px}
+#fs-ov.ktv #fs-lyrics .lyrics-line.kcur{font-size:44px;line-height:1.25;font-weight:900;color:#fff;
+  text-shadow:0 2px 14px rgba(0,0,0,.9),0 0 28px rgba(255,79,154,.55)}
+#fs-ov.ktv #fs-lyrics .lyrics-line.knxt{font-size:32px;line-height:1.25;color:rgba(255,255,255,.72);text-align:right;
+  text-shadow:0 2px 12px rgba(0,0,0,.9)}
+#fs-ov.ktv #ov-top,#fs-ov.ktv #ov-bot{position:relative;z-index:2}
 #ov-top{padding:18px 24px;display:flex;align-items:center}
 #ov-back{width:56px;height:56px;border-radius:50%;border:2px solid rgba(255,255,255,.5);
   display:flex;align-items:center;justify-content:center;font-size:26px;cursor:pointer;
@@ -991,7 +1014,7 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
 <div class="pd" id="pd-settings" onclick="if(event.target===this)closePanel('settings')" data-page-node-id="O7xPE1XHlofNe7kfgCF0fu">
   <div class="ps" data-page-node-id="RUlTSML6RfIxM0MQhsHquy"><div class="ph" data-page-node-id="cGd5OLuSYY1Y2qx2hcjnnt"><h3 data-page-node-id="6hPUiAPX8tJnxYoXn96EIi">⚙ 设置</h3><div class="pc" data-f onclick="closePanel('settings')" data-page-node-id="7swnt30cDoBdWMFavcHOIa">✕</div></div>
   <div class="pb" data-page-node-id="BEtUt0kZwB5mTCukybNGCD">
-    <div class="set-r" data-page-node-id="nKT7Mh8HhsuBfyApCpkWLG"><span class="set-l" data-page-node-id="T3ueFT1R1bwTbPtZICupmN">服务器</span><span class="set-v" id="s-host" data-page-node-id="LcHtupKTlzCvBCrfpt52Ot">—</span></div>
+    <div class="set-r" data-f style="cursor:pointer" onclick="editServerHost()" data-page-node-id="nKT7Mh8HhsuBfyApCpkWLG"><span class="set-l" data-page-node-id="T3ueFT1R1bwTbPtZICupmN">服务器</span><span class="set-v" id="s-host" data-page-node-id="LcHtupKTlzCvBCrfpt52Ot">—</span><span style="color:var(--ac2)">✎</span></div>
     <div class="set-r" data-page-node-id="jQFmc22JUITFh70G7FMgqB"><span class="set-l" data-page-node-id="cm7WEluuYuRRwWcA6akc3t">曲库歌曲</span><span class="set-v" id="s-songs" data-page-node-id="MancH463s8fDUp3KER6rWg">—</span></div>
     <div class="set-r" data-f style="cursor:pointer" onclick="toggleAutoPlay()"><span class="set-l">首页自动播放</span><span class="set-v" id="s-autoplay">关</span></div>
     <div class="set-r" data-f style="cursor:pointer" onclick="toggleDlFormat()"><span class="set-l">点唱榜下载格式</span><span class="set-v" id="s-dlfmt">MP3</span></div>
@@ -1460,17 +1483,29 @@ function resetLyrics(){
   lyricLines=[];
   if(lyricTimer){clearInterval(lyricTimer);lyricTimer=null;}
   const panel=document.getElementById('lyrics-panel');
-  panel.classList.remove('show','no-lyrics');
+  panel.classList.remove('show','no-lyrics','ktv');
   panel.querySelector('.lyrics-inner').innerHTML='';
 }
 function renderLyricLines(inner, large){
   if(!inner)return;
+  const ktv=inner.classList.contains('ktv');
   inner.innerHTML='';
   if(!lyricLines.length)return;
   const now=video.currentTime||0;
   let idx=-1;
   for(let i=0;i<lyricLines.length;i++){if(lyricLines[i].time<=now)idx=i;else break;}
   if(idx<0)idx=0;
+  if(ktv){ // MV 的 KTV 双行样式：上行=当前句靠左，下行=下一句靠右
+    const cur=document.createElement('div');
+    cur.className='lyrics-line kcur';
+    cur.textContent=lyricLines[idx].text||'♪';
+    inner.appendChild(cur);
+    const nxt=document.createElement('div');
+    nxt.className='lyrics-line knxt';
+    nxt.textContent=lyricLines[idx+1]?(lyricLines[idx+1].text||'♪'):'';
+    inner.appendChild(nxt);
+    return;
+  }
   const start=Math.max(0,idx-4), end=Math.min(lyricLines.length,idx+5);
   for(let i=start;i<end;i++){
     const line=document.createElement('div');
@@ -1484,22 +1519,24 @@ function renderLyrics(){
   if(!lyricLines.length)return;
   renderLyricLines(panel.querySelector('.lyrics-inner'), false);
   const fsOv=document.getElementById('fs-ov');
-  if(fsOv.classList.contains('show') && fsOv.classList.contains('audio-mode')){
+  if(fsOv.classList.contains('show') && (fsOv.classList.contains('audio-mode')||fsOv.classList.contains('ktv'))){
     renderLyricLines(document.querySelector('#fs-lyrics .lyrics-inner'), true);
   }
 }
 async function loadLyrics(song){
   resetLyrics();
-  if(!song || song.media_type!=='audio')return;
+  if(!song || song.song_id<0)return; // MV 也加载 LRC（KTV 双行底部歌词）；本机歌曲无服务端歌词
   const panel=document.getElementById('lyrics-panel');
-  panel.classList.add('show');
-  if(!song.lyrics_path){panel.classList.add('no-lyrics');return;}
+  const isAudio=song.media_type==='audio';
+  if(isAudio)panel.classList.add('show');
+  if(!song.lyrics_path){if(isAudio)panel.classList.add('no-lyrics');return;}
   try{
     const resp=await fetch(`${BASE}/lyrics/${song.song_id}`);
     if(!resp.ok)throw new Error('歌词不存在');
     lyricLines=parseLrc(await resp.text());
     if(!lyricLines.length)throw new Error('LRC 无时间标签');
     panel.classList.remove('no-lyrics');
+    if(!isAudio)panel.classList.add('show','ktv'); // MV：等歌词加载成功才贴底显示，避免空面板遮画面
     renderLyrics();
     lyricTimer=setInterval(renderLyrics,250);
   }catch(e){
@@ -1911,7 +1948,12 @@ function restoreVideoPlayback(wasPlaying, t) {
 function enterFullscreen(){if(!curSong){showToast('先点一首歌吧 🎵');return;}pushFocus();isFS=true;window.ktv_fs=true;
   var wasPlaying=!video.paused,t=video.currentTime;
   fsOv.classList.toggle('audio-mode',curSong.media_type==='audio');
-  if(curSong.media_type==='audio')renderLyricLines(document.querySelector('#fs-lyrics .lyrics-inner'),true);
+  // MV 且歌词已加载 → 全屏也走 KTV 双行底部歌词；无歌词的 MV 保持纯画面
+  var mvKtv=curSong.media_type!=='audio'&&lyricLines.length>0;
+  fsOv.classList.toggle('ktv',mvKtv);
+  var fsInner=document.querySelector('#fs-lyrics .lyrics-inner');
+  fsInner.classList.toggle('ktv',mvKtv);
+  if(curSong.media_type==='audio'||mvKtv)renderLyricLines(fsInner,true);
   document.body.appendChild(video);video.className='video-fs';
   restoreVideoPlayback(wasPlaying,t);setTimeout(function(){restoreVideoPlayback(wasPlaying,t);},120);
   if(window.__fitViewport)window.__fitViewport();fsTap.classList.add('on');showOverlay();}
@@ -1940,7 +1982,7 @@ function exitKtvFullscreen(){
   var wasPlaying=!video.paused,t=video.currentTime;
   video.className='video-home';video.style.width='';video.style.height='';nowPanel.insertBefore(video,nowPanel.firstChild);
   restoreVideoPlayback(wasPlaying,t);setTimeout(function(){restoreVideoPlayback(wasPlaying,t);},120);
-  fsTap.classList.remove('on');fsOv.classList.remove('show','audio-mode');document.querySelector('#fs-lyrics .lyrics-inner').innerHTML='';document.getElementById('fsq').classList.remove('open');clearTimeout(ovTimer);popFocus();}
+  fsTap.classList.remove('on');fsOv.classList.remove('show','audio-mode','ktv');var fsInner=document.querySelector('#fs-lyrics .lyrics-inner');fsInner.classList.remove('ktv');fsInner.innerHTML='';document.getElementById('fsq').classList.remove('open');clearTimeout(ovTimer);popFocus();}
 // Bug1修复：showOverlay 被 keydown 全局监听、moveFocus 结尾等多处频繁调用（用于顺带
 // "续命"隐藏计时器），但原代码每次调用都无条件把 focIdx 重置为0。于是每次按方向键时，
 // keydown 处理函数先调用一次 showOverlay()（把 focIdx 归零），紧接着 moveFocus 才用这个
@@ -1951,7 +1993,7 @@ function showOverlay(){
   fsTap.classList.remove('on');
   const wasHidden=!fsOv.classList.contains('show');
   fsOv.classList.add('show');
-  if(fsOv.classList.contains('audio-mode')){
+  if(fsOv.classList.contains('audio-mode')||fsOv.classList.contains('ktv')){
     renderLyricLines(document.querySelector('#fs-lyrics .lyrics-inner'),true);
     clearTimeout(ovTimer);
   }else{
@@ -2391,6 +2433,35 @@ function loadSettings(){
   if(LOCAL_MODE)return;
   fetch('/api/stats').then(r=>r.json()).then(d=>document.getElementById('s-songs').textContent=d.songCount+'首');
   refreshLxSrcBadge(); // 设置面板显示当前音源
+}
+// ===== 设置：服务器 IP 可设定（电视/浏览器端） =====
+// 点击「服务器」行弹出输入框，确认后跳转 http://<新地址>/tv。App 内已有原生
+// 「服务器地址」行（KtvBridge.editServer），这里自动让位给原生对话框；
+// 本函数覆盖电视大屏/手机浏览器直接访问页面的场景。新地址存 localStorage
+// （tv-server）留作后续预填。
+function editServerHost(){
+  if(window.KtvBridge&&window.KtvBridge.editServer){window.KtvBridge.editServer();return;}
+  const ov=document.createElement('div');
+  ov.style.cssText='position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center';
+  ov.innerHTML='<div style="background:#17122e;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:22px 24px;width:min(86vw,460px)">'+
+    '<div style="font-size:19px;font-weight:700;color:#fff;margin-bottom:12px">服务器地址</div>'+
+    '<input id="srv-ip-input" style="width:100%;box-sizing:border-box;font-size:17px;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:#0d0a1f;color:#fff" placeholder="例如 192.168.1.50:8080" value="'+String(location.host||'').replace(/"/g,'')+'"/>'+
+    '<div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end">'+
+    '<button id="srv-ip-cancel" style="font-size:15px;padding:8px 18px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:transparent;color:#ccc;cursor:pointer">取消</button>'+
+    '<button id="srv-ip-ok" style="font-size:15px;padding:8px 18px;border-radius:8px;border:none;background:var(--ac);color:#fff;cursor:pointer">连接</button></div></div>';
+  document.body.appendChild(ov);
+  const inp=ov.querySelector('#srv-ip-input');
+  const go=()=>{
+    const v=inp.value.trim().replace(/^https?:\/\//i,'').replace(/\/+$/,'');
+    if(!v){inp.focus();return;}
+    try{localStorage.setItem('tv-server',v);}catch(e){}
+    ov.remove();location.href='http://'+v+'/tv';
+  };
+  ov.querySelector('#srv-ip-cancel').onclick=()=>ov.remove();
+  ov.querySelector('#srv-ip-ok').onclick=go;
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter')go();});
+  setTimeout(()=>{inp.focus();inp.select();},50);
 }
 // ===== LX Music 点唱榜 =====
 // 榜单来自服务端内置酷我源（KTV点唱榜默认置前）；点歌时服务端先查本地曲库，
