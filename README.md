@@ -30,7 +30,7 @@
 | 管理后台 | `/admin` | 曲库、设备、缓存等后台管理 |
 | Android 客户端 | 见 `android-client/` | 电视盒子原生播放端，功能对齐网页 `/tv` |
 
-浏览器打开服务器地址（如 `http://局域网IP:8083`）会看到一个导航首页，三个入口一目了然。
+浏览器打开服务器地址（如 `http://局域网IP:8080`）会看到一个导航首页，三个入口一目了然。
 
 ---
 
@@ -47,7 +47,7 @@ services:
     container_name: junyao-ktv
     restart: unless-stopped
     ports:
-      - "8083:8080"          # 访问端口：http://局域网IP:8083
+      - "8080:8080"          # 访问端口：http://局域网IP:8080
     environment:
       - TZ=Asia/Shanghai
       - PORT=8080
@@ -81,7 +81,7 @@ docker compose up -d
 
 ### 3. 访问
 
-浏览器打开 `http://局域网IP:8083`，或直接访问 `/tv`（大屏）、`/m`（手机点歌）、`/admin`（管理后台）。
+浏览器打开 `http://局域网IP:8080`，或直接访问 `/tv`（大屏）、`/m`（手机点歌）、`/admin`（管理后台）。
 
 ### 4. 曲库配置
 

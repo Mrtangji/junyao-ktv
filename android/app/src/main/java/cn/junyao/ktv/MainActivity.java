@@ -39,7 +39,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * 君耀KTV 安卓端：WebView 壳。
- * 首次打开三选一：扫描局域网自动找服务器（默认端口 8083/8080）/ 手动输入地址 / 无服务器本地使用。
+ * 首次打开三选一：扫描局域网自动找服务器（默认端口 8080）/ 手动输入地址 / 无服务器本地使用。
  * 之后可随时按遥控器菜单键（MENU），或在 TV 页右下角 设置→服务器地址 里重新配置。
  * 本地模式下加载打包在 assets/tv 的页面，只保留本机音频扫描与播放能力。
  */
@@ -50,7 +50,7 @@ public class MainActivity extends Activity {
     private static final int REQ_FILE_CHOOSER = 1001;
     private static final int REQ_MIC = 2001;
     private static final int REQ_TREE = 1002;
-    private static final int[] SCAN_PORTS = {8083, 8080};
+    private static final int[] SCAN_PORTS = {8080};
 
     private WebView web;
     private SharedPreferences prefs;
@@ -143,11 +143,11 @@ public class MainActivity extends Activity {
         b.show();
     }
 
-    /** 手动输入服务器地址，例如 192.168.1.50:8083 */
+    /** 手动输入服务器地址，例如 192.168.1.50:8080 */
     private void askServerDialog(final boolean must) {
         final EditText et = new EditText(this);
         et.setSingleLine(true);
-        et.setHint("例如 192.168.1.50:8083");
+        et.setHint("例如 192.168.1.50:8080");
         et.setText(prefs.getString(KEY_SERVER, ""));
         AlertDialog.Builder b = new AlertDialog.Builder(this)
                 .setTitle("服务器地址")
@@ -163,7 +163,7 @@ public class MainActivity extends Activity {
         b.show();
     }
 
-    // ---------- 局域网扫描：对本网段 2~254 逐个探测 8083/8080 端口的 /api/stats ----------
+    // ---------- 局域网扫描：对本网段 2~254 逐个探测 8080 端口的 /api/stats ----------
 
     private void scanLan() {
         final String prefix = lanPrefix();
@@ -174,7 +174,7 @@ public class MainActivity extends Activity {
         }
         final AlertDialog progress = new AlertDialog.Builder(this)
                 .setTitle("正在扫描局域网…")
-                .setMessage("网段 " + prefix + "x（端口 " + SCAN_PORTS[0] + "/" + SCAN_PORTS[1] + "）")
+                .setMessage("网段 " + prefix + "x（端口 " + SCAN_PORTS[0] + "）")
                 .setCancelable(false)
                 .show();
 
