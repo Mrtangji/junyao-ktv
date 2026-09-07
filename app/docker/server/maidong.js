@@ -9,14 +9,16 @@
 //     GET {base}/resolve?id=<歌曲id>&quality=<mv|320k|...>
 //       → {"url":"..."} （兼容 {"data":{"url":..}} / 纯字符串）
 //
-// 下载入库复用 lxmusic 的链路：拉流 → sniffAudio 校验 → mp3 直存/转码、
-// mp4 直存为 MV（其它容器 ffmpeg -c copy 尝试）→ /mv/歌手名/ → 扫描入库。
+// 下载入库复用 lxmusic 的链路：拉流 → sniffAudio 校验 → mp3 直存/转码（存
+// MP3_DIR，env MP3_DIR，默认同 MV_DIR）、mp4 直存为 MV（存 MV_DIR，其它容器
+// ffmpeg -c copy 尝试）→ 扫描入库。
 
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const db = require('./db');
-const { scanLibrary, MV_DIR } = require('./scanner');
+const { scanLibrary } = require('./scanner');
+const dlcfg = require('./dlconfig');
 const lx = require('./lxmusic');
 const { httpReq, sniffAudio, moveFile, ffmpegToMp3, ffmpegMp3ToMv, downloadCover, sanitize, TMP_DIR } = lx.internals;
 
@@ -132,22 +134,34 @@ function ffmpegRemuxToMp4(src, dst) {
 // entry: {songmid,name,singer,url?,pic?,format:'mp3'|'mv'}
 // url 为空时走 API 音源 resolve（quality: mv→mv，否则 320k）
 async function downloadMd({ songmid, name, singer, url = null, pic = null, format = 'mp3' }) {
-  if (!fs.existsSync(MV_DIR)) throw new Error('MV_DIR_UNAVAILABLE');
+  // 下载目录分流（见 dlconfig.js）：MP3 → MP3_DIR（env，如 /mp3），MV(.mp4) → MV_DIR
+  const mp3Root = dlcfg.getMp3Dir();
+  const mvRoot = path.resolve(dlcfg.MV_DIR);
+  const isVideoTarget = format === 'mv';
+  const dlRoot = isVideoTarget ? mvRoot : mp3Root;
+  if (!fs.existsSync(dlRoot) || !fs.existsSync(isVideoTarget ? mp3Root : mvRoot)) throw new Error('MV_DIR_UNAVAILABLE');
   const artist = sanitize(singer) || '未知歌手';
   const title = sanitize(name) || '未知歌名';
-  const artistDir = path.join(MV_DIR, artist);
+  const artistDir = path.join(dlRoot, artist);
   if (!fs.existsSync(artistDir)) fs.mkdirSync(artistDir, { recursive: true });
+  if (!isVideoTarget && mp3Root !== mvRoot) {
+    const d = path.join(mvRoot, artist); // 反向也预建，避免视频直链转存时目录缺失
+    if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+  }
 
   let srcUrl = url;
-  if (!srcUrl) srcUrl = await apiResolve(songmid, format === 'mv' ? 'mv' : '320k');
+  if (!srcUrl) srcUrl = await apiResolve(songmid, isVideoTarget ? 'mv' : '320k');
   const looksVideo = VIDEO_EXT.test(srcUrl);
 
-  // 目标文件：视频 → .mp4（MV）；音频 → .mp3
-  const isVideo = looksVideo || format === 'mv' && !/\.(mp3|flac|ogg|m4a|wav|aac)(\?|$)/i.test(srcUrl);
+  // 目标文件：视频 → .mp4（MV_DIR）；音频 → .mp3（MP3_DIR）
+  const isVideo = looksVideo || isVideoTarget && !/\.(mp3|flac|ogg|m4a|wav|aac)(\?|$)/i.test(srcUrl);
   const ext = isVideo ? 'mp4' : 'mp3';
+  const targetRoot = isVideo ? mvRoot : mp3Root;
   const rel = path.join(artist, `${artist} - ${title}.${ext}`);
-  const finalPath = path.join(MV_DIR, rel);
-  const existed = db.prepare('SELECT * FROM songs WHERE filepath=?').get(rel.replace(/\\/g, '/'));
+  const finalPath = path.join(targetRoot, rel);
+  // 按 filename（相对路径唯一键）查重——filepath 存的是绝对路径，用它查永远查不到
+  const key = rel.replace(/\\/g, '/');
+  const existed = db.prepare('SELECT * FROM songs WHERE filename=?').get(key);
   if (existed) return existed;
 
   const tmpPath = path.join(TMP_DIR, `md_${Date.now()}_${process.pid}`);
@@ -172,7 +186,7 @@ async function downloadMd({ songmid, name, singer, url = null, pic = null, forma
   try { fs.unlinkSync(tmpPath); } catch (e) {}
 
   await scanLibrary();
-  const row = db.prepare('SELECT * FROM songs WHERE filepath=?').get(rel.replace(/\\/g, '/'));
+  const row = db.prepare('SELECT * FROM songs WHERE filename=?').get(key);
   if (!row) throw new Error('入库失败（扫描未识别到新文件）');
   return row;
 }

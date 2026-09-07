@@ -16,6 +16,9 @@ services:
       - HTTPS_PORT=8443
       - DATA_DIR=/data
       - MV_DIR=/mv
+      # MP3（含 LRC 歌词）与 MV 分开存放：点唱榜下载的 mp3 → /mp3，mv → /mv。
+      # 不需要分库时删除这行，MP3 会回落到 MV_DIR。
+      - MP3_DIR=/mp3
       # VAAPI 渲染节点路径，容器内代码据此判断硬件加速是否可用；与下面
       # devices 段落是否被安装脚本裁掉保持一致（宿主机没有核显/独显时，
       # cmd/install_init、cmd/upgrade_init 会自动删掉 devices 段落，容器里
@@ -32,6 +35,7 @@ services:
       # 脚本再用 sed 改写。
       - /vol1/@appshare/junyao-ktv/data:/data    # 数据库/封面持久化
       - /vol1/@appshare/junyao-ktv/mv:/mv        # MV 曲库文件
+      - /vol1/@appshare/junyao-ktv/mp3:/mp3      # MP3+LRC 曲库文件（与 MV_DIR 分库时用）
     # VAAPI_DEVICES_BEGIN
     # 直通宿主机的 DRI 渲染节点，供 ffmpeg 使用 h264_vaapi 做硬件编解码。
     # 注意：如果宿主机没有 /dev/dri（纯软件环境/无核显的老机器），

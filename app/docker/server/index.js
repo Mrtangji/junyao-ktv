@@ -6,7 +6,8 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
 const db = require('./db');
-const { scanLibrary, MV_DIR } = require('./scanner');
+const { scanLibrary } = require('./scanner');
+const dlcfg = require('./dlconfig');
 const { toPinyin, toPinyinInitial } = require('./pinyin');
 const { detectLang } = require('./lang');
 const { ensureHLS, removeHLS, outDir, waitForFile, scheduleHLSCleanup } = require('./hlsgen');
@@ -162,16 +163,30 @@ app.use('/admin', express.static(path.join(__dirname, '../web/admin')));
 app.use('/cover', express.static('/data/covers'));
 
 // 同名旁车歌词：例如 /mv/周杰伦 - 晴天.lrc。
-// 只允许返回曲库根目录内、且由扫描器记录过的歌词文件，避免把容器内其它文件
-// 暴露给局域网客户端。歌词内容按 UTF-8 返回；前端会兼容 BOM 和常见的 LRC 标签。
+// 只允许返回扫描器记录过的歌词文件，避免把容器内其它文件暴露给局域网客户端。
+// 歌词内容按 UTF-8 返回；前端会兼容 BOM 和常见的 LRC 标签。
+// 路径兼容两种存储格式：新版扫描器存绝对路径（下载目录可配置后歌词不一定在
+// MV_DIR 下，校验放宽到 MV_DIR 或配置的下载目录之内）；旧库存的是 MV_DIR 相对
+// 路径，首次重扫后会被自动升级为绝对路径，这里保留兜底。
 app.get('/lyrics/:id', (req, res) => {
   const song = db.prepare('SELECT lyrics_path FROM songs WHERE id = ?').get(req.params.id);
   if (!song || !song.lyrics_path) return res.status(404).end();
-  const rel = String(song.lyrics_path).replace(/\\/g, '/');
-  if (!rel || rel.startsWith('/') || rel.includes('..')) return res.status(404).end();
-  const full = path.resolve(MV_DIR, rel);
-  const root = path.resolve(MV_DIR);
-  if (full !== root && !full.startsWith(root + path.sep)) return res.status(404).end();
+  const raw = String(song.lyrics_path);
+  const roots = [path.resolve(dlcfg.MV_DIR)];
+  const mp3Root = path.resolve(dlcfg.MP3_DIR);
+  if (mp3Root !== roots[0]) roots.push(mp3Root);
+  let full;
+  if (path.isAbsolute(raw)) {
+    full = path.resolve(raw);
+    // 绝对路径必须落在曲库根目录（MV_DIR/自定义下载目录）之内，防止越权读取
+    if (!roots.some(root => full === root || full.startsWith(root + path.sep))) return res.status(404).end();
+  } else {
+    const rel = raw.replace(/\\/g, '/');
+    if (!rel || rel.startsWith('/') || rel.includes('..')) return res.status(404).end();
+    full = path.resolve(dlcfg.MV_DIR, rel);
+    const root = roots[0];
+    if (full !== root && !full.startsWith(root + path.sep)) return res.status(404).end();
+  }
   try {
     if (!fs.statSync(full).isFile()) return res.status(404).end();
   } catch (e) {
@@ -653,7 +668,7 @@ app.post('/api/scan', async (req, res) => {
 app.get('/api/stats', (req, res) => {
   const songCount  = db.prepare('SELECT COUNT(*) c FROM songs').get().c;
   const queueCount = db.prepare("SELECT COUNT(*) c FROM queue WHERE status!='done'").get().c;
-  res.json({ songCount, queueCount, mvDir: MV_DIR });
+  res.json({ songCount, queueCount, mvDir: dlcfg.MV_DIR, mp3Dir: dlcfg.getMp3Dir() });
 });
 
 // ---------- 点歌队列 ----------

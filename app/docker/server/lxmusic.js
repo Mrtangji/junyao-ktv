@@ -28,10 +28,12 @@ const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const TMP_DIR = path.join(DATA_DIR, 'lx_tmp');
 if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
 
-// MV_DIR 与 scanner.js 同一环境变量。下载的歌按歌手分目录：
-//   MV_DIR/歌手名/歌手名 - 歌名.mp3（如 /mv/周杰伦/周杰伦 - 晴天.mp3）
-// scanner.js 是递归扫描，子目录会自动入库。
-const MV_DIR = process.env.MV_DIR || '/mv';
+// 下载目录分两种（见 dlconfig.js，均由 docker 环境变量在启动时确定）：
+//   MP3（含 LRC 歌词）→ MP3_DIR（env MP3_DIR，默认同 MV_DIR，如 /mp3）
+//   MV（.mp4，含 MV 模式合成出的 mp4）→ MV_DIR（env MV_DIR，如 /mv）
+// 均按歌手分目录：目录/歌手名/歌手名 - 歌名.mp3|.mp4，scanner.js 递归扫描两个
+// 根目录自动入库，LRC 与 MP3 同名放一起、扫描时自动关联。
+const dlcfg = require('./dlconfig');
 
 // ---------- 通用 HTTP（跟随重定向 + gzip，供 lx.request 与内置源共用） ----------
 function httpReq(url, options = {}, redirectCount = 0) {
@@ -416,20 +418,34 @@ function sniffAudio(buf) {
   return { kind: 'unknown' };
 }
 
-// 下载一首网络歌曲到曲库（MV_DIR/歌手名/歌手名 - 歌名.mp3|.mp4），返回 songs 表行
-// format: 'mp3'（默认，320K 音质优先）| 'mv'（同一 320K 音频 + 封面合成为视频，
-//         并同时保留同名 .mp3 与 .lrc——MV/MP3 双版本入库）
+// 下载一首网络歌曲到曲库，返回 songs 表行
+// format: 'mp3'（默认，320K 音质优先，存 MP3_DIR）| 'mv'（同一 320K 音频 + 封面
+//         合成为 .mp4 存 MV_DIR；同时保留同名 .mp3 与 .lrc 到 MP3_DIR——曲库里
+//         MV/MP3 双版本可用，LRC 跟 MP3 走）
 async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, format = 'mp3' }) {
-  if (!fs.existsSync(MV_DIR)) throw new Error('MV_DIR_UNAVAILABLE');
+  const mp3Root = dlcfg.getMp3Dir();
+  const mvRoot = path.resolve(dlcfg.MV_DIR);
+  const isMv = format === 'mv';
+  const dlRoot = isMv ? mvRoot : mp3Root; // 本次下载主文件的目标根目录
+  if (!fs.existsSync(dlRoot)) throw new Error('MV_DIR_UNAVAILABLE');
+  if (!fs.existsSync(isMv ? mp3Root : mvRoot)) throw new Error('MV_DIR_UNAVAILABLE');
   const artist = sanitize(singer) || '未知歌手';
   const title = sanitize(name) || '未知歌名';
-  const isMv = format === 'mv';
-  const artistDir = path.join(MV_DIR, artist);
-  if (!fs.existsSync(artistDir)) fs.mkdirSync(artistDir, { recursive: true });
-  const rel = path.join(artist, `${artist} - ${title}.${isMv ? 'mp4' : 'mp3'}`);
-  const finalPath = path.join(MV_DIR, rel);
-  // 已存在同名歌曲 → 直接返回库里的记录（可能上次已下过）
-  const existed = db.prepare('SELECT * FROM songs WHERE filepath=?').get(rel.replace(/\\/g, '/'));
+  // 主文件（mp3 或 mp4）落 dlRoot；MV 模式下同时保留的 mp3/lrc 落 mp3Root
+  const mainDir = path.join(dlRoot, artist);
+  if (!fs.existsSync(mainDir)) fs.mkdirSync(mainDir, { recursive: true });
+  if (isMv && mp3Root !== mvRoot) {
+    const mp3Dir = path.join(mp3Root, artist);
+    if (!fs.existsSync(mp3Dir)) fs.mkdirSync(mp3Dir, { recursive: true });
+  }
+  const ext = isMv ? 'mp4' : 'mp3';
+  const rel = path.join(artist, `${artist} - ${title}.${ext}`);
+  const finalPath = path.join(dlRoot, rel);
+  // 已存在同名歌曲 → 直接返回库里的记录（可能上次已下过）。
+  // Bug修复：必须按 filename（相对路径，扫描入库的唯一键）查——旧写法按 filepath
+  // 查，而 filepath 存的是绝对路径，永远查不到，导致每次下载最后都报"入库失败"。
+  const key = rel.replace(/\\/g, '/');
+  const existed = db.prepare('SELECT * FROM songs WHERE filename=?').get(key);
   if (existed) return existed;
   // 1) 解析 url（320K 优先）；2) 拉流到临时文件；3) mp3 直存 / 转码 / 合成 MV
   const url = await resolveMusicUrl(source === 'kw' ? { songmid, songId: songmid, musicId: songmid, name, singer } : musicInfoOf(songmid, name, singer));
@@ -450,17 +466,18 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
       if (isMp3Src) moveFile(tmpPath, finalPath);
       else { await ffmpegToMp3(tmpPath, finalPath); try { fs.unlinkSync(tmpPath); } catch (e) {} }
     } else {
-      // MV 模式：先统一为 mp3，再与封面合成 mp4；mp3 一并保留入库
+      // MV 模式：先统一为 mp3，再与封面合成 mp4；mp3 与 LRC 一并保留到 MP3_DIR
       // （需求：下载 MV 时同时得到对应 MP3 与 LRC——曲库里 MV/MP3 双版本可用，
       //   LRC 为两者共用同名文件。扫描器会把 mp4 记为 MV、mp3 记为 audio）
       const tmpMp3 = finalPath + '.tmp.mp3';
-      const mp3Path = finalPath.replace(/\.mp4$/i, '.mp3');
+      // 保留的 mp3 落 MP3_DIR（与 MV 分库）；可能跨文件系统，用 moveFile 而非 rename
+      const mp3Path = path.join(mp3Root, artist, `${artist} - ${title}.mp3`);
       if (isMp3Src) moveFile(tmpPath, tmpMp3);
       else await ffmpegToMp3(tmpPath, tmpMp3);
       try {
         const cover = await downloadCover(pic);
         await ffmpegMp3ToMv(tmpMp3, cover, finalPath);
-        try { fs.renameSync(tmpMp3, mp3Path); } catch (e) {}
+        moveFile(tmpMp3, mp3Path);
       } finally { try { fs.unlinkSync(tmpMp3); } catch (e) {} }
       try { fs.unlinkSync(tmpPath); } catch (e) {}
     }
@@ -470,13 +487,14 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   if (source === 'kw') {
     try {
       const lrc = await kwLyric(songmid);
-      fs.writeFileSync(path.join(MV_DIR, rel.replace(/\.(mp3|mp4)$/i, '.lrc')), lrc, 'utf8');
+      // LRC 跟 MP3 走：存到 MP3_DIR 里与 mp3 同名放一起，扫描时自动关联
+      fs.writeFileSync(path.join(mp3Root, rel.replace(/\.(mp3|mp4)$/i, '.lrc')), lrc, 'utf8');
     } catch (e) { console.error('LRC 下载失败(忽略):', name, e.message); }
   }
   // 4) 扫描入库并返回新行
   const { scanLibrary } = require('./scanner');
   await scanLibrary();
-  const row = db.prepare('SELECT * FROM songs WHERE filepath=?').get(rel.replace(/\\/g, '/'));
+  const row = db.prepare('SELECT * FROM songs WHERE filename=?').get(key);
   if (!row) throw new Error('入库失败（扫描未识别到新文件）');
   return row;
 }

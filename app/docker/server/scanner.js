@@ -5,8 +5,23 @@ const db = require('./db');
 const { removeHLS } = require('./hlsgen');
 const { toPinyin, toPinyinInitial } = require('./pinyin');
 const { detectLang } = require('./lang');
+const dlcfg = require('./dlconfig');
 
-const MV_DIR = process.env.MV_DIR || '/mv';
+// MV_DIR 仍是曲库主目录（MV/存量歌曲）；下载目录可配置后，配置的自定义目录
+// 也纳入扫描（见 scanRoots）。导出别名保持旧引用（maidong.js 等）兼容。
+const MV_DIR = dlcfg.MV_DIR;
+
+// 扫描根目录列表：MV_DIR 恒在；MP3_DIR（环境变量，默认等于 MV_DIR）与 MV_DIR
+// 互不包含时追加。若 MP3_DIR 就在 MV_DIR 里面（或反过来包含 MV_DIR），只扫
+// MV_DIR 即可覆盖，避免同一文件以两个不同的相对路径重复入库。
+function scanRoots() {
+  const roots = [path.resolve(MV_DIR)];
+  const p = dlcfg.getMp3Dir();
+  const inMv = p === roots[0] || p.startsWith(roots[0] + path.sep);
+  const coversMv = roots[0] === p || roots[0].startsWith(p + path.sep);
+  if (!inMv && !coversMv) roots.push(p);
+  return roots;
+}
 // 新增对 .mpg (MPEG-1/2 Program Stream) 格式的支持：曲库扫描环节只需要把
 // 后缀加入白名单即可正常入库；实际播放走 hlsgen.js 的转码流程，非 h264
 // 编码（.mpg 源文件常见的 mpeg1video/mpeg2video）会被 SAFE_VIDEO_CODECS
@@ -125,11 +140,29 @@ async function scanLibrary() {
   // 会静默返回空数组，若不加防护，后面"清理已不存在文件记录"的逻辑会把当前数据库里
   // 全部曲目都当成"已缺失"一次性删光，属于灾难性误删。这里明确区分"目录不存在/不可访问"
   // 和"目录存在但确实没有文件"两种情况，前者直接中止扫描，不触发清理。
-  if (!fs.existsSync(MV_DIR)) {
-    console.error('曲库目录不可访问，已跳过本次扫描以避免误删曲库:', MV_DIR);
+  const roots = scanRoots();
+  if (!fs.existsSync(roots[0])) {
+    console.error('曲库目录不可访问，已跳过本次扫描以避免误删曲库:', roots[0]);
     return { total: 0, added: 0, removed: 0, error: 'MV_DIR_UNAVAILABLE' };
   }
-  const files = listFilesRecursive(MV_DIR);
+  // MP3_DIR 配置成独立目录但暂时不可访问（NAS 掉线/挂载抖动）：同样中止扫描，
+  // 否则该目录名下的已入库曲目会被"清理缺失文件"阶段当成已缺失误删。
+  for (const r of roots.slice(1)) {
+    if (!fs.existsSync(r)) {
+      console.error('MP3 下载目录不可访问，已跳过本次扫描以避免误删曲库:', r);
+      return { total: 0, added: 0, removed: 0, error: 'DOWNLOAD_DIR_UNAVAILABLE: ' + r };
+    }
+  }
+  // 汇总所有根目录下的媒体文件；rel 相对各自根目录并统一成正斜杠（filename
+  // 唯一键沿用相对路径，两个根下同名相对路径的极端情况由 ON CONFLICT DO
+  // NOTHING 去重）。统一 '/' 是为了让下载入库后的按 filename 查库（见
+  // lxmusic.js/maidong.js）在 Linux/Windows 上行为一致。
+  const files = [];
+  for (const root of roots) {
+    for (const f of listFilesRecursive(root)) {
+      files.push({ f, rel: path.relative(root, f).replace(/\\/g, '/') });
+    }
+  }
   const insert = db.prepare(`
     INSERT INTO songs (title, artist, filename, filepath, audio_tracks, media_type, lyrics_path, pinyin, pinyin_initial, lang)
     VALUES (@title, @artist, @filename, @filepath, @audio_tracks, @media_type, @lyrics_path, @pinyin, @pinyin_initial, @lang)
@@ -149,8 +182,7 @@ async function scanLibrary() {
   // 等后面的文件也扫完。单条记录探测/入库失败只记日志跳过，不影响其余文件
   // 继续扫描（沿用原来的"单条失败不影响整体"原则）。
   let added = 0;
-  for (const f of files) {
-    const rel = path.relative(MV_DIR, f);
+  for (const { f, rel } of files) {
     if (!existingSet.has(rel)) {
       try {
         const { artist, title } = parseFilename(f);
@@ -158,7 +190,9 @@ async function scanLibrary() {
         // 新文件入库时顺手探测音轨数，避免播放时才发现切换不了；纯 MP3 永远是单音轨。
         const audio_tracks = media_type === 'audio' ? 1 : probeAudioTracks(f);
         const lyrics = findLyricsPath(f);
-        const lyrics_path = lyrics ? path.relative(MV_DIR, lyrics) : null;
+        // 歌词路径存绝对路径：下载目录可配置后歌词文件不一定在 MV_DIR 下，相对路径
+        // 表达不了跨目录引用（/lyrics/:id 接口同时兼容旧库存量的相对路径）。
+        const lyrics_path = lyrics ? lyrics : null;
         const r = insert.run({ title, artist, filename: rel, filepath: f, audio_tracks, media_type, lyrics_path, pinyin: toPinyin(title), pinyin_initial: toPinyinInitial(title), lang: detectLang(title, artist) });
         if (r.changes > 0) added++;
       } catch (e) {
@@ -171,11 +205,10 @@ async function scanLibrary() {
   // 已存在曲目也要补齐/刷新媒体类型和同名 LRC 路径，确保升级后 MP3 与歌词立即可用。
   try {
     const updMeta = db.prepare('UPDATE songs SET media_type = ?, lyrics_path = ? WHERE filename = ?');
-    for (const f of files) {
-      const rel = path.relative(MV_DIR, f);
+    for (const { f, rel } of files) {
       const type = AUDIO_EXT.includes(path.extname(f).toLowerCase()) ? 'audio' : 'video';
       const lrc = findLyricsPath(f);
-      updMeta.run(type, lrc ? path.relative(MV_DIR, lrc) : null, rel);
+      updMeta.run(type, lrc ? lrc : null, rel);
     }
   } catch (e) {
     console.error('歌曲媒体类型/LRC 路径补全失败:', e.message);
@@ -202,7 +235,7 @@ async function scanLibrary() {
   // 耗时 IO，不是本次"渐进式"要解决的瓶颈，保持原有一次性事务写法。
   let removed = 0;
   try {
-    const currentRelSet = new Set(files.map(f => path.relative(MV_DIR, f)));
+    const currentRelSet = new Set(files.map(x => x.rel));
     const all = db.prepare('SELECT id, filename FROM songs').all();
     // queue 表对 songs.id 有真实的外键约束，但 /api/queue/next 只会把已播完的
     // 队列条目标记成 status='done'，从来不会真正从 queue 表删除——这些"done"的
@@ -241,4 +274,4 @@ async function scanLibrary() {
   return { total: files.length, added, removed };
 }
 
-module.exports = { scanLibrary, MV_DIR, probeAudioTracks, findLyricsPath };
+module.exports = { scanLibrary, scanRoots, MV_DIR, probeAudioTracks, findLyricsPath };
