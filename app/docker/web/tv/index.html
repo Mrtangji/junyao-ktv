@@ -1021,6 +1021,8 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
     <div class="set-r" data-page-node-id="jQFmc22JUITFh70G7FMgqB"><span class="set-l" data-page-node-id="cm7WEluuYuRRwWcA6akc3t">曲库歌曲</span><span class="set-v" id="s-songs" data-page-node-id="MancH463s8fDUp3KER6rWg">—</span></div>
     <div class="set-r" data-f style="cursor:pointer" onclick="toggleAutoPlay()"><span class="set-l">首页自动播放</span><span class="set-v" id="s-autoplay">关</span></div>
     <div class="set-r" data-f style="cursor:pointer" onclick="toggleDlFormat()"><span class="set-l">点唱榜下载格式</span><span class="set-v" id="s-dlfmt">MP3</span></div>
+    <div class="set-r" data-f style="cursor:pointer" onclick="toggleBoardSrc()"><span class="set-l">点歌榜来源</span><span class="set-v" id="s-boardsrc">酷我</span></div>
+    <div class="set-r" data-f style="cursor:pointer" onclick="editMdConfig()"><span class="set-l">麦动点歌配置</span><span class="set-v" id="s-mdcfg">未配置</span></div>
     <div class="set-r" data-f style="cursor:pointer" onclick="openLXSrc()"><span class="set-l">LX 音源（网络点唱）</span><span class="set-v" id="s-lxsrc">未导入</span></div>
     <div class="set-r" data-f style="cursor:pointer" onclick="doScan()" data-page-node-id="h6eOYDLjT1y806yq5yzV4w"><span class="set-l" data-page-node-id="0lPmMUEA9nLgTt7ocIa4Pb">重新扫描曲库</span><span style="color:var(--ac2)" data-page-node-id="swWFQDPZvYroJ32yMv4cyN">▶ 扫描</span></div>
     <div class="set-r" data-f id="row-app-server" style="cursor:pointer;display:none" onclick="window.KtvBridge&&window.KtvBridge.editServer()"><span class="set-l">服务器地址</span><span class="set-v" id="s-app-server">—</span></div>
@@ -2508,10 +2510,12 @@ let lxBoardsLoaded=false,lxBoardBangid='255',lxBoardName='KTV点唱榜',lxSeq=0,
 async function initLX(){
   const bar=document.getElementById('lx-boardbar'),list=document.getElementById('lx-list');
   if(LOCAL_MODE){bar.innerHTML='<div class="lx-empty">本地模式无服务器，点唱榜不可用。可在设置里导入本机音源，连接服务器后使用。</div>';list.innerHTML='';return;}
+  updateBoardSrcUI();
   if(!lxBoardsLoaded){
     bar.innerHTML='<div class="lx-empty">榜单加载中…</div>';
     try{
-      const boards=await fetch('/api/lx/boards').then(r=>r.json());
+      const boards=await fetch(boardSrc==='md'?'/api/md/boards':'/api/lx/boards').then(r=>r.json());
+      if(boards.error){bar.innerHTML='<div class="lx-empty">⚠️ '+boards.error+'</div>';return;}
       lxRenderBoards(boards);
       lxBoardsLoaded=true;
     }catch(e){bar.innerHTML='<div class="lx-empty">⚠️ 榜单加载失败</div>';return;}
@@ -2535,10 +2539,11 @@ async function lxLoadBoard(bangid,name){
   hint.textContent=`${name} · 加载中…`;
   list.innerHTML='';
   try{
-    const r=await fetch(`/api/lx/board?bangid=${encodeURIComponent(bangid)}&page=1&limit=100`).then(x=>x.json());
+    const api=boardSrc==='md'?`/api/md/board?bangid=${encodeURIComponent(bangid)}&page=1&limit=100`:`/api/lx/board?bangid=${encodeURIComponent(bangid)}&page=1&limit=100`;
+    const r=await fetch(api).then(x=>x.json());
     if(seq!==lxSeq)return; // 已切到其它榜单，丢弃过期结果
     if(r.error){hint.textContent='⚠️ '+r.error;return;}
-    hint.textContent=`${name} · ${r.list.length}首 · 点歌后自动下载/播放`;
+    hint.textContent=`${boardSrc==='md'?'麦动':'酷我'} · ${name} · ${r.total||r.list.length}首 · 点歌后自动下载/播放`;
     lxRenderList(list,r.list);
   }catch(e){if(seq===lxSeq)hint.textContent='⚠️ 榜单加载失败：'+e.message;}
 }
@@ -2562,7 +2567,7 @@ async function lxOrder(idx){
   const btn=event&&event.target;
   if(btn){btn.disabled=true;btn.textContent='…';}
   try{
-    const r=await fetch('/api/lx/queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({songmid:s.songmid,name:s.name,singer:s.singer,pic:s.pic,format:dlFormat})}).then(x=>x.json());
+    const r=await fetch(boardSrc==='md'?'/api/md/queue':'/api/lx/queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({songmid:s.songmid,name:s.name,singer:s.singer,url:s.url,pic:s.pic,format:dlFormat})}).then(x=>x.json());
     if(r.error==='NO_ACTIVE_SOURCE'){showToast('⚠️ '+r.message);if(btn){btn.disabled=false;btn.textContent='点歌';}return;}
     if(r.error){showToast('⚠️ '+r.error);if(btn){btn.disabled=false;btn.textContent='点歌';}return;}
     showToast(r.downloaded?`《${s.name}》下载完成，已加入队列 🎶`:`《${s.name}》已加入队列 🎶`);
@@ -2581,6 +2586,51 @@ function toggleDlFormat(){
   showToast(dlFormat==='mp3'?'✅ 点唱榜下载格式：MP3（320K 音频）':'✅ 点唱榜下载格式：MV（封面+320K 音频合成视频）');
 }
 updateDlFmtUI();
+// ===== 点歌榜来源（酷我 / 麦动）+ 麦动点歌配置 =====
+// 麦动两种数据源（可同时配）：网络曲库 catalog.json（榜单/搜索/下载直链）与
+// API 音源服务（/search + /resolve，maidong docs/音源导入集成设计.md 协议）。
+// 配置存服务端 settings 表（/api/md/config），本机只记住当前选的来源。
+let boardSrc=localStorage.getItem('tv-board-src')==='md'?'md':'kw';
+let mdCfg={catalogUrl:'',apiBase:''};
+function updateBoardSrcUI(){const el=document.getElementById('s-boardsrc');if(el)el.textContent=boardSrc==='md'?'麦动':'酷我';}
+function updateMdCfgUI(){const el=document.getElementById('s-mdcfg');if(!el)return;
+  const has=mdCfg.catalogUrl||mdCfg.apiBase;
+  el.textContent=!has?'未配置':(mdCfg.catalogUrl&&mdCfg.apiBase?'曲库+API':mdCfg.catalogUrl?'曲库':'API');}
+async function refreshMdCfg(){try{mdCfg=await fetch('/api/md/config').then(r=>r.json());}catch(e){}updateMdCfgUI();}
+function toggleBoardSrc(){
+  boardSrc=boardSrc==='kw'?'md':'kw';
+  localStorage.setItem('tv-board-src',boardSrc);
+  lxBoardsLoaded=false;lxBoardBangid=boardSrc==='md'?'__all__':'255';lxBoardName=boardSrc==='md'?'全部歌曲':'KTV点唱榜';
+  updateBoardSrcUI();
+  showToast(boardSrc==='md'?'✅ 点歌榜来源：麦动（需先配置麦动点歌）':'✅ 点歌榜来源：酷我');
+  const pf=document.getElementById('pf-lx');if(pf&&pf.classList.contains('open'))initLX();
+}
+function editMdConfig(){
+  const ov=document.createElement('div');
+  ov.style.cssText='position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center';
+  ov.innerHTML='<div style="background:#17122e;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:22px 24px;width:min(88vw,520px)">'+
+    '<div style="font-size:19px;font-weight:700;color:#fff;margin-bottom:12px">麦动点歌配置</div>'+
+    '<div style="color:var(--sub);font-size:13px;margin-bottom:6px">① 网络曲库 catalog.json 地址（maidong 网络曲库）</div>'+
+    '<input id="md-cat-input" style="width:100%;box-sizing:border-box;font-size:15px;padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:#0d0a1f;color:#fff;margin-bottom:12px" placeholder="http://192.168.1.50:8080/catalog.json" value="'+String(mdCfg.catalogUrl||'').replace(/"/g,'')+'"/>'+
+    '<div style="color:var(--sub);font-size:13px;margin-bottom:6px">② API 音源服务基地址（maidong 音源协议 /search /resolve，可选）</div>'+
+    '<input id="md-api-input" style="width:100%;box-sizing:border-box;font-size:15px;padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:#0d0a1f;color:#fff" placeholder="http://192.168.1.60:9000" value="'+String(mdCfg.apiBase||'').replace(/"/g,'')+'"/>'+
+    '<div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end">'+
+    '<button id="md-cancel" style="font-size:15px;padding:8px 18px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:transparent;color:#ccc;cursor:pointer">取消</button>'+
+    '<button id="md-ok" style="font-size:15px;padding:8px 18px;border-radius:8px;border:none;background:var(--ac);color:#fff;cursor:pointer">保存</button></div></div>';
+  document.body.appendChild(ov);
+  ov.querySelector('#md-cancel').onclick=()=>ov.remove();
+  ov.querySelector('#md-ok').onclick=async()=>{
+    const catalogUrl=ov.querySelector('#md-cat-input').value.trim();
+    const apiBase=ov.querySelector('#md-api-input').value.trim();
+    try{
+      mdCfg=await fetch('/api/md/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({catalogUrl,apiBase})}).then(r=>r.json());
+      updateMdCfgUI();ov.remove();lxBoardsLoaded=false;
+      showToast('✅ 麦动点歌配置已保存');
+      const pf=document.getElementById('pf-lx');if(boardSrc==='md'&&pf&&pf.classList.contains('open'))initLX();
+    }catch(e){showToast('⚠️ 保存失败：'+e.message,true);}
+  };
+}
+refreshMdCfg();
 // ===== LX 音源管理（设置面板；TV/安卓端导入，与曲库后台共用 /api/lx/source）=====
 // 双音源集合：服务器音源（存服务端，点唱榜/搜索/下载都在服务端跑）与本机音源
 // （存本页 localStorage）。安卓本地模式没有服务器，只能导入本机音源；连接服务器

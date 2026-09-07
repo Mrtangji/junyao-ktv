@@ -500,4 +500,6 @@ module.exports = {
   initActiveSource, activateSourceById, deactivateSource, activateScript, activeSource: () => activeSource,
   resolveMusicUrl, kwSearch, kwBoardSongs, KW_BOARDS, kwLyric,
   downloadSong, findLocalSong, parseScriptMeta,
+  // 内部工具：供 maidong.js 等模块复用下载入库链路
+  internals: { httpReq, sniffAudio, moveFile, ffmpegToMp3, ffmpegMp3ToMv, downloadCover, sanitize, TMP_DIR },
 };

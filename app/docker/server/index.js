@@ -10,6 +10,7 @@ const { scanLibrary, MV_DIR } = require('./scanner');
 const { toPinyin, toPinyinInitial } = require('./pinyin');
 const { detectLang } = require('./lang');
 const { ensureHLS, removeHLS, outDir, waitForFile, scheduleHLSCleanup } = require('./hlsgen');
+const maidong = require('./maidong');
 const { getPitchCurve } = require('./pitch');
 const log = require('./logger');
 
@@ -533,6 +534,55 @@ app.post('/api/lx/queue', async (req, res) => {
       downloaded = true;
     } catch (e) {
       if (e.message === 'NO_ACTIVE_SOURCE') return res.status(400).json({ error: 'NO_ACTIVE_SOURCE', message: '尚未导入 LX 音源，请先在曲库管理后台导入' });
+      if (e.message === 'MV_DIR_UNAVAILABLE') return res.status(503).json({ error: '曲库目录不可访问' });
+      return res.status(502).json({ error: '下载失败: ' + e.message });
+    }
+  }
+  const q = db.prepare('INSERT INTO queue (song_id,nickname) VALUES (?,?)').run(song.id, '网络点唱');
+  db.prepare('UPDATE songs SET play_count=play_count+1 WHERE id=?').run(song.id);
+  const playing = db.prepare("SELECT * FROM queue WHERE status='playing'").get();
+  if (!playing) db.prepare("UPDATE queue SET status='playing' WHERE id=?").run(q.lastInsertRowid);
+  broadcastQueue();
+  res.json({ ok: true, downloaded, song });
+});
+
+// ---------- 麦动 KTV 点歌系统（点歌榜来源之二，见 server/maidong.js） ----------
+app.get('/api/md/config', (req, res) => res.json(maidong.getConfig()));
+app.post('/api/md/config', (req, res) => {
+  try { res.json(maidong.setConfig(req.body || {})); }
+  catch (e) { res.status(400).json({ error: '麦动配置保存失败: ' + e.message }); }
+});
+app.get('/api/md/boards', async (req, res) => {
+  try { res.json(await maidong.boards()); }
+  catch (e) { res.status(502).json({ error: '麦动曲库分类获取失败: ' + e.message }); }
+});
+app.get('/api/md/board', async (req, res) => {
+  try {
+    res.json(await maidong.boardSongs(req.query.bangid || '__all__', parseInt(req.query.page) || 1,
+      parseInt(req.query.limit) || 100, req.query.q || ''));
+  } catch (e) { res.status(502).json({ error: '麦动榜单获取失败: ' + e.message }); }
+});
+app.get('/api/md/search', async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q) return res.json({ list: [], total: 0, page: 1, limit: 0 });
+  try {
+    const { apiBase } = maidong.getConfig();
+    if (apiBase) return res.json(await maidong.apiSearch(q, parseInt(req.query.page) || 1));
+    // 未配 API 音源时退化为曲库内搜索
+    res.json(await maidong.boardSongs('__all__', 1, 100, q));
+  } catch (e) { res.status(502).json({ error: '麦动搜索失败: ' + e.message }); }
+});
+// 点唱：本地有直接入队；没有则下载入库再入队。body: {songmid,name,singer,url,pic,format}
+app.post('/api/md/queue', async (req, res) => {
+  const { songmid, name, singer, url, pic, format } = req.body || {};
+  if (!songmid || !name) return res.status(400).json({ error: '缺少 songmid/name' });
+  let song = lxmusic.findLocalSong(name, singer);
+  let downloaded = false;
+  if (!song) {
+    try {
+      song = await maidong.downloadMd({ songmid, name, singer, url, pic: pic || null, format: format === 'mv' ? 'mv' : 'mp3' });
+      downloaded = true;
+    } catch (e) {
       if (e.message === 'MV_DIR_UNAVAILABLE') return res.status(503).json({ error: '曲库目录不可访问' });
       return res.status(502).json({ error: '下载失败: ' + e.message });
     }
