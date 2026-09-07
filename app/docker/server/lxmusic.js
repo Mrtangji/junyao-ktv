@@ -106,22 +106,34 @@ function lxUtils() {
 }
 
 // 解析脚本头部注释 @name/@description/@version/@author/@homepage
+// 兼容性：社区音源头部写法五花八门——官方文档是 /** */，但墨澜/星海/独家音源等
+// 大量脚本用 /*! */ 或 /* */，还有的用 // 行注释，且文件可能带 BOM 或前置空行。
+// 策略：去掉 BOM 后在文件前 16KB 内依次扫描所有块注释（每个注释块内提取 @key），
+// 都找不到 name 再退化到 // 行注释里找；再找不到才报"不是有效的音源脚本"。
 function parseScriptMeta(script) {
   const meta = { name: '', description: '', version: '', author: '', homepage: '' };
-  const m = script.match(/\/\*\*([\s\S]*?)\*\//);
-  if (m) {
+  const head = String(script || '').replace(/^\uFEFF/, '').slice(0, 16384);
+  const grab = (text) => {
     for (const key of Object.keys(meta)) {
-      const km = m[1].match(new RegExp(`@${key}\\s+(.+)`, 'm'));
-      if (km) meta[key] = km[1].trim();
+      if (meta[key]) continue;
+      // 值在同行取到行尾或注释装饰符为止；description 换行内容不追，取首行够用
+      const km = text.match(new RegExp(`@${key}[ \\t]+([^\\r\\n*]+)`));
+      if (km) meta[key] = km[1].replace(/\s+$/, '').trim();
     }
-  }
+  };
+  const blocks = head.match(/\/\*[\s\S]*?\*\//g) || [];
+  for (const b of blocks) { grab(b); if (meta.name) break; }
+  if (!meta.name) grab(head.split(/\r?\n/).filter(l => l.trim().startsWith('//')).join('\n'));
   return meta;
 }
 
 // 在 vm 沙箱里跑一个源脚本，返回 { sources, requestHandler }
-function runSourceScript(script) {
+// 注意：不少社区源（如长青SVIP、独家音源）是"异步初始化"——脚本先注册 on()，
+// 再拉取远端配置后才 send(inited)，同步检查会误判"未发送有效的 inited 事件"。
+// 所以这里用带超时（15 秒）的轮询等待 inited 与 request 处理函数都就绪。
+async function runSourceScript(script) {
   const meta = parseScriptMeta(script);
-  if (!meta.name) throw new Error('脚本缺少 @name 头部注释');
+  if (!meta.name) throw new Error('不是有效的 LX 音源脚本：找不到 @name 头部注释（请确认选择的是音源 .js 文件，而非普通脚本）');
   let initedInfo = null;
   let requestHandler = null;
   const EVENT_NAMES = { inited: 'inited', request: 'request', updateAlert: 'updateAlert' };
@@ -142,7 +154,12 @@ function runSourceScript(script) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(script, sandbox, { timeout: 8000, filename: `${meta.name || 'lx-source'}.js` });
-  if (!initedInfo || !initedInfo.sources || !Object.keys(initedInfo.sources).length) throw new Error('脚本未发送有效的 inited 事件（sources 为空）');
+  const hasSources = () => !!(initedInfo && initedInfo.sources && Object.keys(initedInfo.sources).length);
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline && !(hasSources() && requestHandler)) {
+    await new Promise(r => setTimeout(r, 200));
+  }
+  if (!hasSources()) throw new Error('脚本未发送有效的 inited 事件（sources 为空）');
   if (!requestHandler) throw new Error('脚本未注册 request 事件处理函数');
   const sources = {};
   for (const [k, v] of Object.entries(initedInfo.sources)) {
@@ -161,10 +178,10 @@ db.exec(`CREATE TABLE IF NOT EXISTS lx_sources (
 
 let activeSource = null; // { id, meta, sources, requestHandler }
 
-function activateSourceById(id) {
+async function activateSourceById(id) {
   const row = db.prepare('SELECT * FROM lx_sources WHERE id=?').get(id);
   if (!row) throw new Error('源不存在');
-  const inst = runSourceScript(row.script);
+  const inst = await runSourceScript(row.script);
   activeSource = { id: row.id, meta: inst.meta, sources: inst.sources, requestHandler: inst.requestHandler };
   db.prepare("INSERT INTO settings (key,value) VALUES ('lx_active_source',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(row.id));
   return activeSource;
@@ -173,7 +190,8 @@ function activateSourceById(id) {
 function initActiveSource() {
   const v = db.prepare("SELECT value FROM settings WHERE key='lx_active_source'").get();
   if (!v) return null;
-  try { return activateSourceById(parseInt(v.value)); } catch (e) { console.error('LX 源初始化失败:', e.message); return null; }
+  activateSourceById(parseInt(v.value)).catch(e => { console.error('LX 源初始化失败:', e.message); return null; });
+  return null;
 }
 
 // 校验脚本可运行（导入前用），返回实例但不设为激活

@@ -469,10 +469,10 @@ app.post('/api/lx/source', async (req, res) => {
       script = resp;
     }
     if (!script || typeof script !== 'string' || script.length < 50) return res.status(400).json({ error: '缺少有效脚本内容' });
-    const inst = lxmusic.activateScript(script); // 校验可运行后才入库
+    const inst = await lxmusic.activateScript(script); // 校验可运行后才入库
     const info = db.prepare('INSERT INTO lx_sources (name,description,version,author,homepage,script) VALUES (?,?,?,?,?,?)')
       .run(inst.meta.name, inst.meta.description, inst.meta.version, inst.meta.author, inst.meta.homepage, script);
-    lxmusic.activateSourceById(info.lastInsertRowid);
+    await lxmusic.activateSourceById(info.lastInsertRowid);
     res.json({ ok: true, id: info.lastInsertRowid, name: inst.meta.name, sources: inst.sources });
   } catch (e) {
     res.status(400).json({ error: '源导入失败: ' + e.message });
@@ -490,9 +490,9 @@ app.delete('/api/lx/source/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/lx/source/:id/activate', (req, res) => {
+app.post('/api/lx/source/:id/activate', async (req, res) => {
   try {
-    const act = lxmusic.activateSourceById(parseInt(req.params.id));
+    const act = await lxmusic.activateSourceById(parseInt(req.params.id));
     res.json({ ok: true, name: act.meta.name, sources: act.sources });
   } catch (e) { res.status(400).json({ error: '源启用失败: ' + e.message }); }
 });
