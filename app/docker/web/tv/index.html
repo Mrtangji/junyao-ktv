@@ -2752,17 +2752,33 @@ function updateLocalBadge(){
 async function playLocalSong(id){
   const list=await localList();const s=list.find(x=>x.id===id);if(!s)return;
   // App 内：原生本地服务流式播放；浏览器：IndexedDB blob → objectURL
+  let srcUrl;
   if(!HAS_APP_LIB()){
     if(localPlay.url){try{URL.revokeObjectURL(localPlay.url);}catch(e){}}
     const blob=new Blob([s.buf],{type:LOCAL_MIME[s.ext]||'audio/mpeg'});
-    localPlay.url=URL.createObjectURL(blob);
+    localPlay.url=URL.createObjectURL(blob);srcUrl=localPlay.url;
+  }else{
+    srcUrl='http://127.0.0.1:8090/local/'+id;
+    // 播放前先探测本地服务：403=SAF授权失效 404=索引失效/文件被移 503=文件打不开
+    // ——这些情况 <video> 只会笼统报错4，探测后能给出可行动的根因
+    let st=0;
+    try{const pr=await fetch(srcUrl,{method:'HEAD'});st=pr.status;}
+    catch(e){showToast('⚠️ 本地播放失败：本地服务不可达（请退出 App 重新打开）');return;}
+    if(st!==200&&st!==206){
+      const why=st===403?'文件夹授权已失效，请重新扫描本机曲库文件夹'
+        :st===404?'曲库索引失效或文件已被移动，请重新扫描本机曲库'
+        :st===503?'文件无法打开（可能已损坏或被系统清理），请重新扫描'
+        :('本地服务返回 HTTP '+st);
+      showToast('⚠️ 本地播放失败：'+why,true);
+      return;
+    }
   }
   localPlay.active=true;localPlay.baseQueueId=curSong?curSong.queue_id:null;
   // 本机歌曲无参考音高曲线，评分挂起（UI 隐藏，ended 结算跳过）
   scoreState.ended=true;
   document.querySelectorAll('.pd.open,.pd-full.open').forEach(p=>p.classList.remove('open'));
   destroyHls();
-  video.src=HAS_APP_LIB()?('http://127.0.0.1:8090/local/'+id):localPlay.url;
+  video.src=srcUrl;
   document.getElementById('now-idle').style.display='none';
   video.style.display='none';
   document.getElementById('lyrics-panel').classList.remove('show','no-lyrics');
@@ -2778,12 +2794,12 @@ async function playLocalSong(id){
   document.getElementById('ov-artist').textContent=`${s.artist||''} · 本机`.replace(/^ · /,'');
   curSong={queue_id:'local_'+id,song_id:-1,title:s.title,artist:s.artist,media_type:'audio'};
   endingNotified=true;
-  // 播放失败带具体原因（2=网络 3=解码 4=格式/源不可用），App 内提示重新扫描曲库
-  const ERR_TXT={1:'加载被中止',2:'网络错误（本地服务不可达）',3:'解码失败（文件可能损坏）',4:'格式或源不可用（请重新扫描本机文件夹）'};
+  // 播放失败带具体原因（能走到这里说明本地服务已探测通过，剩余为解码/格式问题）
+  const ERR_TXT={1:'加载被中止',2:'网络错误（本地服务不可达）',3:'解码失败：文件可能损坏',4:'设备不支持该音频编码格式（.'+(s.ext||'?')+'）'};
   video.addEventListener('error',function onLE(){
     video.removeEventListener('error',onLE);
     const c=video.error?video.error.code:0;
-    showToast('⚠️ 本地播放失败：'+(ERR_TXT[c]||'未知原因'));
+    showToast('⚠️ 本地播放失败：'+(ERR_TXT[c]||'未知原因'),true);
   },{once:true});
   video.play().catch(()=>{ /* 真实失败原因由上面的 error 事件给出 */ });
   showToast(`▶ 本机播放：${s.title}`);

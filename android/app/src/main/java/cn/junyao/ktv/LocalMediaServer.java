@@ -80,13 +80,20 @@ final class LocalMediaServer extends Thread {
             } catch (Exception e) { respond(s, 400, "text/plain", "bad id".getBytes(), null); return; }
 
             JSONObject item = LocalMusicStore.byId(ctx, id);
-            if (item == null) { respond(s, 404, "text/plain", "no such media".getBytes(), null); return; }
+            if (item == null) { respond(s, 404, "text/plain", "stale index: no such media".getBytes(), null); return; }
             Uri uri = Uri.parse(item.optString("uri"));
             long size = item.optLong("size", -1);
             String mime = mimeOf(item.optString("ext", "mp3"));
 
-            media = ctx.getContentResolver().openInputStream(uri);
-            if (media == null) { respond(s, 404, "text/plain", "unavailable".getBytes(), null); return; }
+            // SAF 授权丢失(重装/清理后)与文件打不开分别给 403/503，前端据此提示重新扫描
+            try {
+                media = ctx.getContentResolver().openInputStream(uri);
+            } catch (SecurityException se) {
+                respond(s, 403, "text/plain", "permission lost: rescan folder".getBytes(), null); return;
+            } catch (Exception e) {
+                respond(s, 503, "text/plain", "cannot open media".getBytes(), null); return;
+            }
+            if (media == null) { respond(s, 503, "text/plain", "cannot open media".getBytes(), null); return; }
 
             long start = Math.max(0, rangeStart);
             long end = rangeEnd >= 0 ? rangeEnd : size - 1;
@@ -128,9 +135,21 @@ final class LocalMediaServer extends Thread {
 
     private void respond(Socket s, int code, String type, byte[] body, Void unused) throws Exception {
         OutputStream o = s.getOutputStream();
-        o.write(("HTTP/1.1 " + code + " OK\r\nContent-Type: " + type + "\r\nContent-Length: " + body.length + "\r\nConnection: close\r\n\r\n").getBytes("UTF-8"));
+        o.write(("HTTP/1.1 " + code + " " + reasonOf(code) + "\r\nContent-Type: " + type + "\r\nContent-Length: " + body.length + "\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n").getBytes("UTF-8"));
         o.write(body);
         o.flush();
+    }
+
+    private static String reasonOf(int code) {
+        switch (code) {
+            case 200: return "OK";
+            case 206: return "Partial Content";
+            case 400: return "Bad Request";
+            case 403: return "Forbidden";
+            case 404: return "Not Found";
+            case 503: return "Service Unavailable";
+            default: return "Error";
+        }
     }
 
     private static String mimeOf(String ext) {
