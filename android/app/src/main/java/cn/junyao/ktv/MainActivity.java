@@ -39,14 +39,15 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * 君耀KTV 安卓端：WebView 壳。
- * 首次打开三选一：扫描局域网自动找服务器（默认端口 8080）/ 手动输入地址 / 无服务器本地使用。
- * 之后可随时按遥控器菜单键（MENU），或在 TV 页右下角 设置→服务器地址 里重新配置。
- * 本地模式下加载打包在 assets/tv 的页面，只保留本机音频扫描与播放能力。
+ * 启动自动扫描局域网找服务器（默认端口 8080）；找不到或连不上时自动进入本地模式
+ * （加载打包在 assets/tv 的页面，只保留本机音频扫描与播放能力）。
+ * 可随时按遥控器菜单键（MENU），或在 TV 页右下角 设置→服务器地址 里重新配置。
  */
 public class MainActivity extends Activity {
 
     private static final String PREFS = "ktv";
     private static final String KEY_SERVER = "server";
+    private static final String LOCAL_PAGE = "file:///android_asset/tv/index.html?local=1";
     private static final int REQ_FILE_CHOOSER = 1001;
     private static final int REQ_MIC = 2001;
     private static final int REQ_TREE = 1002;
@@ -86,11 +87,23 @@ public class MainActivity extends Activity {
         s.setAllowUniversalAccessFromFileURLs(true);
 
         web.addJavascriptInterface(new Bridge(), "KtvBridge");
-        web.setWebViewClient(new WebViewClient());
+        web.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
+                // 主框架加载服务器失败（服务器没开/地址失效）→ 自动降级本地模式。
+                // 该重载在所有 API 级别都只对主框架回调，子资源失败不会误触发；
+                // file:// 本地页自身出错不再回落，避免死循环。
+                if (failingUrl != null && failingUrl.startsWith("http")) {
+                    Toast.makeText(MainActivity.this, "服务器连接失败，已进入本地模式", Toast.LENGTH_LONG).show();
+                    prefs.edit().remove(KEY_SERVER).apply();
+                    loadLocal();
+                }
+            }
+        });
         web.setWebChromeClient(new ChromeClient());
 
         String sv = prefs.getString(KEY_SERVER, "");
-        if (sv.isEmpty()) showMenu(true);
+        if (sv.isEmpty()) scanLan(); // 首次启动：自动扫描，找不到直接进本地模式
         else loadServer(sv);
     }
 
@@ -124,20 +137,26 @@ public class MainActivity extends Activity {
         web.loadUrl(sv + "/tv");
     }
 
+    /** 本地模式：加载打包在 assets 里的 TV 页（页面按 file: 协议自动切本地模式） */
+    private void loadLocal() {
+        web.loadUrl(LOCAL_PAGE);
+    }
+
     private boolean hasServer() {
         String sv = prefs.getString(KEY_SERVER, "");
         return !sv.isEmpty();
     }
 
-    /** 服务器选择菜单。must=true（首次启动/尚无可用页面）时不可取消。 */
+    /** 服务器选择菜单（MENU 键 / 设置入口）。must=true（尚无任何可用页面）时不可取消。 */
     private void showMenu(boolean must) {
-        final String[] items = {"🔍 扫描局域网查找服务器", "✏️ 手动输入服务器地址"};
+        final String[] items = {"🔍 扫描局域网查找服务器", "✏️ 手动输入服务器地址", "📱 本地模式（无服务器）"};
         AlertDialog.Builder b = new AlertDialog.Builder(this)
                 .setTitle("君耀KTV · 连接服务器")
                 .setCancelable(!must)
                 .setItems(items, (d, w) -> {
                     if (w == 0) scanLan();
-                    else askServerDialog(must);
+                    else if (w == 1) askServerDialog(must);
+                    else { prefs.edit().remove(KEY_SERVER).apply(); loadLocal(); }
                 });
         if (!must) b.setNegativeButton("取消", null);
         b.show();
@@ -168,8 +187,14 @@ public class MainActivity extends Activity {
     private void scanLan() {
         final String prefix = lanPrefix();
         if (prefix == null) {
-            Toast.makeText(this, "未获取到本机 IP，请手动输入服务器地址", Toast.LENGTH_LONG).show();
-            showMenu(hasServer() && web.getUrl() != null);
+            String cur = web.getUrl();
+            if (cur != null && cur.startsWith("http")) {
+                Toast.makeText(this, "未获取到本机 IP，请手动输入服务器地址", Toast.LENGTH_LONG).show();
+                showMenu(false);
+            } else {
+                Toast.makeText(this, "未获取到本机 IP，已进入本地模式", Toast.LENGTH_LONG).show();
+                loadLocal();
+            }
             return;
         }
         final AlertDialog progress = new AlertDialog.Builder(this)
@@ -204,8 +229,17 @@ public class MainActivity extends Activity {
                     Toast.makeText(MainActivity.this, "已找到服务器：" + result, Toast.LENGTH_SHORT).show();
                     loadServer(result);
                 } else {
-                    Toast.makeText(MainActivity.this, "未发现 KTV 服务器，请确认电视与服务器在同一局域网", Toast.LENGTH_LONG).show();
-                    showMenu(!hasServer());
+                    // 找不到服务器：若当前已在服务器页上则仅提示；否则自动进入本地模式
+                    String cur = web.getUrl();
+                    boolean onServerPage = cur != null && cur.startsWith("http");
+                    if (onServerPage) {
+                        Toast.makeText(MainActivity.this, "未发现 KTV 服务器，请确认与服务器在同一局域网", Toast.LENGTH_LONG).show();
+                        showMenu(false);
+                    } else {
+                        Toast.makeText(MainActivity.this, "未发现 KTV 服务器，已进入本地模式", Toast.LENGTH_LONG).show();
+                        prefs.edit().remove(KEY_SERVER).apply();
+                        loadLocal();
+                    }
                 }
             });
         }).start();
