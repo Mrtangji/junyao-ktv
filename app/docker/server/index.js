@@ -676,21 +676,60 @@ app.post('/api/queue/next', (req, res) => {
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
+// ---------- HTTPS（自签证书） ----------
+// 浏览器安全策略：麦克风（getUserMedia，唱歌评分用）只在 HTTPS 或 localhost 下开放，
+// 局域网 HTTP 访问拿不到麦克风。这里用自签证书在同一 app 上再起一个 HTTPS 端口，
+// 证书持久化在 DATA_DIR 下，重启不换。App 端信任自签证书；浏览器访问会弹证书
+// 警告，点「高级→继续访问」即可。
+const https = require('https');
+const selfsigned = require('selfsigned');
+const HTTPS_PORT = process.env.HTTPS_PORT || 8443;
+const CERT_DIR = path.join(process.env.DATA_DIR || '/data', 'https');
+const wssAll = [wss]; // 所有 WebSocket 实例（http + https），广播用
+
 function broadcastQueue() {
   const payload = JSON.stringify({ type: 'queue', data: getQueueWithSongs() });
-  wss.clients.forEach(c => { if (c.readyState === 1) c.send(payload); });
+  wssAll.forEach(w => w.clients.forEach(c => { if (c.readyState === 1) c.send(payload); }));
 }
 
-wss.on('connection', ws => {
+function onWsConnection(ws) {
   ws.send(JSON.stringify({ type: 'queue', data: getQueueWithSongs() }));
   ws.on('message', msg => {
     try {
       const p = JSON.parse(msg);
       if (p.type === 'control')
-        wss.clients.forEach(c => { if (c.readyState === 1) c.send(JSON.stringify(p)); });
+        wssAll.forEach(w => w.clients.forEach(c => { if (c.readyState === 1) c.send(JSON.stringify(p)); }));
     } catch(e) {}
   });
-});
+}
+wss.on('connection', onWsConnection);
+
+try {
+  let keyPem, certPem;
+  try {
+    keyPem = fs.readFileSync(path.join(CERT_DIR, 'key.pem'));
+    certPem = fs.readFileSync(path.join(CERT_DIR, 'cert.pem'));
+  } catch (e) {
+    fs.mkdirSync(CERT_DIR, { recursive: true });
+    const pems = selfsigned.generate([{ name: 'commonName', value: 'junyao-ktv.local' }], {
+      days: 3650,
+      algorithm: 'sha256',
+      extensions: [{ name: 'subjectAltName', altNames: [{ type: 2, value: 'localhost' }, { type: 7, ip: '127.0.0.1' }] }],
+    });
+    fs.writeFileSync(path.join(CERT_DIR, 'key.pem'), pems.private);
+    fs.writeFileSync(path.join(CERT_DIR, 'cert.pem'), pems.cert);
+    keyPem = pems.private; certPem = pems.cert;
+  }
+  const httpsServer = https.createServer({ key: keyPem, cert: certPem }, app);
+  const wssSecure = new WebSocketServer({ server: httpsServer, path: '/ws' });
+  wssSecure.on('connection', onWsConnection);
+  wssAll.push(wssSecure);
+  httpsServer.listen(HTTPS_PORT, () => {
+    log.info('SERVER', `KTV HTTPS 已启动: https://0.0.0.0:${HTTPS_PORT}（自签证书，麦克风/评分用）`);
+  });
+} catch (e) {
+  log.error('SERVER', 'HTTPS 启动失败（网页评分功能将不可用，HTTP 不受影响）: ' + e.message);
+}
 
 server.listen(PORT, () => {
   log.info('SERVER', `KTV 服务已启动: http://0.0.0.0:${PORT}`);

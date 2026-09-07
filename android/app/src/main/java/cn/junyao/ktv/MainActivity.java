@@ -89,10 +89,22 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new Bridge(), "KtvBridge");
         web.setWebViewClient(new WebViewClient() {
             @Override
+            public void onReceivedSslError(WebView view, android.webkit.SslErrorHandler handler, android.net.http.SslError error) {
+                // 服务器使用自签证书（HTTPS 8443，麦克风评分需要 HTTPS），局域网内直接信任
+                handler.proceed();
+            }
+            @Override
             public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
-                // 主框架加载服务器失败（服务器没开/地址失效）→ 自动降级本地模式。
+                // 主框架加载失败：先尝试 HTTPS→HTTP 回退（旧镜像没有 8443），
+                // HTTP 也失败（服务器没开/地址失效）才降级本地模式。
                 // 该重载在所有 API 级别都只对主框架回调，子资源失败不会误触发；
                 // file:// 本地页自身出错不再回落，避免死循环。
+                if (failingUrl != null && failingUrl.startsWith("https") && httpFallbackUrl != null && !httpFallbackUsed) {
+                    httpFallbackUsed = true;
+                    Toast.makeText(MainActivity.this, "HTTPS 不可用，改用 HTTP（评分需 HTTPS）", Toast.LENGTH_LONG).show();
+                    web.loadUrl(httpFallbackUrl);
+                    return;
+                }
                 if (failingUrl != null && failingUrl.startsWith("http")) {
                     Toast.makeText(MainActivity.this, "服务器连接失败，已进入本地模式", Toast.LENGTH_LONG).show();
                     prefs.edit().remove(KEY_SERVER).apply();
@@ -132,9 +144,19 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** HTTPS 回退目标（旧镜像只有 HTTP 8080 时用），加载前设置 */
+    private String httpFallbackUrl;
+    private boolean httpFallbackUsed;
+
     private void loadServer(String sv) {
-        if (!sv.startsWith("http")) sv = "http://" + sv;
-        web.loadUrl(sv + "/tv");
+        // 统一取「host[:port]」形式；优先走 HTTPS 8443（自签，麦克风评分需要安全上下文），
+        // 失败自动回退 HTTP（旧镜像只有 8080）。
+        String host = sv.replaceFirst("^https?://", "").replaceFirst("/.*$", "");
+        if (!host.matches(".*:\\d+$")) host = host + ":8080";
+        String httpsHost = host.replaceFirst(":8080$", ":8443");
+        httpFallbackUrl = "http://" + host + "/tv";
+        httpFallbackUsed = false;
+        web.loadUrl("https://" + httpsHost + "/tv");
     }
 
     /** 本地模式：加载打包在 assets 里的 TV 页（页面按 file: 协议自动切本地模式） */

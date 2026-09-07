@@ -5,13 +5,15 @@ services:
     image: junyao-ktv:1.0.8
     container_name: junyao-ktv
     restart: unless-stopped
-    # 端口已取消自定义功能，固定使用宿主机 8080 端口，容器内部始终监听
-    # 8080，不再需要生命周期脚本用 sed 改写。
+    # 端口已取消自定义功能，固定使用宿主机 8080（HTTP）/ 8443（HTTPS 自签，
+    # 麦克风评分等需要安全上下文的功能走这个口），不再需要生命周期脚本改写。
     ports:
       - "8080:8080"
+      - "8443:8443"
     environment:
       - TZ=Asia/Shanghai
       - PORT=8080
+      - HTTPS_PORT=8443
       - DATA_DIR=/data
       - MV_DIR=/mv
       # VAAPI 渲染节点路径，容器内代码据此判断硬件加速是否可用；与下面
