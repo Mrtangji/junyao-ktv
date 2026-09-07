@@ -356,6 +356,31 @@ async function downloadCover(picUrl) {
 
 const sanitize = (s) => String(s || '').replace(/[\\/:*?"<>|.]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || '未知';
 
+// 识别下载内容是否为有效音频。社区音源的取链接口常返回 JSON/HTML 错误页、
+// 防盗链提示甚至加密数据，直接丢给 ffmpeg 只会报晦涩的
+// "Invalid data found when processing input"，且坏内容可能被当歌曲改名入库。
+// 这里用魔数识别：mp3/flac/ogg/m4a/wav/aac(ADTS) 视为有效；m3u8 单独提示；
+// 文本类取出前 120 字符展示给用户（通常是接口报错信息）。
+function sniffAudio(buf) {
+  if (!buf || buf.length < 16) return { kind: 'unknown' };
+  const head = buf.toString('latin1', 0, 512).replace(/^\uFEFF/, '').trimStart();
+  if (/^#EXTM3U/.test(head)) return { kind: 'm3u8' };
+  if (/^[{<]/.test(head) || /^<!DOCTYPE|^<html/i.test(head)) {
+    const text = buf.toString('utf8', 0, 300).replace(/\s+/g, ' ').trim();
+    return { kind: 'text', detail: text.slice(0, 120) };
+  }
+  if (buf.toString('latin1', 0, 3) === 'ID3') return { kind: 'mp3' };
+  if (buf[0] === 0xFF && (buf[1] & 0xE0) === 0xE0) {
+    // MPEG 帧同步：layer 位为 00 是 ADTS AAC（不能直接改名为 .mp3），否则是 mp3
+    return (buf[1] & 0x06) === 0 ? { kind: 'aac' } : { kind: 'mp3' };
+  }
+  if (buf.toString('latin1', 0, 4) === 'fLaC') return { kind: 'flac' };
+  if (buf.toString('latin1', 0, 4) === 'OggS') return { kind: 'ogg' };
+  if (buf.length > 12 && buf.toString('latin1', 4, 8) === 'ftyp') return { kind: 'm4a' };
+  if (buf.toString('latin1', 0, 4) === 'RIFF') return { kind: 'wav' };
+  return { kind: 'unknown' };
+}
+
 // 下载一首网络歌曲到曲库（MV_DIR/歌手名/歌手名 - 歌名.mp3|.mp4），返回 songs 表行
 // format: 'mp3'（默认，320K 音质优先）| 'mv'（同一 320K 音频 + 封面合成为视频，
 //         并同时保留同名 .mp3 与 .lrc——MV/MP3 双版本入库）
@@ -376,8 +401,15 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   const tmpPath = path.join(TMP_DIR, `dl_${Date.now()}_${process.pid}`);
   const resp = await httpReq(url, { responseType: 'buffer', timeout: 120000 });
   if (resp.statusCode !== 200) throw new Error(`下载失败 HTTP ${resp.statusCode}`);
+  // 内容校验：不是有效音频就直接给出可读原因，不再让 ffmpeg 报晦涩错误，
+  // 也避免坏内容被 content-type 误判直接改名为 .mp3 入库
+  const sniff = sniffAudio(resp.body);
+  if (sniff.kind === 'text') throw new Error(`音源返回的不是音频（接口可能已失效或被风控）：${sniff.detail}`);
+  if (sniff.kind === 'm3u8') throw new Error('音源返回的是 HLS 播放列表(m3u8)，该链接不支持直接下载，请换音源');
+  const isMp3Src = sniff.kind === 'mp3';
+  const rawAudio = isMp3Src || ['flac', 'ogg', 'm4a', 'wav', 'aac'].includes(sniff.kind);
+  if (!rawAudio) throw new Error('音源返回的内容不是有效音频（可能已加密或链接已失效），请换音源或稍后重试');
   fs.writeFileSync(tmpPath, resp.body);
-  const isMp3Src = /\.mp3|mpeg/i.test((resp.headers['content-type'] || '') + ' ' + String(url.split('?')[0]));
   try {
     if (!isMv) {
       if (isMp3Src) fs.renameSync(tmpPath, finalPath);
