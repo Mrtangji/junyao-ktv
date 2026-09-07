@@ -51,7 +51,6 @@ public class MainActivity extends Activity {
     private static final int REQ_MIC = 2001;
     private static final int REQ_TREE = 1002;
     private static final int[] SCAN_PORTS = {8083, 8080};
-    private static final String LOCAL_PAGE = "file:///android_asset/tv/index.html?local=1";
 
     private WebView web;
     private SharedPreferences prefs;
@@ -82,8 +81,7 @@ public class MainActivity extends Activity {
         s.setLoadWithOverviewMode(true);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setAllowFileAccess(true);
-        // 本地模式页面由 file:///android_asset 加载：必须放开 file→http 跨源，
-        // 否则页面里 fetch 127.0.0.1:8090 的探测/播放请求会被 WebView 拦掉
+        // 放开跨源 fetch（本机曲库桥接页面需访问 127.0.0.1:8090 本地流服务）
         s.setAllowFileAccessFromFileURLs(true);
         s.setAllowUniversalAccessFromFileURLs(true);
 
@@ -133,14 +131,13 @@ public class MainActivity extends Activity {
 
     /** 服务器选择菜单。must=true（首次启动/尚无可用页面）时不可取消。 */
     private void showMenu(boolean must) {
-        final String[] items = {"🔍 扫描局域网查找服务器", "✏️ 手动输入服务器地址", "📱 本地使用（无服务器）"};
+        final String[] items = {"🔍 扫描局域网查找服务器", "✏️ 手动输入服务器地址"};
         AlertDialog.Builder b = new AlertDialog.Builder(this)
                 .setTitle("君耀KTV · 连接服务器")
                 .setCancelable(!must)
                 .setItems(items, (d, w) -> {
                     if (w == 0) scanLan();
-                    else if (w == 1) askServerDialog(must);
-                    else { prefs.edit().remove(KEY_SERVER).apply(); web.loadUrl(LOCAL_PAGE); }
+                    else askServerDialog(must);
                 });
         if (!must) b.setNegativeButton("取消", null);
         b.show();
@@ -172,7 +169,7 @@ public class MainActivity extends Activity {
         final String prefix = lanPrefix();
         if (prefix == null) {
             Toast.makeText(this, "未获取到本机 IP，请手动输入服务器地址", Toast.LENGTH_LONG).show();
-            showMenu(hasServer() && web.getUrl() != null && !web.getUrl().startsWith("file:"));
+            showMenu(hasServer() && web.getUrl() != null);
             return;
         }
         final AlertDialog progress = new AlertDialog.Builder(this)
@@ -325,12 +322,26 @@ public class MainActivity extends Activity {
         public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> cb, FileChooserParams params) {
             if (fileCb != null) fileCb.onReceiveValue(null);
             fileCb = cb;
+            // 按网页声明的 accept 类型决定过滤：音频导入用 audio/*，
+            // LX 音源(.js/text/javascript)等其它类型放开为 */*，否则 js 文件选不中
+            String type = "audio/*";
+            String[] accepts = params.getAcceptTypes();
+            if (accepts != null) {
+                for (String a : accepts) {
+                    if (a == null) continue;
+                    String t = a.trim().toLowerCase();
+                    if (!t.isEmpty() && !t.startsWith("audio/") && !t.matches("\\.(mp3|flac|m4a|aac|wav|ogg|opus)")) {
+                        type = "*/*";
+                        break;
+                    }
+                }
+            }
             Intent i = new Intent(Intent.ACTION_GET_CONTENT);
             i.addCategory(Intent.CATEGORY_OPENABLE);
-            i.setType("audio/*");
+            i.setType(type);
             i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
             try {
-                startActivityForResult(Intent.createChooser(i, "选择音频文件"), REQ_FILE_CHOOSER);
+                startActivityForResult(Intent.createChooser(i, type.equals("audio/*") ? "选择音频文件" : "选择文件"), REQ_FILE_CHOOSER);
             } catch (Exception e) {
                 fileCb = null;
                 return false;

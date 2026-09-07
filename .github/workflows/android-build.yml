@@ -20,13 +20,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # TV 页面以服务端 web/tv 为唯一来源，构建时打进 APK assets（本地模式用）
-      - name: Bundle TV web page into assets
-        run: |
-          mkdir -p android/app/src/main/assets/tv
-          cp app/docker/web/tv/index.html android/app/src/main/assets/tv/
-          cp -r app/docker/web/tv/fonts android/app/src/main/assets/tv/fonts
-          cp app/docker/web/tv/silent-loop.mp4 android/app/src/main/assets/tv/
+      # TV 页面统一由服务端提供（http://服务器/tv），App 不再内置本地模式页面
 
       - uses: gradle/actions/setup-gradle@v4
         with:
