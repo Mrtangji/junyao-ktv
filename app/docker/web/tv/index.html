@@ -344,6 +344,12 @@ html[data-layout="mobile"] #lyrics-panel .lyrics-line{font-size:4vw;line-height:
 html[data-layout="mobile"] #lyrics-panel .lyrics-line.near{font-size:5.2vw}
 html[data-layout="mobile"] #lyrics-panel .lyrics-line.current{font-size:8vw}
 html[data-layout="mobile"] #lyrics-panel.no-lyrics:after{font-size:4.6vw}
+/* 需求：竖屏播放 MP3(无画面)时歌词字号整体减小一档——播放器已加高到 宽×16/9，
+   行数更多，字号若不变会溢出面板；仅 audio-mode 下生效，MV 竖屏字号不变。 */
+html[data-layout="mobile"] .audio-mode #lyrics-panel .lyrics-line{font-size:3.4vw;line-height:1.25;min-height:4.4vw}
+html[data-layout="mobile"] .audio-mode #lyrics-panel .lyrics-line.near{font-size:4.4vw}
+html[data-layout="mobile"] .audio-mode #lyrics-panel .lyrics-line.current{font-size:6.6vw}
+html[data-layout="mobile"] .audio-mode #lyrics-panel.no-lyrics:after{font-size:4vw}
 /* QR - 修复双码 */
 #qr-corner{position:absolute;top:10px;right:10px;background:rgba(0,0,0,.65);
   backdrop-filter:blur(8px);border-radius:12px;padding:8px;text-align:center;z-index:4;pointer-events:none}
@@ -1420,6 +1426,15 @@ function initialsOf(str){
 }
 // 状态
 let queueData=[],curSong=null,isPaused=false,isFS=false,endingNotified=false;
+// 竖屏 MP3 播放适配：给根元素挂 audio-mode 类，CSS 据此加高播放器、缩小歌词字号
+// （高度实际由 fitNowPanel() 在 audio-mode 下按 宽×16/9 量取，MV 仍是 2/3）
+function updateAudioMode(){
+  const on=!!(curSong&&curSong.media_type==='audio');
+  const el=document.documentElement;
+  if(el.classList.contains('audio-mode')===on)return;
+  el.classList.toggle('audio-mode',on);
+  fitNowPanel(); // 高度策略变了，立即重算播放器高度
+}
 let hlsInstance=null;
 let lyricLines=[], lyricTimer=null;
 function destroyHls(){if(hlsInstance){try{hlsInstance.destroy();}catch(e){}hlsInstance=null;}}
@@ -1571,8 +1586,8 @@ function renderAll(){
     document.getElementById('ni-meta').textContent=`${playing.artist||''} · ${playing.nickname}`;
     document.getElementById('ov-title').textContent=playing.title;
     document.getElementById('ov-artist').textContent=`${playing.artist||''} · ${playing.nickname}`;
-    if(!curSong||curSong.queue_id!==playing.queue_id){curSong=playing;loadSong(video,playing.song_id);endingNotified=false;}
-  }else if(!localPlay.active){document.getElementById('now-idle').style.display='flex';video.style.display='none';document.getElementById('lyrics-panel').classList.remove('show','no-lyrics');document.getElementById('now-info').classList.remove('show');document.getElementById('video-loading').classList.remove('show');hideToast();curSong=null;resetLyrics();destroyHls();video.removeAttribute('src');video.load();if(scoreState.on){document.getElementById('score-wrap').classList.remove('show');document.getElementById('score-tick').classList.remove('show');document.getElementById('score-status').classList.remove('show');document.getElementById('score-result').classList.remove('show');}if(isFS)exitKtvFullscreen();maybeAutoPlay();}
+    if(!curSong||curSong.queue_id!==playing.queue_id){curSong=playing;loadSong(video,playing.song_id);endingNotified=false;updateAudioMode();}
+  }else if(!localPlay.active){document.getElementById('now-idle').style.display='flex';video.style.display='none';document.getElementById('lyrics-panel').classList.remove('show','no-lyrics');document.getElementById('now-info').classList.remove('show');document.getElementById('video-loading').classList.remove('show');hideToast();curSong=null;updateAudioMode();resetLyrics();destroyHls();video.removeAttribute('src');video.load();if(scoreState.on){document.getElementById('score-wrap').classList.remove('show');document.getElementById('score-tick').classList.remove('show');document.getElementById('score-status').classList.remove('show');document.getElementById('score-result').classList.remove('show');}if(isFS)exitKtvFullscreen();maybeAutoPlay();}
 }
 // 播放
 // 播放/暂停按钮图标+文案的唯一更新入口：只由 <video> 的原生 play/pause 事件驱动，
@@ -2794,6 +2809,7 @@ async function playLocalSong(id){
   document.getElementById('ov-title').textContent=s.title;
   document.getElementById('ov-artist').textContent=`${s.artist||''} · 本机`.replace(/^ · /,'');
   curSong={queue_id:'local_'+id,song_id:-1,title:s.title,artist:s.artist,media_type:'audio'};
+  updateAudioMode();
   endingNotified=true;
   // 播放失败带具体原因（能走到这里说明本地服务已探测通过，剩余为解码/格式问题）
   const ERR_TXT={1:'加载被中止',2:'网络错误（本地服务不可达）',3:'解码失败：文件可能损坏',4:'设备不支持该音频编码格式（.'+(s.ext||'?')+'）'};
@@ -3014,7 +3030,10 @@ function fitNowPanel(){
   const w=panel.getBoundingClientRect().width/scale;
   if(!w)return;
   let h=w*2/3;
-  if(document.documentElement.getAttribute('data-layout')!=='mobile'){
+  // 竖屏 MP3(无视频画面)：播放器加高到 宽×16/9，给歌词更多空间，按钮区随之整体下移
+  const isMobile=document.documentElement.getAttribute('data-layout')==='mobile';
+  if(isMobile&&document.documentElement.classList.contains('audio-mode'))h=w*16/9;
+  else if(!isMobile){
     const col=document.getElementById('now-col');
     if(col){
       const colH=col.getBoundingClientRect().height/scale;
