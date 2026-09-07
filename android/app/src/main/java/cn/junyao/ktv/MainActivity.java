@@ -82,6 +82,10 @@ public class MainActivity extends Activity {
         s.setLoadWithOverviewMode(true);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setAllowFileAccess(true);
+        // 本地模式页面由 file:///android_asset 加载：必须放开 file→http 跨源，
+        // 否则页面里 fetch 127.0.0.1:8090 的探测/播放请求会被 WebView 拦掉
+        s.setAllowFileAccessFromFileURLs(true);
+        s.setAllowUniversalAccessFromFileURLs(true);
 
         web.addJavascriptInterface(new Bridge(), "KtvBridge");
         web.setWebViewClient(new WebViewClient());

@@ -2761,10 +2761,11 @@ async function playLocalSong(id){
     srcUrl='http://127.0.0.1:8090/local/'+id;
     // 播放前先探测本地服务：403=SAF授权失效 404=索引失效/文件被移 503=文件打不开
     // ——这些情况 <video> 只会笼统报错4，探测后能给出可行动的根因
+    // fetch 抛异常不一定代表服务不可达（部分 WebView 拦 file:// 页面的 fetch），
+    // 此时继续尝试播放：video 元素请求不走 CORS，真实失败由 video 错误事件上报
     let st=0;
-    try{const pr=await fetch(srcUrl,{method:'HEAD'});st=pr.status;}
-    catch(e){showToast('⚠️ 本地播放失败：本地服务不可达（请退出 App 重新打开）');return;}
-    if(st!==200&&st!==206){
+    try{const pr=await fetch(srcUrl,{method:'HEAD'});st=pr.status;}catch(e){st=-1;}
+    if(st>=400){
       const why=st===403?'文件夹授权已失效，请重新扫描本机曲库文件夹'
         :st===404?'曲库索引失效或文件已被移动，请重新扫描本机曲库'
         :st===503?'文件无法打开（可能已损坏或被系统清理），请重新扫描'
