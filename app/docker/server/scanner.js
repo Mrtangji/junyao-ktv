@@ -18,12 +18,16 @@ const MEDIA_EXT = new Set([...VIDEO_EXT, ...AUDIO_EXT]);
 
 // LRC 是与歌曲同名的旁车歌词文件，不作为歌曲入库；支持大小写后缀，
 // 例如「周杰伦 - 晴天.mp3」对应「周杰伦 - 晴天.lrc」。
+// 逐字歌词优先：同名再加 _word 后缀的（如「晴天_word.lrc」）是增强型 LRC
+// （带 <mm:ss.xx> 逐字时间标签），优先于逐行版关联入库。
 function findLyricsPath(filepath) {
   const dir = path.dirname(filepath);
   const stem = path.basename(filepath, path.extname(filepath));
   try {
     const names = fs.readdirSync(dir);
+    const word = names.find(name => name.toLowerCase() === `${stem.toLowerCase()}_word.lrc`);
     const exact = names.find(name => name.toLowerCase() === `${stem.toLowerCase()}.lrc`);
+    if (word) return path.join(dir, word);
     return exact ? path.join(dir, exact) : null;
   } catch (e) {
     return null;
