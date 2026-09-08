@@ -313,8 +313,8 @@ main{max-width:960px;margin:0 auto;padding:24px}
     </div>
     <div style="font-size:12px;color:var(--sub);line-height:1.7;margin-bottom:12px">
       曲库目录自动从内置 muse.db 解析（按「最常唱」排序），无需导入。已下载过的自动跳过，
-      中断后重新启动同一区间即可续传；文件保存为 MV 目录 ts/ 子目录下「歌手 - 歌名.ts」，
-      完成后自动扫描入库。「扫库补缺」会校验 ts/ 目录已下载文件的完整性并自动补下缺失/损坏的。
+      中断后重新启动同一区间即可续传；文件保存为 MV 目录「歌手 - 歌名.ts」，
+      完成后自动扫描入库。「扫库补缺」会校验 MV 目录已下载文件的完整性并自动补下缺失/损坏的。
       遇到反盗版加密文件（.ls 音乐容器，无 MV）会跳过并把「歌手 - 歌名.ts」记到
       /data/bulk-skipped.txt；需要时把清单内容粘贴到上面重试。
     </div>
@@ -694,7 +694,7 @@ async function bulkRefresh(){
     document.getElementById('bulk-retry-btn').textContent = `🔁 重试失败(${failN})`;
     const skipN = d.skippedCount || 0;
     const skipLine = skipN ? `跳过反盗版：${skipN} 首（编号在 /data/${esc(d.skippedFile||'bulk-skipped.txt')}，可粘贴到上面重试）` : '跳过反盗版：0';
-    el.innerHTML = `麦动曲库：${museLine}<br>保存目录：MV/ts · ${catLine}<br>${skipLine}<br>${runLine}` +
+    el.innerHTML = `麦动曲库：${museLine}<br>保存目录：MV · ${catLine}<br>${skipLine}<br>${runLine}` +
       (d.concurrency?` · 并发 ${d.concurrency}`:'') + `<br>${runLine}` +
       (d.lastError?`<br><span style="color:var(--pink)">最近错误：${esc(d.lastError)}</span>`:'');
   }catch(e){ el.textContent = '状态获取失败：' + e.message; }

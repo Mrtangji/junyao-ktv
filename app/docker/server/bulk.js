@@ -3,13 +3,12 @@
 // 移植自 maidong-server/src/bulk.js，适配 junyao 环境：
 //  - 目录解析与实时换链复用 muse.js（ensureMuseDb/openDb + resolveMuseUrl，
 //    自带广告直链过滤与换设备重试，cloud_url 旧签名不复用）
-//  - 落盘到 MV_DIR/ts/（即服务器的 /mv/ts，与 maidong-server 布局一致）：
-//    平铺「歌手 - 歌名.ts」（冲突时带 [编号] 系列后缀）；该目录在 MV_DIR 内，
-//    扫描曲库后自动入库（scanner 已识别 .ts，文件名可解析出歌名/歌手）
+//  - 落盘到 MV_DIR（/mv）根目录：平铺「歌手 - 歌名.ts」（冲突时带 [编号] 系列
+//    后缀）；扫描曲库后自动入库（scanner 已识别 .ts，文件名可解析出歌名/歌手）
 //  - 无需手动导入曲库目录：muse.db 已内置镜像，启动下载时自动解析
 //  - 进度持久化在 DATA_DIR/bulk-state.json；区间下载按「已存在文件跳过」
 //    天然支持断点续传，服务重启后重新启动同一区间即可继续
-//  - /mv/ts 与普通下载的 MV 不同目录，扫库补缺模式只补缺失与损坏的文件，
+//  - 扫库补缺模式比对 MV_DIR 里的 .ts/.mp3，只补缺失与损坏的文件，
 //    绝不清理目录里的其它文件
 //  - 部分歌曲服务端只有广告占位视频没有真源（如音译版），换链必然失败：
 //    失败清单记入 state.failedList（跨重启持久），可用 retry 模式一键重试
@@ -35,8 +34,8 @@ class BulkDownloader {
     this.dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
     this.catalogPath = path.join(this.dataDir, 'bulk-catalog.json');
     this.statePath = path.join(this.dataDir, 'bulk-state.json');
-    // 批量下载专用目录：MV_DIR/ts/（服务器上的 /mv/ts），与普通 MV 分开
-    this.tsDir = path.join(path.resolve(dlcfg.MV_DIR), 'ts');
+    // 批量下载直接写入 MV_DIR（/mv）根目录，平铺「歌手 - 歌名.ts」
+    this.tsDir = path.resolve(dlcfg.MV_DIR);
     // 反盗版（.ls 加密容器）跳过清单：编号记录文件，放 DATA_DIR 便于用户取用
     this.skippedPath = path.join(this.dataDir, 'bulk-skipped.txt');
     this.state = {
