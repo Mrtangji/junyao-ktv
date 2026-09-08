@@ -503,6 +503,7 @@ html[data-layout="mobile"] #lyrics-panel.ktv .lyrics-line.knxt{font-size:3.9vw}
 .mt-a{color:#7ee0a3;background:rgba(94,220,140,.14);border:1px solid rgba(94,220,140,.3)}
 .mt-srv{color:#9db8ff;background:rgba(120,150,255,.14);border:1px solid rgba(120,150,255,.3)}
 .mt-loc{color:#ffb27e;background:rgba(255,150,90,.15);border:1px solid rgba(255,150,90,.35)}
+.mt-both{color:#7ee0ff;background:rgba(54,217,247,.14);border:1px solid rgba(54,217,247,.38)}
 /* 点唱榜面板：榜单横条 + 歌曲列表 */
 .lx-main{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:16px 26px}
 #lx-boardbar{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px}
@@ -2555,8 +2556,12 @@ function lxRenderList(el,songs){
   songs.forEach((s,i)=>{
     const d=document.createElement('div');d.className='lx-row';
     const hi=i<3?`color:${i===0?'#ffd479':i===1?'#cfd8e3':'#e8a06b'}`:'';
+    // 本地曲库拥有情况角标（服务端附加 localMp3/localMv）：MP3 / MV / 同时拥有=MP3+MV
+    const tag=s.localMp3&&s.localMv?'<span class="mt-b mt-both">MP3+MV</span>'
+      :s.localMp3?'<span class="mt-b mt-a">MP3</span>'
+      :s.localMv?'<span class="mt-b mt-v">MV</span>':'';
     d.innerHTML=`<div class="n" style="${hi}">${i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}</div>
-      <div class="t">${s.name||''}</div><div class="a">${s.singer||''}</div>
+      <div class="t">${s.name||''}${tag}</div><div class="a">${s.singer||''}</div>
       <button class="btn-add" data-f onclick="lxOrder(${i})">点歌</button>`;
     frag.appendChild(d);
   });

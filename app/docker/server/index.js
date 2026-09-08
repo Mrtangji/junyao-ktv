@@ -514,6 +514,67 @@ app.post('/api/lx/source/:id/activate', async (req, res) => {
   } catch (e) { res.status(400).json({ error: '源启用失败: ' + e.message }); }
 });
 
+// 榜单歌曲本地拥有情况（点唱榜「MP3/MV/MP3+MV」标签）：
+// 标题（宽松匹配，与 findLocalSong 同口径）→ 本地曲库各匹配行的 media_type，
+// 任一 audio 行 = 有 MP3，任一 video 行 = 有 MV。标题 Map 缓存 60s，避免
+// 每次翻榜单都全表拉取；模糊回落只对未精确命中的少数歌曲逐条 LIKE 查询。
+let _locMap = null, _locMapAt = 0;
+// 标题归一化：小写 + 去掉所有非字母/数字/汉字字符（空格、点、括号等），
+// 「Mr.Q」「Mr Q」「mr q」归一为同一键，规避下载入库时 sanitize 去符号的差异
+function normTitle(t) {
+  return String(t || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+}
+function localSongMap() {
+  if (_locMap && Date.now() - _locMapAt < 60000) return _locMap;
+  const map = new Map();
+  for (const r of db.prepare('SELECT title, artist, media_type FROM songs').all()) {
+    const k = normTitle(r.title);
+    if (!k) continue;
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push({ artist: String(r.artist || '').toLowerCase(), mt: r.media_type });
+  }
+  _locMap = map; _locMapAt = Date.now();
+  return map;
+}
+function localFlags(name, singer) {
+  const map = localSongMap();
+  const t = normTitle(name);
+  if (!t) return { mp3: false, mv: false };
+  let rows = map.get(t);
+  if (!rows) {
+    // 榜名常带 (HD)/(Live) 等画质后缀而本地入库时已去掉，去掉后缀再试精确
+    const t2 = t.replace(/(hd|hq|live|mv|4k|1080p|720p)$/i, '');
+    if (t2 && t2 !== t) rows = map.get(t2);
+  }
+  if (!rows) {
+    // 模糊回落：本地标题与榜名互相包含（处理简称/全称等差异）
+    const found = [];
+    for (const [k, v] of map) {
+      if (k.includes(t) || t.includes(k)) { found.push(...v); if (found.length >= 20) break; }
+    }
+    rows = found;
+  }
+  if (!rows || !rows.length) return { mp3: false, mv: false };
+  const s = String(singer || '').toLowerCase();
+  let matched = rows;
+  if (s) {
+    const first = s.split('、')[0].trim();
+    const m = rows.filter(r => (r.artist && (s.includes(r.artist) || r.artist.includes(first))) || !r.artist || r.artist === '未知歌手');
+    // 歌手过滤无命中时不强行过滤（榜名歌手写法差异大），退回全部标题匹配
+    if (m.length) matched = m;
+  }
+  return { mp3: matched.some(r => r.mt === 'audio'), mv: matched.some(r => r.mt === 'video') };
+}
+function attachLocalFlags(list) {
+  if (!Array.isArray(list) || !list.length) return list;
+  return list.map(s => {
+    try {
+      const f = localFlags(s.name, s.singer);
+      return { ...s, localMp3: !!f.mp3, localMv: !!f.mv };
+    } catch (e) { return s; }
+  });
+}
+
 // 榜单列表（KTV点唱榜等）
 app.get('/api/lx/boards', (req, res) => {
   res.json(lxmusic.KW_BOARDS);
@@ -523,6 +584,7 @@ app.get('/api/lx/boards', (req, res) => {
 app.get('/api/lx/board', async (req, res) => {
   try {
     const r = await lxmusic.kwBoardSongs(req.query.bangid || '255', parseInt(req.query.page) || 1, parseInt(req.query.limit) || 100);
+    r.list = attachLocalFlags(r.list);
     res.json(r);
   } catch (e) { res.status(502).json({ error: '榜单获取失败: ' + e.message }); }
 });
@@ -580,8 +642,10 @@ app.get('/api/md/boards', async (req, res) => {
 });
 app.get('/api/md/board', async (req, res) => {
   try {
-    res.json(await maidong.boardSongs(req.query.bangid || '__all__', parseInt(req.query.page) || 1,
-      parseInt(req.query.limit) || 100, req.query.q || ''));
+    const r = await maidong.boardSongs(req.query.bangid || '__all__', parseInt(req.query.page) || 1,
+      parseInt(req.query.limit) || 100, req.query.q || '');
+    r.list = attachLocalFlags(r.list);
+    res.json(r);
   } catch (e) { res.status(502).json({ error: '麦动榜单获取失败: ' + e.message }); }
 });
 app.get('/api/md/search', async (req, res) => {
