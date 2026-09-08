@@ -701,6 +701,10 @@ app.post('/api/bulk/start', requireAdminAuth, (req, res) => {
   res.status(r.ok ? 200 : 400).json(r);
 });
 app.post('/api/bulk/stop', requireAdminAuth, (req, res) => res.json(bulk.stop()));
+// 清空反盗版跳过清单（bulk-skipped.txt 一并删除）
+app.post('/api/bulk/clear-skipped', requireAdminAuth, (req, res) => res.json(bulk.clearSkipped()));
+// 读取跳过清单文件内容（填入「按清单下载」输入框）
+app.get('/api/bulk/skipped-text', requireAdminAuth, (req, res) => res.json(bulk.skippedText()));
 
 // ---------- 爱唱榜 (按播放次数) ----------
 app.get('/api/charts', (req, res) => {

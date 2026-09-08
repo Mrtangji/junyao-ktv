@@ -20,6 +20,7 @@ const db = require('./db');
 const { scanLibrary } = require('./scanner');
 const dlcfg = require('./dlconfig');
 const muse = require('./muse');
+const tsdec = require('./tsdecrypt');
 const log = require('./logger');
 const lx = require('./lxmusic');
 const { httpReq, sniffAudio, moveFile, ffmpegToMp3, ffmpegMp3ToMv, downloadCover, sanitize, TMP_DIR } = lx.internals;
@@ -187,7 +188,9 @@ async function downloadMd({ songmid, name, singer, url = null, pic = null, forma
 
   // 目标文件：MV 模式且不是纯音频直链 → .mp4（MV_DIR）；其余（含"下载格式=MP3
   // 但拿到 ts/mp4 视频"的情况，如麦动源只有 ts）→ 抽音频转 .mp3（MP3_DIR）
-  const isVideo = isVideoTarget && !/\.(mp3|flac|ogg|m4a|wav|aac)(\?|$)/i.test(srcUrl);
+  let lsLrc = null;        // .ls 容器解出的逐字歌词落点
+  let lsAudioOnly = false; // .ls 容器只有音频没有 MV 视频
+  const isVideo = isVideoTarget && !lsAudioOnly && !/\.(mp3|flac|ogg|m4a|wav|aac)(\?|$)/i.test(srcUrl);
   const ext = isVideo ? 'mp4' : 'mp3';
   const targetRoot = isVideo ? mvRoot : mp3Root;
   const rel = path.join(artist, `${artist} - ${title}.${ext}`);
@@ -200,13 +203,33 @@ async function downloadMd({ songmid, name, singer, url = null, pic = null, forma
   const tmpPath = path.join(TMP_DIR, `md_${Date.now()}_${process.pid}`);
   const resp = await httpReq(srcUrl, { responseType: 'buffer', timeout: 300000 });
   if (resp.statusCode !== 200) throw new Error(`下载失败 HTTP ${resp.statusCode}`);
-  const sniff = sniffAudio(resp.body);
+  fs.writeFileSync(tmpPath, resp.body);
+  // 麦动加密内容处理：Thunder 加密 TS → 解密回明文；.ls 音乐容器（防盗版格式，
+  // 逐字歌词 + L/R 双声道 mp3 按 1024 字节块交织）→ 解出原唱 mp3 + utf8 歌词
+  if (tsdec.isEncryptedPath(tmpPath)) {
+    const accomp = src === 'muse' ? await muse.getAccomp(String(songmid)) : 1;
+    const r = await tsdec.processDownload(tmpPath, {
+      outTs: tmpPath, outMp3: tmpPath + '.mp3', outLrc: tmpPath + '.lrc', accomp,
+    });
+    if (r.type === 'ts') {
+      if (r.path !== tmpPath) { fs.unlinkSync(tmpPath); fs.renameSync(r.path, tmpPath); }
+    } else if (r.type === 'audio') {
+      fs.unlinkSync(tmpPath);
+      fs.renameSync(r.mp3, tmpPath);
+      if (r.lrc) lsLrc = r.lrc;
+      lsAudioOnly = true;   // .ls 容器只有音频没有 MV 视频
+    } else {
+      try { fs.unlinkSync(tmpPath); } catch (e) {}
+      throw new Error('加密内容处理结果异常');
+    }
+  }
+  const sniff = sniffAudio(fs.readFileSync(tmpPath));
   if (sniff.kind === 'text') throw new Error(`麦动源返回的不是音频/视频（接口可能失效）：${sniff.detail}`);
   if (sniff.kind === 'm3u8') throw new Error('麦动源返回 HLS(m3u8) 播放列表，暂不支持直接下载');
   // 内容分流按"目标格式"为准：MV 模式下 ts/mp4 等视频容器走视频分支（sniff 不
-  // 识别 ts 魔数，按扩展名判）；MP3 模式即使拿到 ts/mp4 也抽音频转 mp3
-  const bodyIsVideo = isVideoTarget && (isVideo || sniff.kind === 'unknown' && looksVideo);
-  fs.writeFileSync(tmpPath, resp.body);
+  // 识别 ts 魔数，按扩展名判）；MP3 模式即使拿到 ts/mp4 也抽音频转 mp3；
+  // .ls 容器只有音频 → 按纯音频处理（存 MP3_DIR，附解出的逐字歌词）
+  const bodyIsVideo = !lsAudioOnly && isVideoTarget && (isVideo || sniff.kind === 'unknown' && looksVideo);
   try {
     if (!bodyIsVideo) {
       const isMp3 = sniff.kind === 'mp3';
@@ -219,6 +242,14 @@ async function downloadMd({ songmid, name, singer, url = null, pic = null, forma
     }
   } catch (e) { try { fs.unlinkSync(finalPath); } catch (e2) {} try { fs.unlinkSync(tmpPath); } catch (e3) {} throw e; }
   try { fs.unlinkSync(tmpPath); } catch (e) {}
+  // .ls 容器解出的逐字歌词 → 存到最终音频旁（同名 .lrc，点唱面板可显示）
+  if (lsLrc) {
+    try {
+      const lrcPath = finalPath.replace(/\.(mp3|mp4)$/i, '.lrc');
+      fs.copyFileSync(lsLrc, lrcPath);
+      try { fs.unlinkSync(lsLrc); } catch (e) {}
+    } catch (e) { log.warn('MD', '歌词保存失败: ' + e.message); }
+  }
 
   await scanLibrary();
   const row = db.prepare('SELECT * FROM songs WHERE filename=?').get(key);

@@ -303,27 +303,45 @@ async function getKtvApi() {
   return _ktvApi;
 }
 
-// 按歌曲编号实时换签名直链（返回 .ts）。cloud_url 会过期，禁止用库里的旧链接。
-// 注意：部分节点对没有真源的歌会返回广告视频（如 ad_files/my_ad_video.ts）占位，
+// 按歌曲编号实时换签名直链（返回 .ts 或 .ls）。cloud_url 会过期，禁止用库里的旧链接。
+// 注意：部分节点对某些歌会返回广告视频（如 ad_files/my_ad_video.ts）占位，
 // 这里过滤广告直链并用 regenerateDevice 换设备/节点重试（节点路由与设备相关）。
+// 部分歌曲（如音译版）只有 .ls 加密音乐容器没有 .ts：优先返回 .ts（含 MV 视频），
+// 重试用尽仍只有 .ls 时返回 .ls（调用方经 tsdecrypt.processDownload 解出 mp3+歌词）。
 async function resolveMuseUrl(no) {
   if (!no) throw new Error('缺少麦动歌曲编号');
   const api = await getKtvApi();
   const id = String(no);
   let last = '';
-  for (let i = 0; i < 3; i++) {
+  let lsUrl = '';
+  for (let i = 0; i < 4; i++) {
     if (i > 0 && api.regenerateDevice) api.regenerateDevice();
     const url = await api.getSongUrl(id, '720', false);
-    if (url && /^https?:\/\//i.test(url) && /\.ts(\?|$)/i.test(url) && !/ad[_-]?(files|video)|my_ad/i.test(url)) {
-      return url;
+    if (url && /^https?:\/\//i.test(url) && !/ad[_-]?(files|video)|my_ad/i.test(url)) {
+      if (/\.ts(\?|$)/i.test(url)) return url;
+      if (/\.ls(\?|$)/i.test(url) && !lsUrl) lsUrl = url;
     }
     last = url ? '接口返回了无效/广告直链' : '接口未返回直链';
   }
+  if (lsUrl) return lsUrl;
   throw new Error('换链失败（' + last + '，该歌曲可能暂无可用源）');
+}
+
+// 原伴唱声道约定（muse.db songs.accomp，与 app VocalSwitchHelper 同规则）：
+// 1 = 左伴右原（原唱在 R），2 = 右伴左原（原唱在 L）。缺省/异常按 1 处理。
+async function getAccomp(no) {
+  try {
+    const file = await ensureMuseDb(false);
+    const db = openDb(file);
+    const r = db.prepare(
+      'SELECT accomp FROM songs s WHERE s.deleted_at IS NULL AND s.filename IN (?, ?) LIMIT 1'
+    ).get(String(no) + '.ts', String(no) + '.ls');
+    return Number(r && r.accomp) === 2 ? 2 : 1;
+  } catch (e) { return 1; }
 }
 
 module.exports = {
   getMuseUrl, resolveSource, ensureMuseDb, available, songCount,
   allSongs, rankPlaylists, rankSongs, lookupByNo,
-  resolveMuseUrl, openDb,
+  resolveMuseUrl, getAccomp, openDb,
 };

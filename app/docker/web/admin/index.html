@@ -307,15 +307,24 @@ main{max-width:960px;margin:0 auto;padding:24px}
       <div style="flex:1"><label>起始序号</label><input id="bulk-from" type="number" min="1" value="1"></div>
       <div style="flex:1"><label>结束序号（留空=到末尾）</label><input id="bulk-to" type="number" min="1" placeholder="到末尾"></div>
     </div>
+    <div class="form-row" style="margin-top:8px">
+      <label>按清单下载（每行一个：编号或「歌手 - 歌名.ts」，可直接填入跳过清单内容）</label>
+      <textarea id="bulk-nos" rows="3" placeholder="7665908&#10;林子祥、胡夏 - 数字人生-我们的歌第三季.ts" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--fg);padding:8px;font-size:12px;font-family:monospace"></textarea>
+    </div>
     <div style="font-size:12px;color:var(--sub);line-height:1.7;margin-bottom:12px">
       曲库目录自动从内置 muse.db 解析（按「最常唱」排序），无需导入。已下载过的自动跳过，
       中断后重新启动同一区间即可续传；文件保存为 MV 目录 ts/ 子目录下「歌手 - 歌名.ts」，
       完成后自动扫描入库。「扫库补缺」会校验 ts/ 目录已下载文件的完整性并自动补下缺失/损坏的。
+      遇到反盗版加密文件（.ls 音乐容器，无 MV）会跳过并把「歌手 - 歌名.ts」记到
+      /data/bulk-skipped.txt；需要时把清单内容粘贴到上面重试。
     </div>
     <div id="bulk-err" style="color:var(--pink);font-size:12px;min-height:14px;margin-bottom:8px"></div>
     <div class="modal-btns" style="justify-content:flex-start;flex-wrap:wrap;gap:8px">
       <button class="hbtn primary" onclick="bulkStart()">⬇️ 开始下载</button>
+      <button class="hbtn" onclick="bulkLoadSkipped()">📋 填入跳过清单</button>
+      <button class="hbtn" onclick="bulkStartNos()">🔢 按清单下载</button>
       <button class="hbtn" onclick="bulkStartScan()">🩺 扫库补缺</button>
+      <button class="hbtn" id="bulk-retry-btn" style="display:none" onclick="bulkRetry()">🔁 重试失败</button>
       <button class="hbtn" onclick="bulkStop()">⏹ 停止</button>
       <button class="hbtn" onclick="closeBulkModal()">关闭</button>
     </div>
@@ -669,8 +678,9 @@ async function bulkRefresh(){
     if(d.running){
       const pct = d.total ? Math.round(d.done*100/d.total) : 0;
       const phase = d.mode === 'scan' && d.scanned < d.total && !d.done ? `扫描中 ${d.scanned}` : '';
-      runLine = `⏳ ${d.mode==='scan'?'扫库补缺':'区间下载'}进行中：<b style="color:var(--cyan)">${d.done}/${d.total}</b>（${pct}%）` +
-        (d.failed?`，失败 ${d.failed}`:'') + (phase?` · ${phase}`:'') +
+      const modeName = d.mode==='scan' ? '扫库补缺' : d.mode==='retry' ? '重试失败清单' : d.mode==='nos' ? '按编号下载' : '区间下载';
+      runLine = `⏳ ${modeName}进行中：<b style="color:var(--cyan)">${d.done}/${d.total}</b>（${pct}%）` +
+        (d.failed?`，失败 ${d.failed}`:'') + (d.skipped?`，跳过反盗版 ${d.skipped}`:'') + (phase?` · ${phase}`:'') +
         (d.current?`<br>当前：${esc(d.current)}`:'');
       const wrap = document.getElementById('bulk-bar-wrap');
       wrap.style.display = 'block';
@@ -679,7 +689,12 @@ async function bulkRefresh(){
       runLine = d.done ? `空闲 · 上次：完成 ${d.done}，失败 ${d.failed}` : '空闲';
       document.getElementById('bulk-bar-wrap').style.display = 'none';
     }
-    el.innerHTML = `麦动曲库：${museLine}<br>保存目录：MV/ts · ${catLine}` +
+    const failN = d.failedCount || 0;
+    document.getElementById('bulk-retry-btn').style.display = failN ? '' : 'none';
+    document.getElementById('bulk-retry-btn').textContent = `🔁 重试失败(${failN})`;
+    const skipN = d.skippedCount || 0;
+    const skipLine = skipN ? `跳过反盗版：${skipN} 首（编号在 /data/${esc(d.skippedFile||'bulk-skipped.txt')}，可粘贴到上面重试）` : '跳过反盗版：0';
+    el.innerHTML = `麦动曲库：${museLine}<br>保存目录：MV/ts · ${catLine}<br>${skipLine}<br>${runLine}` +
       (d.concurrency?` · 并发 ${d.concurrency}`:'') + `<br>${runLine}` +
       (d.lastError?`<br><span style="color:var(--pink)">最近错误：${esc(d.lastError)}</span>`:'');
   }catch(e){ el.textContent = '状态获取失败：' + e.message; }
@@ -706,6 +721,38 @@ async function bulkStartScan(){
     const r = await fetch('/api/bulk/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'scan'})}).then(r=>r.json());
     if(r.error){ err.textContent = r.error; return; }
     toast('扫库补缺已启动');
+    bulkRefresh();
+  }catch(e){ err.textContent = '启动失败：'+e.message; }
+}
+async function bulkLoadSkipped(){
+  const err = document.getElementById('bulk-err');
+  err.textContent = '';
+  try{
+    const r = await fetch('/api/bulk/skipped-text').then(r=>r.json());
+    const ta = document.getElementById('bulk-nos');
+    if(r.text && r.text.trim()){ ta.value = r.text.trim(); toast('已载入跳过清单'); }
+    else toast('跳过清单为空');
+  }catch(e){ err.textContent = '读取失败：'+e.message; }
+}
+async function bulkStartNos(){
+  const err = document.getElementById('bulk-err');
+  err.textContent = '';
+  const text = document.getElementById('bulk-nos').value.trim();
+  if(!text){ err.textContent = '请先粘贴清单（每行一个编号或「歌手 - 歌名.ts」）'; return; }
+  try{
+    const r = await fetch('/api/bulk/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})}).then(r=>r.json());
+    if(r.error){ err.textContent = r.error; return; }
+    toast('清单下载已启动');
+    bulkRefresh();
+  }catch(e){ err.textContent = '启动失败：'+e.message; }
+}
+async function bulkRetry(){
+  const err = document.getElementById('bulk-err');
+  err.textContent = '';
+  try{
+    const r = await fetch('/api/bulk/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'retry'})}).then(r=>r.json());
+    if(r.error){ err.textContent = r.error; return; }
+    toast('失败清单重试已启动');
     bulkRefresh();
   }catch(e){ err.textContent = '启动失败：'+e.message; }
 }

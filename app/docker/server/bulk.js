@@ -11,6 +11,8 @@
 //    天然支持断点续传，服务重启后重新启动同一区间即可继续
 //  - /mv/ts 与普通下载的 MV 不同目录，扫库补缺模式只补缺失与损坏的文件，
 //    绝不清理目录里的其它文件
+//  - 部分歌曲服务端只有广告占位视频没有真源（如音译版），换链必然失败：
+//    失败清单记入 state.failedList（跨重启持久），可用 retry 模式一键重试
 // 管理接口（/api/bulk/*，挂载在 index.js，导入/启动/停止需管理员登录）。
 'use strict';
 
@@ -21,10 +23,12 @@ const https = require('https');
 const muse = require('./muse');
 const dlcfg = require('./dlconfig');
 const log = require('./logger');
+const tsdec = require('./tsdecrypt');
 const { sanitize } = require('./lxmusic').internals;
 
 const DL_CONCURRENCY = Math.max(1, Math.min(6, Number(process.env.BULK_CONCURRENCY) || 2)); // 并发下载（每首要先换链，CDN 压力友好）
 const STATE_SAVE_EVERY = 5;      // 每完成 n 首落盘一次进度
+const FAILED_LIST_CAP = 2000;    // 失败清单上限（防 state 无限膨胀）
 
 class BulkDownloader {
   constructor() {
@@ -33,6 +37,8 @@ class BulkDownloader {
     this.statePath = path.join(this.dataDir, 'bulk-state.json');
     // 批量下载专用目录：MV_DIR/ts/（服务器上的 /mv/ts），与普通 MV 分开
     this.tsDir = path.join(path.resolve(dlcfg.MV_DIR), 'ts');
+    // 反盗版（.ls 加密容器）跳过清单：编号记录文件，放 DATA_DIR 便于用户取用
+    this.skippedPath = path.join(this.dataDir, 'bulk-skipped.txt');
     this.state = {
       running: false,
       total: 0, done: 0, failed: 0,
@@ -41,9 +47,13 @@ class BulkDownloader {
       startedAt: null,
       catalog: 0,           // 已导入目录的曲目数
       stopRequested: false,
-      mode: 'range',        // range=按区间下载 | scan=扫库补缺
+      mode: 'range',        // range=按区间下载 | scan=扫库补缺 | retry=重试失败清单 | nos=按编号下载
       from: 1, to: 0,
       scanned: 0, have: 0, invalid: 0,   // 扫库补缺进度
+      failedList: [],       // [{no,title,singer,reason}] 换链/下载失败清单（持久化，可重试）
+      skipped: 0,           // 本次运行跳过的反盗版歌数
+      skippedList: [],      // [{no,title,singer}] 历史跳过清单（持久化 + 落 txt 文件）
+      nos: [],              // nos 模式的编号队列
     };
     this._loadState();
   }
@@ -57,6 +67,35 @@ class BulkDownloader {
 
   _saveState() {
     try { fs.writeFileSync(this.statePath, JSON.stringify(this.state)); } catch (e) {}
+  }
+
+  /** 记入反盗版跳过清单（按编号去重，上限同失败清单），并重写 txt 文件。
+   *  文件内容一行一个「歌手 - 歌名.ts」，可直接作为「按清单下载」的输入。 */
+  _recordSkipped(item) {
+    const list = this.state.skippedList || (this.state.skippedList = []);
+    const fi = list.findIndex((f) => f.no === item.no);
+    const rec = { no: item.no, title: item.title, singer: item.singer || '' };
+    if (fi >= 0) list[fi] = rec;
+    else { list.push(rec); if (list.length > FAILED_LIST_CAP) list.shift(); }
+    try {
+      const lines = list.map((f) => `${sanitize(f.singer) || '未知歌手'} - ${sanitize(f.title) || '未知歌名'}.ts`);
+      fs.writeFileSync(this.skippedPath, lines.join('\n') + '\n', 'utf8');
+    } catch (e) { log.error('BULK', '跳过清单写入失败: ' + e.message); }
+  }
+
+  /** 读取跳过清单文件内容（管理页「填入清单」用）。 */
+  skippedText() {
+    try { return { ok: true, text: fs.readFileSync(this.skippedPath, 'utf8') }; }
+    catch (e) { return { ok: true, text: '' }; }
+  }
+
+  /** 清空反盗版跳过清单（txt 文件一并删除）。 */
+  clearSkipped() {
+    this.state.skippedList = [];
+    this.state.skipped = 0;
+    try { fs.unlinkSync(this.skippedPath); } catch (e) {}
+    this._saveState();
+    return { ok: true };
   }
 
   /** 解析 muse.db → 按最常唱排序的目录（NDJSON，一行一首）。 */
@@ -115,25 +154,45 @@ class BulkDownloader {
    * @param {object} opts 普通模式 {from, to} 1-based 序号区间（含两端，按最常唱
    *   排序），兼容 {limit}（等价 from=1, to=limit），to 省略=全库；
    *   扫库补缺 {mode:'scan'}：全库比对 MV_DIR/ts 已下载文件，缺失与损坏
-   *   （TS 完整性校验不过）的自动进入下载队列补齐，不清理任何其它文件。
+   *   （TS 完整性校验不过）的自动进入下载队列补齐，不清理任何其它文件；
+   *   重试失败 {mode:'retry'}：只下载 state.failedList 里的歌（成功即出清单）。
    */
   start(opts = {}) {
     if (this.state.running) return { ok: false, error: '批量下载已在进行中' };
     const scan = opts.mode === 'scan';
+    const retry = opts.mode === 'retry';
+    // 清单文本：每行一个编号（纯数字）或「歌手 - 歌名.ts」；纯数字行允许逗号分隔多个
+    let tokens = null;
+    if (typeof opts.text === 'string' && opts.text.trim()) {
+      tokens = [];
+      for (const line of opts.text.split(/\r?\n/)) {
+        const t = line.trim();
+        if (!t) continue;
+        if (/^[\d,，;；\s]+$/.test(t)) {
+          for (const n of t.split(/[,，;；\s]+/)) if (/^\d+$/.test(n)) tokens.push(n);
+        } else tokens.push(t);
+      }
+    } else if (Array.isArray(opts.nos)) {
+      tokens = opts.nos.map((n) => String(n).trim()).filter((n) => /^\d+$/.test(n));
+    }
+    if (retry && !(this.state.failedList || []).length) return { ok: false, error: '没有待重试的失败记录' };
+    if (tokens && !tokens.length) return { ok: false, error: '清单为空（每行一个编号或「歌手 - 歌名.ts」）' };
     const limit = Number(opts.limit) || 0;
     const from = Math.max(1, Math.floor(Number(opts.from) || 1));
     let to = Math.floor(Number(opts.to) || (limit || 0));   // 0 = 全库（_run 里按实际目录长度取）
     if (!Number.isFinite(to) || to < from) to = 0;
     this.state.running = true;
     this.state.stopRequested = false;
-    this.state.mode = scan ? 'scan' : 'range';
+    this.state.mode = scan ? 'scan' : (retry ? 'retry' : (tokens ? 'nos' : 'range'));
     this.state.total = 0;
     this.state.done = 0;
     this.state.failed = 0;
+    this.state.skipped = 0;
     this.state.lastError = '';
     this.state.startedAt = new Date().toISOString();
     this.state.from = from;
     this.state.to = to;
+    if (tokens) this.state.nos = [...new Set(tokens)];
     if (scan) { this.state.scanned = 0; this.state.have = 0; this.state.invalid = 0; }
     this._saveState();
     // 后台跑，不阻塞请求
@@ -169,6 +228,10 @@ class BulkDownloader {
       scanned: this.state.scanned || 0,
       have: this.state.have || 0,
       invalid: this.state.invalid || 0,
+      failedCount: (this.state.failedList || []).length,
+      skipped: this.state.skipped || 0,
+      skippedCount: (this.state.skippedList || []).length,
+      skippedFile: 'bulk-skipped.txt',
       concurrency: DL_CONCURRENCY,
     };
   }
@@ -183,10 +246,15 @@ class BulkDownloader {
     return out.map((n) => `${n}.ts`);
   }
 
-  /** 该条目已下载？返回 tsDir 中已存在的绝对路径，否则 null。 */
+  /** 该条目已下载？返回已存在的绝对路径（.ts 或 .ls 歌的 .mp3），否则 null。 */
   existingPath(item) {
-    for (const name of this._nameCandidates(item)) {
+    const names = this._nameCandidates(item);
+    for (const name of names) {
       const p = path.join(this.tsDir, name);
+      if (fs.existsSync(p)) return p;
+    }
+    for (const name of names) {
+      const p = path.join(this.tsDir, name.replace(/\.ts$/i, '.mp3'));
       if (fs.existsSync(p)) return p;
     }
     return null;
@@ -229,7 +297,7 @@ class BulkDownloader {
     } catch (e) { return false; }
   }
 
-  /** 递归收集 MV_DIR/ts 下所有 .ts 的相对路径（正斜杠），每 200 个让出事件循环。 */
+  /** 递归收集 MV_DIR/ts 下所有 .ts/.mp3 的相对路径，每 200 个让出事件循环。 */
   async _scanDirRels() {
     const out = new Set();
     const walk = async (dir, prefix) => {
@@ -240,7 +308,7 @@ class BulkDownloader {
         const rel = prefix ? `${prefix}/${ent.name}` : ent.name;
         const p = path.join(dir, rel);
         if (ent.isDirectory()) await walk(p, rel);
-        else if (ent.isFile() && /\.ts$/i.test(ent.name)) out.add(rel.replace(/\\/g, '/'));
+        else if (ent.isFile() && /\.(ts|mp3)$/i.test(ent.name)) out.add(rel.replace(/\\/g, '/'));
         if ((out.size % 200) === 0) await new Promise((r) => setImmediate(r));
       }
     };
@@ -299,16 +367,17 @@ class BulkDownloader {
   }
 
   async _run() {
-    // 曲库目录就绪（无缓存则现场解析 muse.db，镜像已内置，无需手动导入）
+    // 曲库目录就绪（无缓存则现场解析 muse.db，镜像已内置，无需手动导入）；
+    // 仅重试失败清单模式不依赖目录
     let entries = this._catalogEntries();
-    if (!entries.length) {
+    if (!entries.length && this.state.mode !== 'retry') {
       this.state.current = '正在解析曲库目录…';
       this._saveState();
       await this.importCatalog();
       entries = this._catalogEntries();
     }
     const n = entries.length;
-    if (!n) throw new Error('muse.db 曲库目录为空（检查 muse.db 是否可用）');
+    if (!n && this.state.mode !== 'retry') throw new Error('muse.db 曲库目录为空（检查 muse.db 是否可用）');
     const from = Math.max(1, Number(this.state.from) || 1);
     let to = Number(this.state.to) || n;
     if (this.state.mode === 'scan') to = n;   // 扫库补缺永远覆盖全库
@@ -316,7 +385,7 @@ class BulkDownloader {
     this.state.from = from;
     this.state.to = to;
 
-    // 构建下载队列：扫库补缺模式全库扫描，普通模式按 [from, to] 区间
+    // 构建下载队列：扫库补缺模式全库扫描，重试模式只下失败清单，普通模式按 [from, to] 区间
     let queue;
     if (this.state.mode === 'scan') {
       const q = await this._buildScanQueue();
@@ -333,12 +402,56 @@ class BulkDownloader {
       this.state.current = '';
       this._saveState();
       log.info('BULK', `扫库补缺：已存在 ${this.state.have}，待补 ${queue.length}`);
+    } else if (this.state.mode === 'retry') {
+      queue = (this.state.failedList || []).slice();
+      this.state.total = queue.length;
+      this.state.done = 0;
+      this.state.failed = 0;
+      this._saveState();
+      log.info('BULK', `重试失败清单：${queue.length} 首`);
+    } else if (this.state.mode === 'nos') {
+      // 按清单下载：编号（纯数字）或「歌手 - 歌名.ts」文件名（如 bulk-skipped.txt）
+      const numIndex = new Map(entries.map((e) => [String(e.no), e]));
+      const baseIndex = new Map();
+      for (const e of entries) baseIndex.set(this._nameCandidates(e)[0].replace(/\.(ts|mp3)$/i, ''), e);
+      let notFound = 0;
+      queue = [];
+      for (const token of (this.state.nos || [])) {
+        let item = null;
+        if (/^\d+$/.test(token)) {
+          item = numIndex.get(token) || null;
+          if (!item) {
+            const meta = muse.lookupByNo(token);   // 不在目录里则反查歌名/歌手
+            if (meta) item = { no: token, title: meta.title, singer: meta.artist };
+          }
+          if (!item) item = { no: token, title: token, singer: '' };
+        } else {
+          const base = token.replace(/\.(ts|mp3)$/i, '').trim();
+          item = baseIndex.get(base) || null;
+          if (!item) {
+            const m = base.split(' - ');
+            const t = (m[1] || '').trim();
+            const a = (m[0] || '').trim();
+            if (t) item = entries.find((e) => e.title === t && (!a || e.singer === a)) || null;
+          }
+          if (!item) { notFound++; continue; }
+        }
+        queue.push(item);
+      }
+      if (notFound) this.state.lastError = `清单中 ${notFound} 个文件名未在曲库目录找到`;
+      this.state.total = queue.length;
+      this.state.done = 0;
+      this.state.failed = 0;
+      this._saveState();
+      log.info('BULK', `按清单下载：${queue.length} 首${notFound ? `，${notFound} 个未匹配` : ''}`);
     } else {
       queue = entries.slice(from - 1, to);
       this.state.total = queue.length;
+      this.state.skipped = 0;
       this._saveState();
     }
     let sinceSave = 0;
+    const failedList = this.state.failedList || (this.state.failedList = []);
 
     const worker = async () => {
       while (queue.length > 0) {
@@ -348,18 +461,47 @@ class BulkDownloader {
         // 已存在直接跳过；扫库模式下完整性通过也跳过（目录里有重复曲目项，
         // 同一首歌可能被排两次，不能重复下载占成 [编号] 副本）
         const existing = this.existingPath(item);
-        if (existing && (this.state.mode !== 'scan' || this.checkTsIntegrity(existing))) { this.state.done++; continue; }
+        const existingOk = existing && (this.state.mode !== 'scan' || /\.mp3$/i.test(existing) || this.checkTsIntegrity(existing));
+        if (existingOk) {
+          this.state.done++;
+          // 已下载成功的历史失败项从清单移除
+          const fi = failedList.findIndex((f) => f.no === item.no);
+          if (fi >= 0) failedList.splice(fi, 1);
+          continue;
+        }
         this.state.current = `${item.title}（${item.singer || '未知歌手'}）`;
         let target = null;
         try {
           const url = await muse.resolveMuseUrl(item.no);
+          if (/\.ls(\?|$)/i.test(url)) {
+            // .ls = 麦动加密防盗版音乐容器（纯音频、无 MV 视频），跳过并把编号
+            // 记入 DATA_DIR/bulk-skipped.txt，之后可用「按编号下载」再试
+            this.state.skipped++;
+            this._recordSkipped(item);
+            if (++sinceSave >= STATE_SAVE_EVERY) { sinceSave = 0; this._saveState(); }
+            continue;
+          }
           target = this._pickTarget(item);
           if (!target) { this.state.done++; continue; }
           await this._download(url, target);
+          // 部分节点返回 Thunder 加密 TS（.ls 同款加密壳包着明文 TS）→ 解密回写
+          if (tsdec.isEncryptedPath(target)) {
+            const r = await tsdec.processDownload(target, { outTs: target });
+            if (r.type !== 'ts' && r.type !== 'plain') throw new Error('加密内容处理结果异常');
+          }
+          if (!this.checkTsIntegrity(target)) throw new Error('下载内容不是有效 TS（完整性校验失败）');
           this.state.done++;
+          const fi = failedList.findIndex((f) => f.no === item.no);
+          if (fi >= 0) failedList.splice(fi, 1);   // 重试成功，出清单
         } catch (e) {
           this.state.failed++;
-          this.state.lastError = `${item.title}: ${(e && e.message) || e}`;
+          const reason = String((e && e.message) || e);
+          this.state.lastError = `${item.title}: ${reason}`;
+          // 记入失败清单（按编号去重，超上限丢弃最旧的）
+          const fi = failedList.findIndex((f) => f.no === item.no);
+          const rec = { no: item.no, title: item.title, singer: item.singer || '', reason };
+          if (fi >= 0) failedList[fi] = rec;
+          else { failedList.push(rec); if (failedList.length > FAILED_LIST_CAP) failedList.shift(); }
           if (target) { try { fs.unlinkSync(target + '.part'); } catch (e2) {} }
         }
         if (++sinceSave >= STATE_SAVE_EVERY) { sinceSave = 0; this._saveState(); }
