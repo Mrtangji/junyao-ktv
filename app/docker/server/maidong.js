@@ -19,19 +19,28 @@ const { spawn } = require('child_process');
 const db = require('./db');
 const { scanLibrary } = require('./scanner');
 const dlcfg = require('./dlconfig');
+const muse = require('./muse');
+const log = require('./logger');
 const lx = require('./lxmusic');
 const { httpReq, sniffAudio, moveFile, ffmpegToMp3, ffmpegMp3ToMv, downloadCover, sanitize, TMP_DIR } = lx.internals;
 
 // ---------- 配置（存 settings 表，TV 页/下载共用） ----------
 function getConfig() {
   const g = (k) => (db.prepare("SELECT value FROM settings WHERE key=?").get(k) || {}).value || '';
-  return { catalogUrl: g('md_catalog_url'), apiBase: g('md_api_base') };
+  return { catalogUrl: g('md_catalog_url'), apiBase: g('md_api_base'), museUrl: g('md_muse_url') };
 }
-function setConfig({ catalogUrl, apiBase }) {
+function setConfig({ catalogUrl, apiBase, museUrl }) {
   const up = (k, v) => db.prepare("INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
     .run(k, String(v || '').trim());
   if (catalogUrl !== undefined) up('md_catalog_url', catalogUrl);
   if (apiBase !== undefined) up('md_api_base', apiBase);
+  if (museUrl !== undefined) {
+    up('md_muse_url', museUrl);
+    // muse.db 地址变更：后台强制拉取/校验一次，失败不影响保存（可用旧缓存）
+    if (String(museUrl || '').trim()) {
+      muse.ensureMuseDb(true).then(() => log.info('MUSE', 'muse.db 就绪')).catch((e) => log.error('MUSE', 'muse.db 获取失败: ' + e.message));
+    }
+  }
   catalogCache = null; // 地址变了清缓存
   return getConfig();
 }
@@ -59,17 +68,37 @@ async function loadCatalog() {
   return list;
 }
 
-// 点歌榜分类（全部 + 各分类，按歌曲数降序）
+// 点歌榜分类（双源：muse.db 曲库+排行榜 与 catalog.json 分类可同时启用）
+// bangid 命名空间：muse_all / muse_rank_<歌单id>（muse.db 源）；cat_<分类>/__all__（catalog 源）
 async function boards() {
-  const list = await loadCatalog();
-  const cnt = {};
-  list.forEach(s => { cnt[s.category] = (cnt[s.category] || 0) + 1; });
-  const cats = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]);
-  return [{ bangid: '__all__', name: '全部歌曲' }, ...cats.map(c => ({ bangid: 'cat_' + c, name: `${c}(${cnt[c]})` }))];
+  const out = [];
+  const errors = [];
+  if (muse.getMuseUrl()) {
+    try {
+      out.push({ bangid: 'muse_all', name: '全部歌曲' });
+      out.push(...await muse.rankPlaylists());
+    } catch (e) { errors.push('muse: ' + e.message); }
+  }
+  if (getConfig().catalogUrl) {
+    try {
+      const list = await loadCatalog();
+      const cnt = {};
+      list.forEach(s => { cnt[s.category] = (cnt[s.category] || 0) + 1; });
+      const cats = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]);
+      out.push({ bangid: '__all__', name: '全部歌曲' });
+      cats.forEach(c => out.push({ bangid: 'cat_' + c, name: `${c}(${cnt[c]})` }));
+    } catch (e) { errors.push('catalog: ' + e.message); }
+  }
+  if (!out.length) {
+    throw new Error(errors.length ? errors.join('；') : '未配置麦动曲库地址（设置 → 麦动点歌）');
+  }
+  return out;
 }
 
-// 榜单列表：cat_前缀按分类过滤，__all__ 全部；q 模糊搜歌名/歌手
+// 榜单列表：按 bangid 前缀分流到对应源；q 模糊搜歌名/歌手
 async function boardSongs(bangid, page = 1, limit = 100, q = '') {
+  if (bangid === 'muse_all') return muse.allSongs({ q, page, limit });
+  if (/^muse_rank_/.test(bangid)) return muse.rankSongs(bangid.replace(/^muse_rank_/, ''), page, limit);
   let list = await loadCatalog();
   if (bangid && bangid !== '__all__') {
     const cat = String(bangid).replace(/^cat_/, '');
@@ -131,9 +160,10 @@ function ffmpegRemuxToMp4(src, dst) {
   });
 }
 
-// entry: {songmid,name,singer,url?,pic?,format:'mp3'|'mv'}
-// url 为空时走 API 音源 resolve（quality: mv→mv，否则 320k）
-async function downloadMd({ songmid, name, singer, url = null, pic = null, format = 'mp3' }) {
+// entry: {songmid,name,singer,url?,pic?,format:'mp3'|'mv',src?:'muse'}
+// src='muse'：url 为空时按歌曲编号走 ktv_api.js 实时换链（ts 签名直链会过期，
+// 不能复用旧链接）；其余来源 url 为空时走 API 音源 resolve（quality: mv→mv，否则 320k）
+async function downloadMd({ songmid, name, singer, url = null, pic = null, format = 'mp3', src = '' }) {
   // 下载目录分流（见 dlconfig.js）：MP3 → MP3_DIR（env，如 /mp3），MV(.mp4) → MV_DIR
   const mp3Root = dlcfg.getMp3Dir();
   const mvRoot = path.resolve(dlcfg.MV_DIR);
@@ -150,11 +180,13 @@ async function downloadMd({ songmid, name, singer, url = null, pic = null, forma
   }
 
   let srcUrl = url;
+  if (!srcUrl && src === 'muse') srcUrl = await muse.resolveMuseUrl(String(songmid));
   if (!srcUrl) srcUrl = await apiResolve(songmid, isVideoTarget ? 'mv' : '320k');
   const looksVideo = VIDEO_EXT.test(srcUrl);
 
-  // 目标文件：视频 → .mp4（MV_DIR）；音频 → .mp3（MP3_DIR）
-  const isVideo = looksVideo || isVideoTarget && !/\.(mp3|flac|ogg|m4a|wav|aac)(\?|$)/i.test(srcUrl);
+  // 目标文件：MV 模式且不是纯音频直链 → .mp4（MV_DIR）；其余（含"下载格式=MP3
+  // 但拿到 ts/mp4 视频"的情况，如麦动源只有 ts）→ 抽音频转 .mp3（MP3_DIR）
+  const isVideo = isVideoTarget && !/\.(mp3|flac|ogg|m4a|wav|aac)(\?|$)/i.test(srcUrl);
   const ext = isVideo ? 'mp4' : 'mp3';
   const targetRoot = isVideo ? mvRoot : mp3Root;
   const rel = path.join(artist, `${artist} - ${title}.${ext}`);
@@ -170,7 +202,9 @@ async function downloadMd({ songmid, name, singer, url = null, pic = null, forma
   const sniff = sniffAudio(resp.body);
   if (sniff.kind === 'text') throw new Error(`麦动源返回的不是音频/视频（接口可能失效）：${sniff.detail}`);
   if (sniff.kind === 'm3u8') throw new Error('麦动源返回 HLS(m3u8) 播放列表，暂不支持直接下载');
-  const bodyIsVideo = isVideo || sniff.kind === 'unknown' && looksVideo; // 视频魔数 sniff 不识别，按扩展名
+  // 内容分流按"目标格式"为准：MV 模式下 ts/mp4 等视频容器走视频分支（sniff 不
+  // 识别 ts 魔数，按扩展名判）；MP3 模式即使拿到 ts/mp4 也抽音频转 mp3
+  const bodyIsVideo = isVideoTarget && (isVideo || sniff.kind === 'unknown' && looksVideo);
   fs.writeFileSync(tmpPath, resp.body);
   try {
     if (!bodyIsVideo) {

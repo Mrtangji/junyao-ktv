@@ -12,6 +12,7 @@ const { toPinyin, toPinyinInitial } = require('./pinyin');
 const { detectLang } = require('./lang');
 const { ensureHLS, removeHLS, outDir, waitForFile, scheduleHLSCleanup } = require('./hlsgen');
 const maidong = require('./maidong');
+const muse = require('./muse');
 const { getPitchCurve } = require('./pitch');
 const log = require('./logger');
 
@@ -562,7 +563,14 @@ app.post('/api/lx/queue', async (req, res) => {
 });
 
 // ---------- 麦动 KTV 点歌系统（点歌榜来源之二，见 server/maidong.js） ----------
-app.get('/api/md/config', (req, res) => res.json(maidong.getConfig()));
+// 双源：catalog.json/API 音源（原有两项）+ muse.db 曲库/排行榜（museUrl 配置后启用），
+// 点歌榜分类按 bangid 前缀（muse_all / muse_rank_* / cat_* / __all__）分流到对应源。
+app.get('/api/md/config', async (req, res) => {
+  const cfg = maidong.getConfig();
+  let museOk = false, museSongs = 0;
+  try { museOk = muse.available(); if (museOk) museSongs = muse.songCount(); } catch (e) {}
+  res.json({ ...cfg, museOk, museSongs });
+});
 app.post('/api/md/config', (req, res) => {
   try { res.json(maidong.setConfig(req.body || {})); }
   catch (e) { res.status(400).json({ error: '麦动配置保存失败: ' + e.message }); }
@@ -580,22 +588,29 @@ app.get('/api/md/board', async (req, res) => {
 app.get('/api/md/search', async (req, res) => {
   const q = (req.query.q || '').trim();
   if (!q) return res.json({ list: [], total: 0, page: 1, limit: 0 });
+  const page = parseInt(req.query.page) || 1;
   try {
+    // 麦动 muse.db 曲库优先（本地库、最常唱排序）；未启用/无结果再退其它源
+    if (muse.getMuseUrl()) {
+      const r = await muse.allSongs({ q, page, limit: 100 });
+      if (r.total > 0) return res.json(r);
+    }
     const { apiBase } = maidong.getConfig();
-    if (apiBase) return res.json(await maidong.apiSearch(q, parseInt(req.query.page) || 1));
+    if (apiBase) return res.json(await maidong.apiSearch(q, page));
     // 未配 API 音源时退化为曲库内搜索
     res.json(await maidong.boardSongs('__all__', 1, 100, q));
   } catch (e) { res.status(502).json({ error: '麦动搜索失败: ' + e.message }); }
 });
-// 点唱：本地有直接入队；没有则下载入库再入队。body: {songmid,name,singer,url,pic,format}
+// 点唱：本地有直接入队；没有则下载入库再入队。body: {songmid,name,singer,url,pic,format,src}
+// src='muse'：songmid 是麦动歌曲编号，服务端点歌时经 ktv_api.js 实时换签名直链下载
 app.post('/api/md/queue', async (req, res) => {
-  const { songmid, name, singer, url, pic, format } = req.body || {};
+  const { songmid, name, singer, url, pic, format, src } = req.body || {};
   if (!songmid || !name) return res.status(400).json({ error: '缺少 songmid/name' });
   let song = lxmusic.findLocalSong(name, singer);
   let downloaded = false;
   if (!song) {
     try {
-      song = await maidong.downloadMd({ songmid, name, singer, url, pic: pic || null, format: format === 'mv' ? 'mv' : 'mp3' });
+      song = await maidong.downloadMd({ songmid, name, singer, url, pic: pic || null, format: format === 'mv' ? 'mv' : 'mp3', src: src === 'muse' ? 'muse' : '' });
       downloaded = true;
     } catch (e) {
       if (e.message === 'MV_DIR_UNAVAILABLE') return res.status(503).json({ error: '曲库目录不可访问' });
