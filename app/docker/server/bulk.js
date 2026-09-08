@@ -3,13 +3,14 @@
 // 移植自 maidong-server/src/bulk.js，适配 junyao 环境：
 //  - 目录解析与实时换链复用 muse.js（ensureMuseDb/openDb + resolveMuseUrl，
 //    自带广告直链过滤与换设备重试，cloud_url 旧签名不复用）
-//  - 落盘到 MV_DIR，按歌手分目录：MV_DIR/歌手/歌手 - 歌名.ts（冲突时带
-//    [编号] 系列后缀），与网络下载的 MV 布局一致，扫描曲库后自动入库
-//    （scanner 已识别 .ts，文件名可解析出歌名/歌手）
+//  - 落盘到 MV_DIR/ts/（即服务器的 /mv/ts，与 maidong-server 布局一致）：
+//    平铺「歌手 - 歌名.ts」（冲突时带 [编号] 系列后缀）；该目录在 MV_DIR 内，
+//    扫描曲库后自动入库（scanner 已识别 .ts，文件名可解析出歌名/歌手）
+//  - 无需手动导入曲库目录：muse.db 已内置镜像，启动下载时自动解析
 //  - 进度持久化在 DATA_DIR/bulk-state.json；区间下载按「已存在文件跳过」
 //    天然支持断点续传，服务重启后重新启动同一区间即可继续
-//  - MV_DIR 与普通下载/已有 MV 共用目录，扫库补缺模式只补缺失与损坏的
-//    文件，绝不清理目录里的其它文件（区别于 maidong-server 的独立目录）
+//  - /mv/ts 与普通下载的 MV 不同目录，扫库补缺模式只补缺失与损坏的文件，
+//    绝不清理目录里的其它文件
 // 管理接口（/api/bulk/*，挂载在 index.js，导入/启动/停止需管理员登录）。
 'use strict';
 
@@ -30,6 +31,8 @@ class BulkDownloader {
     this.dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
     this.catalogPath = path.join(this.dataDir, 'bulk-catalog.json');
     this.statePath = path.join(this.dataDir, 'bulk-state.json');
+    // 批量下载专用目录：MV_DIR/ts/（服务器上的 /mv/ts），与普通 MV 分开
+    this.tsDir = path.join(path.resolve(dlcfg.MV_DIR), 'ts');
     this.state = {
       running: false,
       total: 0, done: 0, failed: 0,
@@ -107,27 +110,24 @@ class BulkDownloader {
   }
 
   /**
-   * 启动批量下载（已在跑则拒绝）。
+   * 启动批量下载（已在跑则拒绝）。曲库目录无需手动导入——muse.db 已内置
+   * 镜像，启动时自动解析（目录缓存已存在则直接复用）。
    * @param {object} opts 普通模式 {from, to} 1-based 序号区间（含两端，按最常唱
-   *   排序），兼容 {limit}（等价 from=1, to=limit）；
-   *   扫库补缺 {mode:'scan'}：全库比对 MV_DIR 已下载文件，缺失与损坏（TS 完整性
-   *   校验不过）的自动进入下载队列补齐，不清理任何其它文件。
+   *   排序），兼容 {limit}（等价 from=1, to=limit），to 省略=全库；
+   *   扫库补缺 {mode:'scan'}：全库比对 MV_DIR/ts 已下载文件，缺失与损坏
+   *   （TS 完整性校验不过）的自动进入下载队列补齐，不清理任何其它文件。
    */
   start(opts = {}) {
-    const n = this.state.catalog || this._catalogEntries().length;
     if (this.state.running) return { ok: false, error: '批量下载已在进行中' };
-    if (!n) return { ok: false, error: '尚未导入曲库目录（先点「导入曲库目录」）' };
     const scan = opts.mode === 'scan';
     const limit = Number(opts.limit) || 0;
-    let from = Math.max(1, Math.floor(Number(opts.from) || 1));
-    let to = Math.floor(Number(opts.to) || (limit || n));
-    if (!Number.isFinite(to) || to < from) to = n;
-    to = Math.min(to, n);
-    if (scan) { from = 1; to = n; }   // 扫库补缺永远覆盖全库
+    const from = Math.max(1, Math.floor(Number(opts.from) || 1));
+    let to = Math.floor(Number(opts.to) || (limit || 0));   // 0 = 全库（_run 里按实际目录长度取）
+    if (!Number.isFinite(to) || to < from) to = 0;
     this.state.running = true;
     this.state.stopRequested = false;
     this.state.mode = scan ? 'scan' : 'range';
-    this.state.total = to - from + 1;
+    this.state.total = 0;
     this.state.done = 0;
     this.state.failed = 0;
     this.state.lastError = '';
@@ -143,7 +143,7 @@ class BulkDownloader {
       this._saveState();
       log.error('BULK', '批量下载异常终止: ' + this.state.lastError);
     });
-    return { ok: true, total: this.state.total, from, to, mode: this.state.mode };
+    return { ok: true, from, to: to || null, mode: this.state.mode };
   }
 
   stop() {
@@ -173,33 +173,31 @@ class BulkDownloader {
     };
   }
 
-  /** 落盘相对路径候选（确定性，可复现查找）：歌手/歌手 - 歌名.ts → [编号] → [编号]b2… */
+  /** 落盘文件名候选（确定性，可复现查找）：歌手 - 歌名.ts → [编号] → [编号]b2… */
   _nameCandidates(item) {
     const artist = sanitize(item.singer) || '未知歌手';
     const title = sanitize(item.title) || '未知歌名';
     const base = `${artist} - ${title}`;
     const out = [base, `${base} [${item.no}]`];
     for (let i = 2; i <= 5; i++) out.push(`${base} [${item.no}]b${i}`);
-    return out.map((n) => `${artist}/${n}.ts`);
+    return out.map((n) => `${n}.ts`);
   }
 
-  /** 该条目已下载？返回已存在的绝对路径，否则 null。 */
+  /** 该条目已下载？返回 tsDir 中已存在的绝对路径，否则 null。 */
   existingPath(item) {
-    const mvRoot = path.resolve(dlcfg.MV_DIR);
-    for (const rel of this._nameCandidates(item)) {
-      const p = path.join(mvRoot, rel);
+    for (const name of this._nameCandidates(item)) {
+      const p = path.join(this.tsDir, name);
       if (fs.existsSync(p)) return p;
     }
     return null;
   }
 
-  /** 挑选落盘目标（第一个不存在的候选名），必要时建歌手子目录。 */
+  /** 挑选落盘目标（第一个不存在的候选名），必要时建目录。 */
   _pickTarget(item) {
-    const mvRoot = path.resolve(dlcfg.MV_DIR);
-    for (const rel of this._nameCandidates(item)) {
-      const p = path.join(mvRoot, rel);
+    for (const name of this._nameCandidates(item)) {
+      const p = path.join(this.tsDir, name);
       if (!fs.existsSync(p)) {
-        fs.mkdirSync(path.dirname(p), { recursive: true });
+        fs.mkdirSync(this.tsDir, { recursive: true });
         return p;
       }
     }
@@ -231,9 +229,8 @@ class BulkDownloader {
     } catch (e) { return false; }
   }
 
-  /** 递归收集 MV_DIR 下所有 .ts 的相对路径（正斜杠），每 200 个让出事件循环。 */
+  /** 递归收集 MV_DIR/ts 下所有 .ts 的相对路径（正斜杠），每 200 个让出事件循环。 */
   async _scanDirRels() {
-    const mvRoot = path.resolve(dlcfg.MV_DIR);
     const out = new Set();
     const walk = async (dir, prefix) => {
       let list;
@@ -241,13 +238,13 @@ class BulkDownloader {
       for (const ent of list) {
         if (this.state.stopRequested) return;
         const rel = prefix ? `${prefix}/${ent.name}` : ent.name;
-        const p = path.join(mvRoot, rel);
+        const p = path.join(dir, rel);
         if (ent.isDirectory()) await walk(p, rel);
         else if (ent.isFile() && /\.ts$/i.test(ent.name)) out.add(rel.replace(/\\/g, '/'));
         if ((out.size % 200) === 0) await new Promise((r) => setImmediate(r));
       }
     };
-    await walk(mvRoot, '');
+    await walk(this.tsDir, '');
     return out;
   }
 
@@ -258,11 +255,11 @@ class BulkDownloader {
    */
   async _buildScanQueue() {
     const entries = this._catalogEntries();
+    if (!entries.length) return [];
     const from = Math.max(1, Number(this.state.from) || 1);
     const to = Math.min(entries.length, Number(this.state.to) || from);
     const names = await this._scanDirRels();
     if (this.state.stopRequested) return null;
-    const mvRoot = path.resolve(dlcfg.MV_DIR);
     const queue = [];
     let scanned = 0, have = 0, invalid = 0;
     for (let i = from - 1; i < to; i++) {
@@ -271,12 +268,12 @@ class BulkDownloader {
       if (item) {
         scanned++;
         let found = null;
-        for (const rel of this._nameCandidates(item)) {
-          if (names.has(rel)) { found = rel; break; }
+        for (const name of this._nameCandidates(item)) {
+          if (names.has(name)) { found = name; break; }
         }
         if (!found) queue.push(item);
         else {
-          const p = path.join(mvRoot, found);
+          const p = path.join(this.tsDir, found);
           if (this.checkTsIntegrity(p)) have++;
           else {
             // 损坏：删除待补（删不掉就换候选名下载）
@@ -302,6 +299,23 @@ class BulkDownloader {
   }
 
   async _run() {
+    // 曲库目录就绪（无缓存则现场解析 muse.db，镜像已内置，无需手动导入）
+    let entries = this._catalogEntries();
+    if (!entries.length) {
+      this.state.current = '正在解析曲库目录…';
+      this._saveState();
+      await this.importCatalog();
+      entries = this._catalogEntries();
+    }
+    const n = entries.length;
+    if (!n) throw new Error('muse.db 曲库目录为空（检查 muse.db 是否可用）');
+    const from = Math.max(1, Number(this.state.from) || 1);
+    let to = Number(this.state.to) || n;
+    if (this.state.mode === 'scan') to = n;   // 扫库补缺永远覆盖全库
+    to = Math.min(Math.max(to, from), n);
+    this.state.from = from;
+    this.state.to = to;
+
     // 构建下载队列：扫库补缺模式全库扫描，普通模式按 [from, to] 区间
     let queue;
     if (this.state.mode === 'scan') {
@@ -320,10 +334,9 @@ class BulkDownloader {
       this._saveState();
       log.info('BULK', `扫库补缺：已存在 ${this.state.have}，待补 ${queue.length}`);
     } else {
-      const entries = this._catalogEntries();
-      const from = Math.max(1, Number(this.state.from) || 1);
-      const to = Math.min(entries.length, Number(this.state.to) || from);
       queue = entries.slice(from - 1, to);
+      this.state.total = queue.length;
+      this._saveState();
     }
     let sinceSave = 0;
 

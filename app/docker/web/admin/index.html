@@ -291,7 +291,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
 
 <div id="toast"></div>
 
-<!-- 全曲库批量下载弹窗（麦动 muse.db 源，最常唱优先，下载到 MV 目录） -->
+<!-- 全曲库批量下载弹窗（麦动 muse.db 源，最常唱优先，下载到 MV 目录的 ts/ 子目录） -->
 <div id="bulk-modal-overlay" onclick="closeBulkModal()">
   <div id="bulk-modal" onclick="event.stopPropagation()">
     <h3>📦 全曲库批量下载</h3>
@@ -304,13 +304,12 @@ main{max-width:960px;margin:0 auto;padding:24px}
       <div style="flex:1"><label>结束序号（留空=到末尾）</label><input id="bulk-to" type="number" min="1" placeholder="到末尾"></div>
     </div>
     <div style="font-size:12px;color:var(--sub);line-height:1.7;margin-bottom:12px">
-      序号按「最常唱」排序的目录计。已下载过的自动跳过，中断后重新启动同一区间即可续传；
-      文件保存为 MV 目录下「歌手/歌手 - 歌名.ts」，完成后自动扫描入库。
-      「扫库补缺」会校验已下载文件的完整性并自动补下缺失/损坏的。
+      曲库目录自动从内置 muse.db 解析（按「最常唱」排序），无需导入。已下载过的自动跳过，
+      中断后重新启动同一区间即可续传；文件保存为 MV 目录 ts/ 子目录下「歌手 - 歌名.ts」，
+      完成后自动扫描入库。「扫库补缺」会校验 ts/ 目录已下载文件的完整性并自动补下缺失/损坏的。
     </div>
     <div id="bulk-err" style="color:var(--pink);font-size:12px;min-height:14px;margin-bottom:8px"></div>
     <div class="modal-btns" style="justify-content:flex-start;flex-wrap:wrap;gap:8px">
-      <button class="hbtn" onclick="bulkImport()">📂 导入曲库目录</button>
       <button class="hbtn primary" onclick="bulkStart()">⬇️ 开始下载</button>
       <button class="hbtn" onclick="bulkStartScan()">🩺 扫库补缺</button>
       <button class="hbtn" onclick="bulkStop()">⏹ 停止</button>
@@ -658,7 +657,7 @@ async function bulkRefresh(){
   try{
     const d = await fetch('/api/bulk/status').then(r=>r.json());
     const museLine = d.muse ? '✅ 就绪' : '❌ 未找到（先在 TV 设置里配置麦动 muse.db 或放 /data/muse.db）';
-    const catLine = d.catalog ? `已导入 ${d.catalog} 首` : '未导入';
+    const catLine = d.catalog ? `曲库 ${d.catalog} 首（自动解析）` : '曲库待解析（启动下载时自动）';
     let runLine;
     if(d.running){
       const pct = d.total ? Math.round(d.done*100/d.total) : 0;
@@ -673,23 +672,10 @@ async function bulkRefresh(){
       runLine = d.done ? `空闲 · 上次：完成 ${d.done}，失败 ${d.failed}` : '空闲';
       document.getElementById('bulk-bar-wrap').style.display = 'none';
     }
-    el.innerHTML = `麦动曲库：${museLine}<br>下载目录：${catLine}` +
+    el.innerHTML = `麦动曲库：${museLine}<br>保存目录：MV/ts · ${catLine}` +
       (d.concurrency?` · 并发 ${d.concurrency}`:'') + `<br>${runLine}` +
       (d.lastError?`<br><span style="color:var(--pink)">最近错误：${esc(d.lastError)}</span>`:'');
   }catch(e){ el.textContent = '状态获取失败：' + e.message; }
-}
-async function bulkImport(){
-  const err = document.getElementById('bulk-err');
-  err.textContent = '';
-  const st = await fetch('/api/bulk/status').then(r=>r.json()).catch(()=>({}));
-  if(st.catalog && !confirm(`目录已导入过（${st.catalog} 首），重新导入将按最新 muse.db 重建目录，确认？`)) return;
-  toast('曲库目录导入中（几秒到一分钟）…');
-  try{
-    const r = await fetch('/api/bulk/import',{method:'POST'}).then(r=>r.json());
-    if(r.error){ err.textContent = r.error; toast('⚠️ 导入失败'); return; }
-    toast(`✅ 已导入 ${r.total} 首`);
-    bulkRefresh();
-  }catch(e){ err.textContent = '导入失败：'+e.message; }
 }
 async function bulkStart(){
   const err = document.getElementById('bulk-err');
@@ -701,12 +687,12 @@ async function bulkStart(){
   try{
     const r = await fetch('/api/bulk/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
     if(r.error){ err.textContent = r.error; return; }
-    toast(`已启动：${r.total} 首`);
+    toast(`已启动：第 ${r.from} 首${r.to ? ` ~ 第 ${r.to} 首` : ' → 目录末尾'}`);
     bulkRefresh();
   }catch(e){ err.textContent = '启动失败：'+e.message; }
 }
 async function bulkStartScan(){
-  if(!confirm('扫库补缺将校验 MV 目录里已下载文件的完整性，缺失/损坏的自动补下（其它文件不动），确认？')) return;
+  if(!confirm('扫库补缺将校验 MV/ts 目录里已下载文件的完整性，缺失/损坏的自动补下（其它文件不动），确认？')) return;
   const err = document.getElementById('bulk-err');
   err.textContent = '';
   try{
