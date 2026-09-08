@@ -27,9 +27,17 @@ function scanRoots() {
 // 编码（.mpg 源文件常见的 mpeg1video/mpeg2video）会被 SAFE_VIDEO_CODECS
 // 判定为不可直拷贝，自动走 VAAPI/libx264 转码分支，不需要针对该格式
 // 额外改动转码逻辑。
-const VIDEO_EXT = ['.mp4', '.mkv', '.avi', '.flv', '.mov', '.webm', '.mpg'];
+// .ts（MPEG-TS）同理：麦动曲库的原生格式就是编号.ts，用户直接把 ts 文件放进
+// /mv 即可入库播放（h264/ts 走直拷贝，其它编码自动转码）。
+const VIDEO_EXT = ['.mp4', '.mkv', '.avi', '.flv', '.mov', '.webm', '.mpg', '.ts'];
 const AUDIO_EXT = ['.mp3'];
 const MEDIA_EXT = new Set([...VIDEO_EXT, ...AUDIO_EXT]);
+
+// hlsgen.js 生成的 HLS 播放缓存分片也是 .ts（video_0001.ts / audio0_0001.ts）。
+// 缓存目录（HLS_DIR，一般在 /data/hls）不在曲库扫描根目录里，正常扫不到；但万一
+// 有人把缓存挪进 /mv，或未来目录调整，这里按命名模式兜底跳过——麦动的编号文件名
+// 是纯数字（如 0123456.ts），不会命中该模式，不受影响。
+const HLS_SEGMENT_RE = /^(video|audio\d*)_\d{4}\.ts$/i;
 
 // LRC 是与歌曲同名的旁车歌词文件，不作为歌曲入库；支持大小写后缀，
 // 例如「周杰伦 - 晴天.mp3」对应「周杰伦 - 晴天.lrc」。
@@ -105,6 +113,7 @@ function listFilesRecursive(dir) {
     if (isDir) {
       results = results.concat(listFilesRecursive(full));
     } else if (MEDIA_EXT.has(path.extname(entry.name).toLowerCase())) {
+      if (HLS_SEGMENT_RE.test(entry.name)) continue; // HLS 播放缓存分片，不是曲库
       results.push(full);
     }
   }
@@ -124,6 +133,20 @@ function parseFilename(filename) {
     }
   }
   return { artist: '未知歌手', title: base };
+}
+
+// 麦动编号文件适配：纯数字文件名（如 0123456.ts）是 muse.db 的歌曲编号，
+// 按"歌手 - 歌名"解析只会得到"未知歌手 - 0123456"。本地 muse.db 已就绪时
+// 按编号反查真实歌名/歌手入库；查不到（muse.db 未就绪/编号不存在）回落
+// 普通文件名解析。lookupByNo 是同步的且只在编号文件上触发，不拖慢普通扫描。
+const muse = require('./muse');
+function parseSongMeta(f) {
+  const base = path.basename(f, path.extname(f)).trim();
+  if (/^\d+$/.test(base)) {
+    const m = muse.lookupByNo(base);
+    if (m) return { artist: m.artist || '未知歌手', title: m.title || base };
+  }
+  return parseFilename(f);
 }
 
 // 让出一次事件循环。ffprobe 探测本身用的是同步的 execFileSync，扫描期间没法
@@ -185,7 +208,7 @@ async function scanLibrary() {
   for (const { f, rel } of files) {
     if (!existingSet.has(rel)) {
       try {
-        const { artist, title } = parseFilename(f);
+        const { artist, title } = parseSongMeta(f);
         const media_type = AUDIO_EXT.includes(path.extname(f).toLowerCase()) ? 'audio' : 'video';
         // 新文件入库时顺手探测音轨数，避免播放时才发现切换不了；纯 MP3 永远是单音轨。
         const audio_tracks = media_type === 'audio' ? 1 : probeAudioTracks(f);

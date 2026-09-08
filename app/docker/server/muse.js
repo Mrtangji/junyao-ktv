@@ -202,6 +202,38 @@ function available() {
   } catch (e) { return false; }
 }
 
+// 按歌曲编号同步反查歌名/歌手（曲库扫描用：/mv 里编号命名的 .ts 文件，
+// 如 0123456.ts，入库时从这里拿到真实歌名/歌手而不是"未知歌手 - 0123456"）。
+// 只用本地已就绪的 muse.db（配置路径/自动发现/已有缓存），绝不触发远程下载；
+// 扫描器是同步流程，本函数必须保持同步。未就绪/查不到返回 null。
+let _lookupDb = null, _lookupStmt = null, _lookupKey = '';
+function lookupByNo(no) {
+  try {
+    const n = String(no || '').trim();
+    if (!/^\d+$/.test(n)) return null;
+    const src = resolveSource();
+    if (!src) return null;
+    const file = src.local || src.cache;
+    if (!file || !fs.existsSync(file)) return null;
+    const st = fs.statSync(file);
+    const key = file + '|' + st.mtimeMs + '|' + st.size;
+    if (!_lookupDb || _lookupKey !== key) {
+      try { if (_lookupDb) _lookupDb.close(); } catch (e) {}
+      _lookupDb = new Database(file, { readonly: true, fileMustExist: true });
+      _lookupStmt = _lookupDb.prepare(
+        `SELECT s.name AS name, ${SINGER_SUB} AS singer_names FROM songs s ` +
+        'WHERE s.filename = ? AND s.deleted_at IS NULL LIMIT 1');
+      _lookupKey = key;
+    }
+    const r = _lookupStmt.get(n + '.ts') || _lookupStmt.get(n + '.ls');
+    if (!r) return null;
+    const title = String(r.name || '').trim();
+    const artist = String(r.singer_names || '').trim();
+    if (!title && !artist) return null;
+    return { title, artist };
+  } catch (e) { return null; }
+}
+
 // ---------- ktv_api.js 实时换链 ----------
 // Node 版 XMLHttpRequest shim：vendored ktv_api.js 的 httpGet/httpPost 用
 function installXhrShim() {
@@ -292,6 +324,6 @@ async function resolveMuseUrl(no) {
 
 module.exports = {
   getMuseUrl, resolveSource, ensureMuseDb, available, songCount,
-  allSongs, rankPlaylists, rankSongs,
+  allSongs, rankPlaylists, rankSongs, lookupByNo,
   resolveMuseUrl,
 };
