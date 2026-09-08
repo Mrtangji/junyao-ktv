@@ -160,6 +160,10 @@ main{max-width:960px;margin:0 auto;padding:24px}
   font-family:Consolas,monospace;resize:vertical;min-height:70px
 }
 .form-row input:focus,.form-row textarea:focus{border-color:var(--accent)}
+/* 歌名后媒体类型角标：MP3（纯音频）/ MV（视频），与 TV 页点唱榜角标同款 */
+.mt-b{display:inline-block;vertical-align:1px;margin-left:6px;padding:1px 5px;border-radius:4px;font-size:11px;line-height:1.4;font-weight:700;letter-spacing:.5px}
+.mt-a{color:#7ee0a3;background:rgba(94,220,140,.14);border:1px solid rgba(94,220,140,.3)}
+.mt-v{color:#ffd479;background:rgba(255,183,77,.18);border:1px solid rgba(255,183,77,.35)}
 /* 全曲库批量下载弹窗（复用 lx-modal 样式） */
 #bulk-modal-overlay{
   position:fixed;top:0;left:0;right:0;bottom:0;z-index:50;display:none;align-items:center;justify-content:center;
@@ -491,7 +495,7 @@ function render(list){
     tr.dataset.id = s.id;
     tr.innerHTML = `
       <td style="color:var(--sub);font-size:12px">${songPage*SONG_PAGE_SIZE+i+1}</td>
-      <td class="title-cell">${esc(s.title)}</td>
+      <td class="title-cell">${esc(s.title)}${s.media_type === 'audio' ? '<span class="mt-b mt-a">MP3</span>' : s.media_type === 'video' ? '<span class="mt-b mt-v">MV</span>' : ''}</td>
       <td class="artist-cell">${esc(s.artist||'未知歌手')}</td>
       <td class="count-cell">${s.play_count}</td>
       <td>
@@ -540,7 +544,10 @@ async function saveEdit(){
   closeModal();
   const tr = document.querySelector(`tr[data-id="${id}"]`);
   if(tr){
-    tr.querySelector('.title-cell').textContent = title;
+    const s = allSongs.find(x=>x.id==id);
+    const mt = s ? s.media_type : undefined;
+    tr.querySelector('.title-cell').innerHTML = esc(title) +
+      (mt === 'audio' ? '<span class="mt-b mt-a">MP3</span>' : mt === 'video' ? '<span class="mt-b mt-v">MV</span>' : '');
     tr.querySelector('.artist-cell').textContent = artist||'未知歌手';
   }
   const s = allSongs.find(x=>x.id==id);
