@@ -34,8 +34,8 @@ class BulkDownloader {
     this.dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
     this.catalogPath = path.join(this.dataDir, 'bulk-catalog.json');
     this.statePath = path.join(this.dataDir, 'bulk-state.json');
-    // 批量下载直接写入 MV_DIR（/mv）根目录，平铺「歌手 - 歌名.ts」
-    this.tsDir = path.resolve(dlcfg.MV_DIR);
+    // 批量下载写入 MV_DIR/ts（/mv/ts）子目录，平铺「歌手 - 歌名.ts」
+    this.tsDir = path.join(path.resolve(dlcfg.MV_DIR), 'ts');
     // 反盗版（.ls 加密容器）跳过清单：编号记录文件，放 DATA_DIR 便于用户取用
     this.skippedPath = path.join(this.dataDir, 'bulk-skipped.txt');
     this.state = {
@@ -316,7 +316,7 @@ class BulkDownloader {
   }
 
   /**
-   * 扫库补缺：比对目录与 MV_DIR，构建「缺失 + 损坏」补下队列。
+   * 扫库补缺：比对目录与 MV_DIR/ts，构建「缺失 + 损坏」补下队列。
    * 损坏文件先删除（腾出候选名），缺失的进入队列；目录里其它文件一律不动。
    * 返回 null 表示用户请求了停止。
    */

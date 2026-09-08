@@ -694,7 +694,7 @@ async function bulkRefresh(){
     document.getElementById('bulk-retry-btn').textContent = `🔁 重试失败(${failN})`;
     const skipN = d.skippedCount || 0;
     const skipLine = skipN ? `跳过反盗版：${skipN} 首（编号在 /data/${esc(d.skippedFile||'bulk-skipped.txt')}，可粘贴到上面重试）` : '跳过反盗版：0';
-    el.innerHTML = `麦动曲库：${museLine}<br>保存目录：MV · ${catLine}<br>${skipLine}<br>${runLine}` +
+    el.innerHTML = `麦动曲库：${museLine}<br>保存目录：MV/ts · ${catLine}<br>${skipLine}<br>${runLine}` +
       (d.concurrency?` · 并发 ${d.concurrency}`:'') + `<br>${runLine}` +
       (d.lastError?`<br><span style="color:var(--pink)">最近错误：${esc(d.lastError)}</span>`:'');
   }catch(e){ el.textContent = '状态获取失败：' + e.message; }
