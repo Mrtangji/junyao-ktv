@@ -20,19 +20,27 @@ jobs:
         uses: actions/checkout@v4
 
       # 麦动曲库 muse.db 打进镜像：git 仓库放不下 1GB 大文件，存放在
-      # Release(muse-db 标签) 的 muse.db.gz 附件里，构建时下载解压到 build context。
+      # Release(muse-db 标签) 的 muse.db.gz.part-* 分片附件里（代理网络单次传
+      # 460MB 会被掐断，故分片），构建时全部下载拼接解压到 build context。
       - name: Download bundled muse.db from Release
         run: |
           set -e
           mkdir -p app/docker/vendor
-          ASSET_ID=$(curl -sf --retry 3 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/tags/muse-db" | \
-            python3 -c "import json,sys; d=json.load(sys.stdin); print(next(a['id'] for a in d.get('assets',[]) if a['name']=='muse.db.gz'))")
-          echo "muse.db.gz asset id: $ASSET_ID"
-          curl -fL --retry 3 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/octet-stream" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/assets/$ASSET_ID" \
-            -o app/docker/vendor/muse.db.gz
+          curl -sf --retry 3 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/muse-db" \
+            -o app/docker/vendor/.rel.json
+          # 输出 "名字 附件id" 两列，只取 muse.db.gz.part-* 分片
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); rows=[(a["name"],a["id"]) for a in d.get("assets",[]) if a["name"].startswith("muse.db.gz.part-")]; sys.exit("no muse.db.gz.part-* assets in release muse-db") if not rows else [print(n,i) for n,i in sorted(rows)]' app/docker/vendor/.rel.json > app/docker/vendor/.parts.txt
+          cat app/docker/vendor/.parts.txt
+          while read -r NAME AID; do
+            curl -sfL --retry 3 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/octet-stream" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/assets/$AID" \
+              -o "app/docker/vendor/$NAME"
+            echo "downloaded $NAME"
+          done < app/docker/vendor/.parts.txt
+          cat $(ls app/docker/vendor/muse.db.gz.part-* | sort) > app/docker/vendor/muse.db.gz
+          rm -f app/docker/vendor/muse.db.gz.part-* app/docker/vendor/.parts.txt app/docker/vendor/.rel.json
           gunzip -f app/docker/vendor/muse.db.gz
           ls -la app/docker/vendor/
 
