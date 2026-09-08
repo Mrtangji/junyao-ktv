@@ -623,6 +623,21 @@ app.post('/api/md/queue', async (req, res) => {
   res.json({ ok: true, downloaded, song });
 });
 
+// ---------- 全曲库批量下载（曲库管理页右上角，见 server/bulk.js） ----------
+// 麦动 muse.db 源整库下载到 MV_DIR（按歌手分目录 .ts），最常唱优先；
+// 导入目录/启动/停止属于重操作，要求管理员登录；进度查询开放给页面轮询。
+const bulk = new (require('./bulk').BulkDownloader)();
+app.get('/api/bulk/status', (req, res) => res.json(bulk.status()));
+app.post('/api/bulk/import', requireAdminAuth, async (req, res) => {
+  try { res.json({ ok: true, total: await bulk.importCatalog() }); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.post('/api/bulk/start', requireAdminAuth, (req, res) => {
+  const r = bulk.start(req.body || {});
+  res.status(r.ok ? 200 : 400).json(r);
+});
+app.post('/api/bulk/stop', requireAdminAuth, (req, res) => res.json(bulk.stop()));
+
 // ---------- 爱唱榜 (按播放次数) ----------
 app.get('/api/charts', (req, res) => {
   const rows = db.prepare('SELECT * FROM songs WHERE play_count > 0 ORDER BY play_count DESC LIMIT 50').all();

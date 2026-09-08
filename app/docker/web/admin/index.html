@@ -160,6 +160,17 @@ main{max-width:960px;margin:0 auto;padding:24px}
   font-family:Consolas,monospace;resize:vertical;min-height:70px
 }
 .form-row input:focus,.form-row textarea:focus{border-color:var(--accent)}
+/* 全曲库批量下载弹窗（复用 lx-modal 样式） */
+#bulk-modal-overlay{
+  position:fixed;top:0;left:0;right:0;bottom:0;z-index:50;display:none;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.6);backdrop-filter:blur(6px)
+}
+#bulk-modal-overlay.open{display:flex}
+#bulk-modal{
+  width:min(560px,92vw);max-height:86vh;overflow-y:auto;background:var(--card);border:1px solid rgba(255,255,255,.1);
+  border-radius:18px;padding:26px
+}
+#bulk-modal h3{font-size:17px;margin-bottom:18px}
 </style>
 </head>
 <body>
@@ -187,6 +198,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
   <button class="hbtn" onclick="window.open('/tv','_blank')">📺 TV端</button>
   <button class="hbtn" onclick="window.open('/m','_blank')">📱 手机端</button>
   <button class="hbtn primary" onclick="doScan()">🔄 扫描曲库</button>
+  <button class="hbtn" onclick="openBulkModal()">📦 全曲库下载</button>
   <button class="hbtn" onclick="openLxModal()">🎼 LX 音源</button>
   <button class="hbtn" onclick="openPwModal()">🔑 修改密码</button>
   <button class="hbtn" onclick="doLogout()">🚪 退出登录</button>
@@ -278,6 +290,34 @@ main{max-width:960px;margin:0 auto;padding:24px}
 </div>
 
 <div id="toast"></div>
+
+<!-- 全曲库批量下载弹窗（麦动 muse.db 源，最常唱优先，下载到 MV 目录） -->
+<div id="bulk-modal-overlay" onclick="closeBulkModal()">
+  <div id="bulk-modal" onclick="event.stopPropagation()">
+    <h3>📦 全曲库批量下载</h3>
+    <div id="bulk-status" style="font-size:13px;color:var(--sub);line-height:1.9">加载中…</div>
+    <div id="bulk-bar-wrap" style="display:none;height:8px;background:rgba(255,255,255,.08);border-radius:4px;overflow:hidden;margin:10px 0">
+      <div id="bulk-bar" style="height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--cyan));transition:width .4s"></div>
+    </div>
+    <div class="form-row" style="display:flex;gap:10px">
+      <div style="flex:1"><label>起始序号</label><input id="bulk-from" type="number" min="1" value="1"></div>
+      <div style="flex:1"><label>结束序号（留空=到末尾）</label><input id="bulk-to" type="number" min="1" placeholder="到末尾"></div>
+    </div>
+    <div style="font-size:12px;color:var(--sub);line-height:1.7;margin-bottom:12px">
+      序号按「最常唱」排序的目录计。已下载过的自动跳过，中断后重新启动同一区间即可续传；
+      文件保存为 MV 目录下「歌手/歌手 - 歌名.ts」，完成后自动扫描入库。
+      「扫库补缺」会校验已下载文件的完整性并自动补下缺失/损坏的。
+    </div>
+    <div id="bulk-err" style="color:var(--pink);font-size:12px;min-height:14px;margin-bottom:8px"></div>
+    <div class="modal-btns" style="justify-content:flex-start;flex-wrap:wrap;gap:8px">
+      <button class="hbtn" onclick="bulkImport()">📂 导入曲库目录</button>
+      <button class="hbtn primary" onclick="bulkStart()">⬇️ 开始下载</button>
+      <button class="hbtn" onclick="bulkStartScan()">🩺 扫库补缺</button>
+      <button class="hbtn" onclick="bulkStop()">⏹ 停止</button>
+      <button class="hbtn" onclick="closeBulkModal()">关闭</button>
+    </div>
+  </div>
+</div>
 
 <script>
 let allSongs = [];
@@ -598,6 +638,90 @@ async function lxDelete(id){
     toast('已删除');
     lxLoadList();
   }catch(e){toast('⚠️ 删除失败：'+e.message);}
+}
+
+// ===== 全曲库批量下载 =====
+let bulkTimer = null;
+async function openBulkModal(){
+  document.getElementById('bulk-modal-overlay').classList.add('open');
+  document.getElementById('bulk-err').textContent = '';
+  await bulkRefresh();
+  clearInterval(bulkTimer);
+  bulkTimer = setInterval(bulkRefresh, 2000);   // 弹窗打开期间轮询进度
+}
+function closeBulkModal(){
+  document.getElementById('bulk-modal-overlay').classList.remove('open');
+  clearInterval(bulkTimer); bulkTimer = null;
+}
+async function bulkRefresh(){
+  const el = document.getElementById('bulk-status');
+  try{
+    const d = await fetch('/api/bulk/status').then(r=>r.json());
+    const museLine = d.muse ? '✅ 就绪' : '❌ 未找到（先在 TV 设置里配置麦动 muse.db 或放 /data/muse.db）';
+    const catLine = d.catalog ? `已导入 ${d.catalog} 首` : '未导入';
+    let runLine;
+    if(d.running){
+      const pct = d.total ? Math.round(d.done*100/d.total) : 0;
+      const phase = d.mode === 'scan' && d.scanned < d.total && !d.done ? `扫描中 ${d.scanned}` : '';
+      runLine = `⏳ ${d.mode==='scan'?'扫库补缺':'区间下载'}进行中：<b style="color:var(--cyan)">${d.done}/${d.total}</b>（${pct}%）` +
+        (d.failed?`，失败 ${d.failed}`:'') + (phase?` · ${phase}`:'') +
+        (d.current?`<br>当前：${esc(d.current)}`:'');
+      const wrap = document.getElementById('bulk-bar-wrap');
+      wrap.style.display = 'block';
+      document.getElementById('bulk-bar').style.width = pct + '%';
+    }else{
+      runLine = d.done ? `空闲 · 上次：完成 ${d.done}，失败 ${d.failed}` : '空闲';
+      document.getElementById('bulk-bar-wrap').style.display = 'none';
+    }
+    el.innerHTML = `麦动曲库：${museLine}<br>下载目录：${catLine}` +
+      (d.concurrency?` · 并发 ${d.concurrency}`:'') + `<br>${runLine}` +
+      (d.lastError?`<br><span style="color:var(--pink)">最近错误：${esc(d.lastError)}</span>`:'');
+  }catch(e){ el.textContent = '状态获取失败：' + e.message; }
+}
+async function bulkImport(){
+  const err = document.getElementById('bulk-err');
+  err.textContent = '';
+  const st = await fetch('/api/bulk/status').then(r=>r.json()).catch(()=>({}));
+  if(st.catalog && !confirm(`目录已导入过（${st.catalog} 首），重新导入将按最新 muse.db 重建目录，确认？`)) return;
+  toast('曲库目录导入中（几秒到一分钟）…');
+  try{
+    const r = await fetch('/api/bulk/import',{method:'POST'}).then(r=>r.json());
+    if(r.error){ err.textContent = r.error; toast('⚠️ 导入失败'); return; }
+    toast(`✅ 已导入 ${r.total} 首`);
+    bulkRefresh();
+  }catch(e){ err.textContent = '导入失败：'+e.message; }
+}
+async function bulkStart(){
+  const err = document.getElementById('bulk-err');
+  err.textContent = '';
+  const from = parseInt(document.getElementById('bulk-from').value) || 1;
+  const toRaw = parseInt(document.getElementById('bulk-to').value);
+  const body = { from, to: toRaw > 0 ? toRaw : undefined };
+  if(!toRaw && from > 20000 && !confirm(`将从第 ${from} 首一直下到目录末尾（可能数万首），确认？`)) return;
+  try{
+    const r = await fetch('/api/bulk/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
+    if(r.error){ err.textContent = r.error; return; }
+    toast(`已启动：${r.total} 首`);
+    bulkRefresh();
+  }catch(e){ err.textContent = '启动失败：'+e.message; }
+}
+async function bulkStartScan(){
+  if(!confirm('扫库补缺将校验 MV 目录里已下载文件的完整性，缺失/损坏的自动补下（其它文件不动），确认？')) return;
+  const err = document.getElementById('bulk-err');
+  err.textContent = '';
+  try{
+    const r = await fetch('/api/bulk/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'scan'})}).then(r=>r.json());
+    if(r.error){ err.textContent = r.error; return; }
+    toast('扫库补缺已启动');
+    bulkRefresh();
+  }catch(e){ err.textContent = '启动失败：'+e.message; }
+}
+async function bulkStop(){
+  try{
+    const r = await fetch('/api/bulk/stop',{method:'POST'}).then(r=>r.json());
+    toast(r.ok ? '已请求停止（当前正在下载的一首会完成）' : (r.error || '无需停止'));
+    bulkRefresh();
+  }catch(e){ toast('⚠️ 停止失败：'+e.message); }
 }
 
 checkSession();

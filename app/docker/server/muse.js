@@ -325,5 +325,5 @@ async function resolveMuseUrl(no) {
 module.exports = {
   getMuseUrl, resolveSource, ensureMuseDb, available, songCount,
   allSongs, rankPlaylists, rankSongs, lookupByNo,
-  resolveMuseUrl,
+  resolveMuseUrl, openDb,
 };
