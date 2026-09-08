@@ -556,8 +556,7 @@ app.post('/api/lx/queue', async (req, res) => {
   }
   const q = db.prepare('INSERT INTO queue (song_id,nickname) VALUES (?,?)').run(song.id, '网络点唱');
   db.prepare('UPDATE songs SET play_count=play_count+1 WHERE id=?').run(song.id);
-  const playing = db.prepare("SELECT * FROM queue WHERE status='playing'").get();
-  if (!playing) db.prepare("UPDATE queue SET status='playing' WHERE id=?").run(q.lastInsertRowid);
+  startPlayingIfIdle(q.lastInsertRowid);
   broadcastQueue();
   res.json({ ok: true, downloaded, song });
 });
@@ -619,8 +618,7 @@ app.post('/api/md/queue', async (req, res) => {
   }
   const q = db.prepare('INSERT INTO queue (song_id,nickname) VALUES (?,?)').run(song.id, '网络点唱');
   db.prepare('UPDATE songs SET play_count=play_count+1 WHERE id=?').run(song.id);
-  const playing = db.prepare("SELECT * FROM queue WHERE status='playing'").get();
-  if (!playing) db.prepare("UPDATE queue SET status='playing' WHERE id=?").run(q.lastInsertRowid);
+  startPlayingIfIdle(q.lastInsertRowid);
   broadcastQueue();
   res.json({ ok: true, downloaded, song });
 });
@@ -706,6 +704,20 @@ function getQueueWithSongs() {
   `).all();
 }
 
+// 自动播放队列条目的固定昵称（TV 端首页自动播放功能，见 web/tv 的 maybeAutoPlay）
+const AUTO_NICK = '自动播放';
+// 点歌入队后的开播判定：
+//  - 队列空闲（无正在播放）→ 新歌直接开播（原有行为）；
+//  - 正在播的是自动播放的歌 → 手动点歌打断自动播放：当前自动歌标记结束，
+//    新点的歌立即开播（需求：自动播放持续到有人手动点歌，且自动切到手动点的歌）。
+//  - 正在播的是手动点的歌 → 正常排队等待，不打断。
+function startPlayingIfIdle(queueId) {
+  const playing = db.prepare("SELECT * FROM queue WHERE status='playing'").get();
+  if (playing && playing.nickname !== AUTO_NICK) return;
+  if (playing) db.prepare("UPDATE queue SET status='done' WHERE id=?").run(playing.id);
+  db.prepare("UPDATE queue SET status='playing' WHERE id=?").run(queueId);
+}
+
 app.get('/api/queue', (req, res) => res.json(getQueueWithSongs()));
 
 app.post('/api/queue', (req, res) => {
@@ -714,8 +726,7 @@ app.post('/api/queue', (req, res) => {
   if (!song) return res.status(404).json({ error: '歌曲不存在' });
   const info = db.prepare('INSERT INTO queue (song_id,nickname) VALUES (?,?)').run(song_id, nickname || '匿名歌手');
   db.prepare('UPDATE songs SET play_count=play_count+1 WHERE id=?').run(song_id);
-  const playing = db.prepare("SELECT * FROM queue WHERE status='playing'").get();
-  if (!playing) db.prepare("UPDATE queue SET status='playing' WHERE id=?").run(info.lastInsertRowid);
+  startPlayingIfIdle(info.lastInsertRowid);
   broadcastQueue();
   res.json({ ok: true, id: info.lastInsertRowid });
 });

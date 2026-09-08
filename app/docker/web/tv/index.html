@@ -3018,8 +3018,11 @@ if(window.KtvBridge){
   if(row)row.style.display='';
   if(loadSettings)loadSettings();
 }
-// 开启后：TV 空闲在首页且队列无歌（无 playing/pending）时，延迟几秒自动从全曲库
+// 开启后：TV 空闲在首页且队列无歌（无 playing/waiting）时，短暂延迟后自动从全曲库
 // 随机点一首进队列（nickname='自动播放'），走正常队列流程播出；避开最近自动播过的歌。
+// 连播策略：播完/切歌后立即接下一首（延迟仅1.2s，几乎无缝）→ 一直播下去；
+// 有人手动点歌时服务端会打断当前自动歌、立即切播手动点的歌（见 server startPlayingIfIdle）；
+// 自动播放期间按切歌 → 队列空后马上自动换一首新歌。
 // 开关状态存本机 localStorage（tv-autoplay），仅影响当前电视端。
 let autoPlay=localStorage.getItem('tv-autoplay')==='1';
 let autoPlayTimer=null,autoRecent=[];
@@ -3029,7 +3032,7 @@ function toggleAutoPlay(){
   autoPlay=!autoPlay;
   localStorage.setItem('tv-autoplay',autoPlay?'1':'0');
   updateAutoPlayUI();
-  showToast(autoPlay?'✅ 已开启首页自动播放：空闲时自动随机播放':'已关闭首页自动播放');
+  showToast(autoPlay?'✅ 已开启首页自动播放：自动连播，手动点歌自动切播':'已关闭首页自动播放');
   clearTimeout(autoPlayTimer);
   if(autoPlay)maybeAutoPlay(3000); // 刚打开开关，3 秒后即生效
 }
@@ -3068,7 +3071,7 @@ function maybeAutoPlay(delay){
       await fetch('/api/queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({song_id:song.id,nickname:'自动播放'})});
       showToast(`🎶 自动播放《${song.title}》`);
     }catch(e){}
-  },delay||8000);
+  },delay||1200);
 }
 updateAutoPlayUI();
 async function doScan(){if(LOCAL_MODE){showToast('本地模式下无需扫描曲库');return;}showToast('扫描中…');let d;try{d=await fetch('/api/scan',{method:'POST'}).then(r=>r.json());}catch(e){showToast('⚠️ 扫描请求失败：'+e.message);return;}if(d.error==='MV_DIR_UNAVAILABLE'){showToast('⚠️ 曲库目录暂时无法访问，请检查挂载后重试');return;}if(d.ok===false){showToast('⚠️ 扫描出错：'+(d.error||'未知错误'));return;}showToast(`扫描完成：${d.total}首，新增${d.added}首，移除${d.removed||0}首`);allSongs=[];loadSettings();}
