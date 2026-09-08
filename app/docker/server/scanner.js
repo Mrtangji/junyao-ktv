@@ -64,14 +64,19 @@ function findLyricsPath(filepath) {
 // 数据库，播放时把这个数字告诉前端，播放器不用再猜。
 function probeAudioTracks(filepath) {
   try {
+    // 只统计 codec_name 明确的音频流：MPEG-TS 里 ffprobe 可能把未知编码的
+    // 流也报成音频（ffmpeg demux 却不认），照单全收会让数据库音轨数虚高，
+    // 转码映射这些不存在的轨时直接失败。加 analyzeduration/probesize 提高
+    // 对大 TS 文件的探测成功率。
     const out = execFileSync('ffprobe', [
       '-v', 'error',
+      '-analyzeduration', '10000000', '-probesize', '10000000',
       '-select_streams', 'a',
-      '-show_entries', 'stream=index',
+      '-show_entries', 'stream=codec_name',
       '-of', 'csv=p=0',
       filepath
-    ], { timeout: 15000 }).toString();
-    const count = out.split('\n').map(l => l.trim()).filter(Boolean).length;
+    ], { timeout: 20000 }).toString();
+    const count = out.split('\n').map(l => l.trim()).filter(l => l && !/^(unknown|n\/a)?$/i.test(l)).length;
     return count > 0 ? count : 1;
   } catch (e) {
     console.error('ffprobe 音轨检测失败(' + path.basename(filepath) + '):', e.message);

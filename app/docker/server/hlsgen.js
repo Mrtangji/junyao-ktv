@@ -256,7 +256,11 @@ async function buildVideoRendition(filepath, dir, songTag) {
 // 直接重新编码为 AAC。音频转码本身 CPU 消耗很低，没有必要也没有硬件通道，
 // 继续用软件编码即可。
 async function buildAudioRendition(filepath, dir, track, songTag) {
-  const common = ['-loglevel', 'error', '-y', '-i', filepath, '-map', `0:a:${track}`, '-vn'];
+  // 映射加尾缀 '?'：ffprobe 报告的音轨数可能多于 ffmpeg demux 实际认可的
+  // （典型：MPEG-TS 里 codec 未知的流 ffprobe 会算作音频，ffmpeg 则丢弃），
+  // 严格映射会直接 "Stream map '0:a:N' matches no streams" 失败；加 '?' 后
+  // 不存在的流被忽略而不是整单失败。
+  const common = ['-loglevel', 'error', '-y', '-i', filepath, '-map', `0:a:${track}?`, '-vn'];
   const out = hlsOutArgs(path.join(dir, `audio${track}_%04d.ts`), path.join(dir, `audio${track}.m3u8`));
   const codec = probeCodecName(filepath, `a:${track}`);
   const trackName = track === 0 ? '原唱' : track === 1 ? '伴唱' : `音轨${track}`;
@@ -303,11 +307,36 @@ function writeMasterPlaylist(dir, trackCount, mediaType = 'video') {
 // 那样排队一条条等——这样多条轨道是同时在产出分片的，进一步缩短"能看到第
 // 一屏画面"所需的时间。全部轨道都转码成功后才写 .complete 标记；任何一条
 // 失败都会被上层捕获记录，方便前端/路由层判断这首歌为什么迟迟出不了片。
+// 实时探测有效音轨数（hlsgen 版）：只统计 codec_name 明确的音频流。数据库里
+// 的 audio_tracks 是扫描时探测的，可能包含 ffprobe 认了、ffmpeg 却不认可的
+// "未知编码"流（MPEG-TS 常见），照它映射会失败；转码前重新探一遍更可靠。
+// 探测失败（文件损坏/格式不识别）回落 1，保证至少原唱轨尝试转码。
+function probeAudioTrackCount(filepath) {
+  try {
+    const out = execFileSync('ffprobe', [
+      '-v', 'error',
+      '-analyzeduration', '10000000', '-probesize', '10000000',
+      '-select_streams', 'a',
+      '-show_entries', 'stream=codec_name',
+      '-of', 'csv=p=0',
+      filepath,
+    ], { timeout: 20000 }).toString();
+    const lines = out.split('\n').map(l => l.trim()).filter(l => l && !/^(unknown|n\/a)?$/i.test(l));
+    return lines.length > 0 ? lines.length : 1;
+  } catch (e) {
+    return 1;
+  }
+}
+
 async function buildHLS(song, dir) {
   const { filepath } = song;
-  const trackCount = Math.max(1, song.audio_tracks || 1);
   const songTag = `[歌曲 id=${song.id} "${song.title || song.filename}"]`;
   const t0 = Date.now();
+
+  // 音轨数以现场探测为准（只认有编码名的流），探测不到再用数据库值兜底
+  const trackCount = song.media_type === 'audio'
+    ? 1
+    : probeAudioTrackCount(filepath);
 
   log.info('TRANSCODE', `${songTag} 开始转码，共 ${trackCount} 条音轨（1=原唱${trackCount >= 2 ? ', 2=伴唱' : ''}）`);
 
@@ -352,11 +381,18 @@ async function ensureHLS(song) {
     const dir = outDir(id);
     fs.rmSync(dir, { recursive: true, force: true });
     fs.mkdirSync(dir, { recursive: true });
-    writeMasterPlaylist(dir, Math.max(1, song.audio_tracks || 1), song.media_type || 'video');
+    // master 里引用的音轨数必须与 buildHLS 实际转的音轨数一致——都用"只认
+    // 有效编码流"的现场探测值，避免 master 引用永远不会生成的 audioN.m3u8
+    writeMasterPlaylist(dir, song.media_type === 'audio' ? 1 : probeAudioTrackCount(filepath), song.media_type || 'video');
     buildErrors.delete(id);
 
+    // 注意：存进 building 的 Promise 绝不能是会 reject 的——Node 15+ 对未被
+    // 接住的 promise rejection 默认按未捕获异常处理，直接把整个进程干崩
+    // （实测：一条音轨映射失败的 ffmpeg 错误经 .catch 里 re-throw 后没人再
+    // 接住，服务整体退出）。失败原因记进 buildErrors 即可，waitForFile 的
+    // 轮询会查这张表把错误还给请求方；这里吞掉 rejection 不再往外抛。
     const p = buildHLS(song, dir)
-      .catch(e => { buildErrors.set(id, e); throw e; })
+      .catch(e => { buildErrors.set(id, e); })
       .finally(() => building.delete(id));
     building.set(id, p);
     // 不 await —— 让转码在后台继续跑，函数立刻返回
