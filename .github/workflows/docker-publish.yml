@@ -19,6 +19,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 麦动曲库 muse.db 打进镜像：git 仓库放不下 1GB 大文件，存放在
+      # Release(muse-db 标签) 的 muse.db.gz 附件里，构建时下载解压到 build context。
+      - name: Download bundled muse.db from Release
+        run: |
+          set -e
+          mkdir -p app/docker/vendor
+          ASSET_ID=$(curl -sf --retry 3 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/muse-db" | \
+            python3 -c "import json,sys; d=json.load(sys.stdin); print(next(a['id'] for a in d.get('assets',[]) if a['name']=='muse.db.gz'))")
+          echo "muse.db.gz asset id: $ASSET_ID"
+          curl -fL --retry 3 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/octet-stream" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/assets/$ASSET_ID" \
+            -o app/docker/vendor/muse.db.gz
+          gunzip -f app/docker/vendor/muse.db.gz
+          ls -la app/docker/vendor/
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 

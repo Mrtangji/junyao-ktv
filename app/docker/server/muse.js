@@ -7,10 +7,14 @@
 //  - ktv_api.js 热更链路：按歌曲编号（filename 去掉 .ts/.ls 后缀，即"musicno"）
 //      实时换新签名直链（返回 .ts，MPEG-TS），muse.db 里的 cloud_url 签名会过期，
 //      必须下载时实时换链，不能复用库里的旧链接。
-// muse.db 来源在设置里配置（settings 表 md_muse_url，跟随 /data 持久化）：
-//  - http(s)://...：远程 muse.db，下载缓存到 DATA_DIR/muse-md.db（24h 自动刷新，
-//    保存配置时强制刷新；下载失败时回落用上一次的缓存）
-//  - 其它值：视为容器内路径（如把 muse.db 挂载进 /data 直接填 /data/muse.db）
+// muse.db 来源（按优先级）：
+//  1. 设置里配置的 md_muse_url（settings 表，跟随 /data 持久化）：
+//     - http(s)://...：远程 muse.db，下载缓存到 DATA_DIR/muse-md.db（24h 自动刷新，
+//       保存配置时强制刷新；下载失败时回落用上一次的缓存）
+//     - 其它值：视为容器内路径（如把 muse.db 挂载进 /data 直接填 /data/muse.db）
+//  2. 未配置时自动发现：DATA_DIR/muse.db（宿主机挂载，如 /data/muse.db）
+//     → 镜像内置 /app/vendor/muse.db（CI 构建时从 GitHub Release 打进镜像，
+//       开箱即用，无需任何配置）
 // 下载的 ts：MV 模式 ffmpeg -c copy 转封装 mp4 入 MV_DIR；MP3 模式抽音频入 MP3_DIR
 // （见 maidong.js downloadMd）。
 'use strict';
@@ -24,6 +28,9 @@ const Database = require('better-sqlite3');
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const KEY = 'md_muse_url';
 const CACHE_NAME = 'muse-md.db';
+// 未配置 md_muse_url 时的自动发现路径（按优先级）：宿主机挂载 → 镜像内置
+const DATA_DB = path.join(DATA_DIR, 'muse.db');
+const BUNDLED_DB = '/app/vendor/muse.db';
 const REFRESH_MS = 24 * 60 * 60 * 1000; // 远程 muse.db 缓存刷新间隔
 const KTV_API_REMOTE =
   'https://gitee.com/yangyachao-X/maidong-ktv/raw/master/app/src/main/assets/mobile/ktv_api.js';
@@ -37,12 +44,15 @@ function getMuseUrl() {
   } catch (e) { return ''; }
 }
 
-// 解析配置 → { remote } 或 { local }；未配置返回 null
+// 解析配置 → { remote } 或 { local }；未配置时自动发现（/data/muse.db → 镜像内置），都找不到返回 null
 function resolveSource() {
   const v = getMuseUrl();
-  if (!v) return null;
   if (/^https?:\/\//i.test(v)) return { remote: v, cache: path.join(DATA_DIR, CACHE_NAME) };
-  return { local: v };
+  if (v) return { local: v };
+  // 自动发现：宿主机挂载优先（可覆盖镜像内置版本），其次镜像内置
+  if (fs.existsSync(DATA_DB)) return { local: DATA_DB };
+  if (fs.existsSync(BUNDLED_DB)) return { local: BUNDLED_DB };
+  return null;
 }
 
 // ---------- 远程 muse.db 下载（流式，跟随重定向） ----------
@@ -68,7 +78,7 @@ function downloadToFile(url, dest, redirectsLeft = 3) {
 // 确保 muse.db 本地可用，返回本地路径。force=true 强制重新下载远程副本。
 async function ensureMuseDb(force = false) {
   const src = resolveSource();
-  if (!src) throw new Error('未配置麦动 muse.db 地址（设置 → 麦动点歌）');
+  if (!src) throw new Error('未找到麦动 muse.db（可放 /data/muse.db、打进镜像或到设置里配置地址）');
   if (src.local) {
     if (!fs.existsSync(src.local)) throw new Error('muse.db 不存在: ' + src.local);
     return src.local;
@@ -281,7 +291,7 @@ async function resolveMuseUrl(no) {
 }
 
 module.exports = {
-  getMuseUrl, ensureMuseDb, available, songCount,
+  getMuseUrl, resolveSource, ensureMuseDb, available, songCount,
   allSongs, rankPlaylists, rankSongs,
   resolveMuseUrl,
 };

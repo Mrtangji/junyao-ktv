@@ -19,3 +19,6 @@ data/
 *.db-journal
 *.db-wal
 *.db-shm
+
+# CI 下载的麦动曲库（Release muse-db 附件），不进 git
+app/docker/vendor/

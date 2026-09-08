@@ -2596,7 +2596,7 @@ function updateBoardSrcUI(){const el=document.getElementById('s-boardsrc');if(el
 function updateMdCfgUI(){const el=document.getElementById('s-mdcfg');if(!el)return;
   const parts=[];
   if(mdCfg.catalogUrl&&mdCfg.apiBase)parts.push('曲库+API');else if(mdCfg.catalogUrl)parts.push('曲库');else if(mdCfg.apiBase)parts.push('API');
-  if(mdCfg.museUrl)parts.push(mdCfg.museOk===false?'muse(未就绪)':'muse'+(mdCfg.museSongs?'('+mdCfg.museSongs+'首)':''));
+  if(mdCfg.museOk||mdCfg.museUrl)parts.push(mdCfg.museOk===false?'muse(未就绪)':'muse'+(mdCfg.museSongs?'('+mdCfg.museSongs+'首)':''));
   el.textContent=parts.length?parts.join(' · '):'未配置';}
 async function refreshMdCfg(){try{mdCfg=await fetch('/api/md/config').then(r=>r.json());}catch(e){}updateMdCfgUI();}
 function toggleBoardSrc(){
@@ -2616,7 +2616,7 @@ function editMdConfig(){
     '<input id="md-cat-input" style="width:100%;box-sizing:border-box;font-size:15px;padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:#0d0a1f;color:#fff;margin-bottom:12px" placeholder="http://192.168.1.50:8080/catalog.json" value="'+String(mdCfg.catalogUrl||'').replace(/"/g,'')+'"/>'+
     '<div style="color:var(--sub);font-size:13px;margin-bottom:6px">② API 音源服务基地址（maidong 音源协议 /search /resolve，可选）</div>'+
     '<input id="md-api-input" style="width:100%;box-sizing:border-box;font-size:15px;padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:#0d0a1f;color:#fff;margin-bottom:12px" placeholder="http://192.168.1.60:9000" value="'+String(mdCfg.apiBase||'').replace(/"/g,'')+'"/>'+
-    '<div style="color:var(--sub);font-size:13px;margin-bottom:6px">③ muse.db 曲库地址（URL 或容器内路径，可选）——启用后点歌榜多出「全部歌曲」与麦动排行榜，下载为 ts 格式 MV（自动转 mp4/mp3 入库）</div>'+
+    '<div style="color:var(--sub);font-size:13px;margin-bottom:6px">③ muse.db 曲库地址（URL 或容器内路径）——留空自动：优先 /data/muse.db，其次镜像内置曲库（约12.5万首可下载+麦动排行榜），下载为 ts 格式 MV（自动转 mp4/mp3 入库）</div>'+
     '<input id="md-muse-input" style="width:100%;box-sizing:border-box;font-size:15px;padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:#0d0a1f;color:#fff" placeholder="http://…/muse.db 或 /data/muse.db" value="'+String(mdCfg.museUrl||'').replace(/"/g,'&quot;')+'"/>'+
     '<div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end">'+
     '<button id="md-cancel" style="font-size:15px;padding:8px 18px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:transparent;color:#ccc;cursor:pointer">取消</button>'+

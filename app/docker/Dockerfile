@@ -28,6 +28,11 @@ RUN npm install --omit=dev
 COPY server ./server
 COPY web ./web
 
+# 麦动曲库 muse.db（约1GB，67万首）：git 放不下（GitHub 单文件限100MB），由 CI
+# 在构建前从 GitHub Release(muse-db 标签) 下载 muse.db.gz 解压到 vendor/。
+# 服务端未配置 md_muse_url 且 /data/muse.db 不存在时自动使用它（server/muse.js）。
+COPY vendor/muse.db /app/vendor/muse.db
+
 ENV DATA_DIR=/data
 ENV MV_DIR=/mv
 ENV PORT=8080

@@ -73,7 +73,8 @@ async function loadCatalog() {
 async function boards() {
   const out = [];
   const errors = [];
-  if (muse.getMuseUrl()) {
+  // 自动发现（/data/muse.db → 镜像内置）也算就绪，不强制要求填配置
+  if (muse.available()) {
     try {
       out.push({ bangid: 'muse_all', name: '全部歌曲' });
       out.push(...await muse.rankPlaylists());
