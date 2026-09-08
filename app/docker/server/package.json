@@ -13,6 +13,7 @@
     "ws": "^8.16.0",
     "multer": "^1.4.5-lts.1",
     "qrcode": "^1.5.3",
-    "pinyin-pro": "^3.29.3"
+    "pinyin-pro": "^3.29.3",
+    "selfsigned": "^2.4.1"
   }
 }
