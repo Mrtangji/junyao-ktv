@@ -62,6 +62,39 @@ function findLyricsPath(filepath) {
 // 永远无法知道一个 MV 到底有几条音轨，只能靠猜（猜错就把双音轨文件当单音轨/
 // 声道型处理）。真正可靠的办法是在扫描曲库时用 ffprobe 直接读取音轨数量存入
 // 数据库，播放时把这个数字告诉前端，播放器不用再猜。
+// 一次性探测文件可解析性与音轨数：
+//   valid        —— ffprobe 能否解析出有效流（false = 文件损坏/下载不完整，
+//                    常见于网络下载中断的 .ts，播起来也是黑屏，扫描时直接跳过）
+//   transient    —— 探测失败是暂时性的（超时/IO 抖动），文件本身可能没问题，
+//                    本轮跳过但不清除已入库记录，下轮扫描再试
+//   audioTracks  —— 有效音频流数量（只认 codec_name 明确的流；MPEG-TS 里
+//                    ffprobe 可能把未知编码流也报成音频，ffmpeg demux 却不认，
+//                    照单全收会让数据库音轨数虚高、转码映射失败）
+function probeMedia(filepath) {
+  const FFPROBE_ARGS = [
+    '-v', 'error',
+    '-analyzeduration', '10000000', '-probesize', '10000000',
+    '-show_entries', 'stream=codec_type,codec_name',
+    '-of', 'csv=p=0',
+    filepath,
+  ];
+  try {
+    const out = execFileSync('ffprobe', FFPROBE_ARGS, { timeout: 20000 }).toString();
+    const lines = out.split('\n').map(l => l.trim()).filter(l => l && l.includes(','));
+    if (lines.length === 0) return { valid: false, transient: false, audioTracks: 1 };
+    const audio = lines
+      .filter(l => l.startsWith('audio,'))
+      .map(l => l.slice('audio,'.length))
+      .filter(c => c && !/^(unknown|n\/a)?$/i.test(c));
+    return { valid: true, transient: false, audioTracks: Math.max(1, audio.length) };
+  } catch (e) {
+    // 超时被 kill / 其它 IO 错误都按暂时性失败处理（下轮再试）；
+    // 只有 ffprobe 正常退出但报 Invalid data 才判定文件本身坏掉
+    const invalidData = /invalid data/i.test(String(e.stderr || ''));
+    return { valid: false, transient: !invalidData, audioTracks: 1 };
+  }
+}
+
 function probeAudioTracks(filepath) {
   try {
     // 只统计 codec_name 明确的音频流：MPEG-TS 里 ffprobe 可能把未知编码的
@@ -210,13 +243,30 @@ async function scanLibrary() {
   // 等后面的文件也扫完。单条记录探测/入库失败只记日志跳过，不影响其余文件
   // 继续扫描（沿用原来的"单条失败不影响整体"原则）。
   let added = 0;
+  // 本轮判定为"文件本身坏掉"的相对路径：不入库；已入库的同名记录也会在
+  // 清理阶段被一并移除（连同它的队列/收藏/历史引用）。
+  const brokenRel = new Set();
   for (const { f, rel } of files) {
     if (!existingSet.has(rel)) {
       try {
+        // 新文件先验证可解析性：损坏/下载不完整的文件（ffprobe 报 Invalid
+        // data）直接跳过不入库——播起来也是黑屏。暂时性失败（超时/IO 抖动）
+        // 同样跳过本轮，但保留记录待下轮重试。
+        const { valid, transient, audioTracks } = probeMedia(f);
+        if (!valid) {
+          if (transient) {
+            console.warn('曲库扫描-文件探测暂时失败，本轮跳过待下轮重试:', rel);
+          } else {
+            brokenRel.add(rel);
+            console.warn('曲库扫描-文件无法解析（损坏或下载不完整），已跳过:', rel);
+          }
+          await yieldToEventLoop();
+          continue;
+        }
         const { artist, title } = parseSongMeta(f);
         const media_type = AUDIO_EXT.includes(path.extname(f).toLowerCase()) ? 'audio' : 'video';
-        // 新文件入库时顺手探测音轨数，避免播放时才发现切换不了；纯 MP3 永远是单音轨。
-        const audio_tracks = media_type === 'audio' ? 1 : probeAudioTracks(f);
+        // 音轨数在探测可解析性时顺带拿到，避免二次 ffprobe；纯 MP3 永远单音轨。
+        const audio_tracks = media_type === 'audio' ? 1 : audioTracks;
         const lyrics = findLyricsPath(f);
         // 歌词路径存绝对路径：下载目录可配置后歌词文件不一定在 MV_DIR 下，相对路径
         // 表达不了跨目录引用（/lyrics/:id 接口同时兼容旧库存量的相对路径）。
@@ -225,6 +275,15 @@ async function scanLibrary() {
         if (r.changes > 0) added++;
       } catch (e) {
         console.error('曲库扫描-新增文件入库失败(' + rel + '):', e.message);
+      }
+    } else if (path.extname(rel).toLowerCase() === '.ts') {
+      // 已入库的 .ts 也复查可解析性：网络下载的 ts 是坏文件重灾区，且这类
+      // 文件入库时可能还是旧的"失败回落 1 音轨"逻辑。坏文件记入 brokenRel，
+      // 清理阶段连同其记录一起移除。
+      const { valid, transient } = probeMedia(f);
+      if (!valid && !transient) {
+        brokenRel.add(rel);
+        console.warn('曲库扫描-已入库的 .ts 无法解析（损坏或下载不完整），将移除:', rel);
       }
     }
     await yieldToEventLoop();
@@ -261,9 +320,11 @@ async function scanLibrary() {
 
   // 清理已不存在的文件记录：这一步只有本地数据库增删操作，没有 ffprobe 这类
   // 耗时 IO，不是本次"渐进式"要解决的瓶颈，保持原有一次性事务写法。
+  // 另外本轮探测出"文件本身坏掉"的记录（brokenRel）也一并清理——文件还在
+  // 磁盘上但无法解析，留着只会让用户点歌时黑屏。
   let removed = 0;
   try {
-    const currentRelSet = new Set(files.map(x => x.rel));
+    const currentRelSet = new Set(files.filter(x => !brokenRel.has(x.rel)).map(x => x.rel));
     const all = db.prepare('SELECT id, filename FROM songs').all();
     // queue 表对 songs.id 有真实的外键约束，但 /api/queue/next 只会把已播完的
     // 队列条目标记成 status='done'，从来不会真正从 queue 表删除——这些"done"的
@@ -299,7 +360,7 @@ async function scanLibrary() {
     console.error('曲库扫描-清理缺失文件阶段失败:', e.message);
   }
 
-  return { total: files.length, added, removed };
+  return { total: files.length, added, removed, skipped: brokenRel.size };
 }
 
 module.exports = { scanLibrary, scanRoots, MV_DIR, probeAudioTracks, findLyricsPath };
