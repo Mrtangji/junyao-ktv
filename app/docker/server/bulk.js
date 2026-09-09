@@ -10,6 +10,11 @@
 //    天然支持断点续传，服务重启后重新启动同一区间即可继续
 //  - 扫库补缺模式比对 MV_DIR 里的 .ts/.mp3，只补缺失与损坏的文件，
 //    绝不清理目录里的其它文件
+//  - 学习 maidong ④编号MV补下逻辑：换链先请求 ls=0（普通 MV 源）再回落 ls=1，
+//    有真 MV 的歌都能拿到可播放 .ts；确实只有 .ls 加密音频容器（无 MV）的歌才跳过，
+//    记入 DATA_DIR/bulk-skipped.txt（每行「歌手 - 歌名.ts」，可用按清单下载重试）
+//  - 反盗版占位文件（字节大小黑名单 12,050,612，BULK_BLOCK_SIZES 可扩展）：
+//    下载前按 Content-Length 拦截、落盘后按大小复核，命中按反盗版跳过记档不计失败
 //  - 部分歌曲服务端只有广告占位视频没有真源（如音译版），换链必然失败：
 //    失败清单记入 state.failedList（跨重启持久），可用 retry 模式一键重试
 // 管理接口（/api/bulk/*，挂载在 index.js，导入/启动/停止需管理员登录）。
@@ -28,6 +33,12 @@ const { sanitize } = require('./lxmusic').internals;
 const DL_CONCURRENCY = Math.max(1, Math.min(6, Number(process.env.BULK_CONCURRENCY) || 2)); // 并发下载（每首要先换链，CDN 压力友好）
 const STATE_SAVE_EVERY = 5;      // 每完成 n 首落盘一次进度
 const FAILED_LIST_CAP = 2000;    // 失败清单上限（防 state 无限膨胀）
+// 和音元反盗版占位文件字节大小黑名单（这些"文件"结构上可能合法但无法播放），
+// 命中按反盗版跳过+记档（不计失败），可用 BULK_BLOCK_SIZES 扩展（maidong 同款机制）
+const BLOCK_SIZES = new Set(
+  (process.env.BULK_BLOCK_SIZES || '12050612')
+    .split(',').map((s) => Number(s.trim())).filter((n) => n > 0)
+);
 
 class BulkDownloader {
   constructor() {
@@ -471,7 +482,11 @@ class BulkDownloader {
         this.state.current = `${item.title}（${item.singer || '未知歌手'}）`;
         let target = null;
         try {
-          const url = await muse.resolveMuseUrl(item.no);
+          // 学习 maidong ④编号MV补下逻辑：先请求 ls=0（普通 MV 源）。接口对
+          // (musicno+ls+device) 哈希路由，缺省 ls=1 会立即返回 .ls 加密音频容器、
+          // 永远轮不到 ls=0 的真 MV 直链——先试 ls=0 才能拿到可播放的 .ts MV；
+          // 确实只有 .ls 源的歌（纯音频无 MV）才会回落到 .ls，走跳过记档。
+          const url = await muse.resolveMuseUrl(item.no, { preferredLs: '0' });
           if (/\.ls(\?|$)/i.test(url)) {
             // .ls = 麦动加密防盗版音乐容器（纯音频、无 MV 视频），跳过并把编号
             // 记入 DATA_DIR/bulk-skipped.txt，之后可用「按编号下载」再试
@@ -483,6 +498,10 @@ class BulkDownloader {
           target = this._pickTarget(item);
           if (!target) { this.state.done++; continue; }
           await this._download(url, target);
+          // 反盗版占位文件（字节大小命中黑名单，如 12,050,612 占位 ts）：
+          // 按反盗版跳过记档，不计失败（maidong 同款判定）
+          const stubSize = fs.statSync(target).size;
+          if (BLOCK_SIZES.has(stubSize)) throw new Error('反盗版占位文件（' + stubSize + ' 字节）');
           // 部分节点返回 Thunder 加密 TS（.ls 同款加密壳包着明文 TS）→ 解密回写
           if (tsdec.isEncryptedPath(target)) {
             const r = await tsdec.processDownload(target, { outTs: target });
@@ -493,15 +512,23 @@ class BulkDownloader {
           const fi = failedList.findIndex((f) => f.no === item.no);
           if (fi >= 0) failedList.splice(fi, 1);   // 重试成功，出清单
         } catch (e) {
-          this.state.failed++;
           const reason = String((e && e.message) || e);
-          this.state.lastError = `${item.title}: ${reason}`;
-          // 记入失败清单（按编号去重，超上限丢弃最旧的）
-          const fi = failedList.findIndex((f) => f.no === item.no);
-          const rec = { no: item.no, title: item.title, singer: item.singer || '', reason };
-          if (fi >= 0) failedList[fi] = rec;
-          else { failedList.push(rec); if (failedList.length > FAILED_LIST_CAP) failedList.shift(); }
-          if (target) { try { fs.unlinkSync(target + '.part'); } catch (e2) {} }
+          if (reason.indexOf('反盗版') >= 0) {
+            // 反盗版占位文件：与 .ls 同路——跳过并记入跳过清单，不计失败
+            if (target) { try { fs.unlinkSync(target); } catch (e2) {} }
+            this.state.skipped++;
+            this._recordSkipped(item);
+            this.state.current = `跳过反盗版：${item.title}（${item.singer || '未知歌手'}）`;
+          } else {
+            this.state.failed++;
+            this.state.lastError = `${item.title}: ${reason}`;
+            // 记入失败清单（按编号去重，超上限丢弃最旧的）
+            const fi = failedList.findIndex((f) => f.no === item.no);
+            const rec = { no: item.no, title: item.title, singer: item.singer || '', reason };
+            if (fi >= 0) failedList[fi] = rec;
+            else { failedList.push(rec); if (failedList.length > FAILED_LIST_CAP) failedList.shift(); }
+            if (target) { try { fs.unlinkSync(target + '.part'); } catch (e2) {} }
+          }
         }
         if (++sinceSave >= STATE_SAVE_EVERY) { sinceSave = 0; this._saveState(); }
       }
@@ -535,6 +562,15 @@ class BulkDownloader {
           res.resume();
           file.close(() => fs.unlink(target + '.part', () => {}));
           return reject(new Error('HTTP ' + res.statusCode));
+        }
+        // 反盗版拦截（下载时中止，不落盘）：Content-Length 命中占位字节黑名单
+        // → 一个字节都不写，省掉整段下载流量（maidong 同款）
+        const clen = Number(res.headers['content-length']) || 0;
+        if (clen && BLOCK_SIZES.has(clen)) {
+          res.destroy();
+          file.destroy();
+          try { fs.unlinkSync(target + '.part'); } catch (e2) {}
+          return reject(new Error('反盗版占位文件（' + clen + ' 字节）'));
         }
         res.pipe(file);
         file.on('finish', () => file.close(() => fs.rename(target + '.part', target, resolve)));

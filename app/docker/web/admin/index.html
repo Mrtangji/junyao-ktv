@@ -313,9 +313,10 @@ main{max-width:960px;margin:0 auto;padding:24px}
     </div>
     <div style="font-size:12px;color:var(--sub);line-height:1.7;margin-bottom:12px">
       曲库目录自动从内置 muse.db 解析（按「最常唱」排序），无需导入。已下载过的自动跳过，
-      中断后重新启动同一区间即可续传；文件保存为 MV 目录「歌手 - 歌名.ts」，
-      完成后自动扫描入库。「扫库补缺」会校验 MV 目录已下载文件的完整性并自动补下缺失/损坏的。
-      遇到反盗版加密文件（.ls 音乐容器，无 MV）会跳过并把「歌手 - 歌名.ts」记到
+      中断后重新启动同一区间即可续传；文件保存为 MV/ts 目录「歌手 - 歌名.ts」，
+      完成后自动扫描入库。「扫库补缺」会校验 MV/ts 目录已下载文件的完整性并自动补下缺失/损坏的。
+      换链优先请求普通 MV 源（ls=0，maidong 编号MV补下同款），有真 MV 的歌都能有效下载；
+      仅当服务端只有 .ls 加密音频容器（无 MV）或命中反盗版占位文件时才跳过，并把「歌手 - 歌名.ts」记到
       /data/bulk-skipped.txt；需要时把清单内容粘贴到上面重试。
     </div>
     <div id="bulk-err" style="color:var(--pink);font-size:12px;min-height:14px;margin-bottom:8px"></div>

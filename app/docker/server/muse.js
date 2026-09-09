@@ -306,17 +306,21 @@ async function getKtvApi() {
 // 按歌曲编号实时换签名直链（返回 .ts 或 .ls）。cloud_url 会过期，禁止用库里的旧链接。
 // 注意：部分节点对某些歌会返回广告视频（如 ad_files/my_ad_video.ts）占位，
 // 这里过滤广告直链并用 regenerateDevice 换设备/节点重试（节点路由与设备相关）。
-// 部分歌曲（如音译版）只有 .ls 加密音乐容器没有 .ts：优先返回 .ts（含 MV 视频），
-// 重试用尽仍只有 .ls 时返回 .ls（调用方经 tsdecrypt.processDownload 解出 mp3+歌词）。
-async function resolveMuseUrl(no) {
+// opts.preferredLs：优先请求的 ls 值（透传给 ktv_api getSongUrl）。接口对
+// (musicno+ls+device) 哈希路由到不同上游节点，ls=0 是普通 MV 源、ls=1 优先返回
+// .ls 加密音频容器——批量下载想拿真 MV 必须先试 ls=0（maidong ④编号MV补下同款）；
+// 缺省 undefined 时脚本默认 ls=1（点歌抽音频场景）。命中 .ts 立即返回；重试用尽
+// 仍只有 .ls 时返回 .ls（调用方经 tsdecrypt.processDownload 解出 mp3+歌词）。
+async function resolveMuseUrl(no, opts = {}) {
   if (!no) throw new Error('缺少麦动歌曲编号');
+  const preferredLs = opts.preferredLs != null ? String(opts.preferredLs) : undefined;
   const api = await getKtvApi();
   const id = String(no);
   let last = '';
   let lsUrl = '';
   for (let i = 0; i < 4; i++) {
     if (i > 0 && api.regenerateDevice) api.regenerateDevice();
-    const url = await api.getSongUrl(id, '720', false);
+    const url = await api.getSongUrl(id, '720', false, preferredLs);
     if (url && /^https?:\/\//i.test(url) && !/ad[_-]?(files|video)|my_ad/i.test(url)) {
       if (/\.ts(\?|$)/i.test(url)) return url;
       if (/\.ls(\?|$)/i.test(url) && !lsUrl) lsUrl = url;
