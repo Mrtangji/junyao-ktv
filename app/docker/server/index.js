@@ -158,6 +158,8 @@ app.post('/api/admin/change-password', requireAdminAuth, (req, res) => {
 });
 
 // ---------- 静态资源 ----------
+// 根地址直达 TV 端页面（http://host:8080 = /tv/）
+app.get('/', (req, res) => res.redirect('/tv/'));
 app.use('/tv',    express.static(path.join(__dirname, '../web/tv')));
 app.use('/m',     express.static(path.join(__dirname, '../web/mobile')));
 app.use('/admin', express.static(path.join(__dirname, '../web/admin')));
