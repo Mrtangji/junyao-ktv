@@ -12,7 +12,8 @@
 //    绝不清理目录里的其它文件
 //  - 学习 maidong ④编号MV补下逻辑：换链先请求 ls=0（普通 MV 源）再回落 ls=1，
 //    有真 MV 的歌都能拿到可播放 .ts；确实只有 .ls 加密音频容器（无 MV）的歌才跳过，
-//    记入 DATA_DIR/bulk-skipped.txt（每行「歌手 - 歌名.ts」，可用按清单下载重试）
+//    记入 DATA_DIR/bulk-skipped.txt（每行「歌手 - 歌名.ts」）；「按清单下载」留空
+//    即自动读取该文件重试，成功（或文件已存在）后逐首移出记录
 //  - 反盗版占位文件（字节大小黑名单 12,050,612，BULK_BLOCK_SIZES 可扩展）：
 //    下载前按 Content-Length 拦截、落盘后按大小复核，命中按反盗版跳过记档不计失败
 //  - 部分歌曲服务端只有广告占位视频没有真源（如音译版），换链必然失败：
@@ -97,6 +98,29 @@ class BulkDownloader {
   skippedText() {
     try { return { ok: true, text: fs.readFileSync(this.skippedPath, 'utf8') }; }
     catch (e) { return { ok: true, text: '' }; }
+  }
+
+  /** 补下成功后从跳过清单移出（状态与 txt 文件同步，maidong ④同款）。
+   *  编号匹配不到时按「歌手 - 歌名.ts」名字兜底——muse.db 目录有重复曲目项，
+   *  按清单文件名下载命中的可能是同名的另一编号条目。 */
+  _removeSkipped(no, base) {
+    const list = this.state.skippedList;
+    if (!list || !list.length) return;
+    let i = list.findIndex((f) => f.no === no);
+    if (i < 0 && base) {
+      i = list.findIndex((f) =>
+        `${sanitize(f.singer) || '未知歌手'} - ${sanitize(f.title) || '未知歌名'}.ts` === base);
+    }
+    if (i < 0) return;
+    list.splice(i, 1);
+    try {
+      if (list.length) {
+        const lines = list.map((f) => `${sanitize(f.singer) || '未知歌手'} - ${sanitize(f.title) || '未知歌名'}.ts`);
+        fs.writeFileSync(this.skippedPath, lines.join('\n') + '\n', 'utf8');
+      } else {
+        fs.unlinkSync(this.skippedPath);
+      }
+    } catch (e) { log.error('BULK', '跳过清单更新失败: ' + e.message); }
   }
 
   /** 清空反盗版跳过清单（txt 文件一并删除）。 */
@@ -184,9 +208,16 @@ class BulkDownloader {
       }
     } else if (Array.isArray(opts.nos)) {
       tokens = opts.nos.map((n) => String(n).trim()).filter((n) => /^\d+$/.test(n));
+    } else if (opts.mode === 'nos') {
+      // maidong ④编号MV补下同款：清单留空时自动读取跳过清单文件
+      // （DATA_DIR/bulk-skipped.txt，每行「歌手 - 歌名.ts」），下载成功后逐首移出记录
+      try {
+        tokens = fs.readFileSync(this.skippedPath, 'utf8').split(/\r?\n/)
+          .map((s) => s.trim()).filter(Boolean);
+      } catch (e) { tokens = []; }
     }
     if (retry && !(this.state.failedList || []).length) return { ok: false, error: '没有待重试的失败记录' };
-    if (tokens && !tokens.length) return { ok: false, error: '清单为空（每行一个编号或「歌手 - 歌名.ts」）' };
+    if (tokens && !tokens.length) return { ok: false, error: '清单为空（留空=自动读取 /data/bulk-skipped.txt；也可每行填一个编号或「歌手 - 歌名.ts」）' };
     const limit = Number(opts.limit) || 0;
     const from = Math.max(1, Math.floor(Number(opts.from) || 1));
     let to = Math.floor(Number(opts.to) || (limit || 0));   // 0 = 全库（_run 里按实际目录长度取）
@@ -474,9 +505,10 @@ class BulkDownloader {
         const existingOk = existing && (this.state.mode !== 'scan' || /\.mp3$/i.test(existing) || this.checkTsIntegrity(existing));
         if (existingOk) {
           this.state.done++;
-          // 已下载成功的历史失败项从清单移除
+          // 已下载成功的历史失败项从清单移除；跳过清单里的也一并移出（maidong ④同款）
           const fi = failedList.findIndex((f) => f.no === item.no);
           if (fi >= 0) failedList.splice(fi, 1);
+          this._removeSkipped(item.no, this._nameCandidates(item)[0]);
           continue;
         }
         this.state.current = `${item.title}（${item.singer || '未知歌手'}）`;
@@ -511,6 +543,7 @@ class BulkDownloader {
           this.state.done++;
           const fi = failedList.findIndex((f) => f.no === item.no);
           if (fi >= 0) failedList.splice(fi, 1);   // 重试成功，出清单
+          this._removeSkipped(item.no, this._nameCandidates(item)[0]);            // 补下成功，移出跳过清单（maidong ④同款）
         } catch (e) {
           const reason = String((e && e.message) || e);
           if (reason.indexOf('反盗版') >= 0) {

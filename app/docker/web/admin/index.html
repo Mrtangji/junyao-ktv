@@ -308,7 +308,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
       <div style="flex:1"><label>结束序号（留空=到末尾）</label><input id="bulk-to" type="number" min="1" placeholder="到末尾"></div>
     </div>
     <div class="form-row" style="margin-top:8px">
-      <label>按清单下载（每行一个：编号或「歌手 - 歌名.ts」，可直接填入跳过清单内容）</label>
+      <label>按清单下载（每行一个：编号或「歌手 - 歌名.ts」；留空自动读取 /data/bulk-skipped.txt）</label>
       <textarea id="bulk-nos" rows="3" placeholder="7665908&#10;林子祥、胡夏 - 数字人生-我们的歌第三季.ts" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--fg);padding:8px;font-size:12px;font-family:monospace"></textarea>
     </div>
     <div style="font-size:12px;color:var(--sub);line-height:1.7;margin-bottom:12px">
@@ -739,9 +739,9 @@ async function bulkStartNos(){
   const err = document.getElementById('bulk-err');
   err.textContent = '';
   const text = document.getElementById('bulk-nos').value.trim();
-  if(!text){ err.textContent = '请先粘贴清单（每行一个编号或「歌手 - 歌名.ts」）'; return; }
   try{
-    const r = await fetch('/api/bulk/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})}).then(r=>r.json());
+    // 清单留空 = 自动读取 /data/bulk-skipped.txt（maidong 编号MV补下同款，服务端处理）
+    const r = await fetch('/api/bulk/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'nos',text})}).then(r=>r.json());
     if(r.error){ err.textContent = r.error; return; }
     toast('清单下载已启动');
     bulkRefresh();
