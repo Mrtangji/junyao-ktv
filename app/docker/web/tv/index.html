@@ -2515,7 +2515,7 @@ async function initLX(){
   if(!lxBoardsLoaded){
     bar.innerHTML='<div class="lx-empty">榜单加载中…</div>';
     try{
-      const boards=await fetch(boardSrc==='md'?'/api/md/boards':'/api/lx/boards').then(r=>r.json());
+      const boards=await fetch(boardSrc==='md'?'/api/md/boards':`/api/lx/boards?src=${boardSrc}`).then(r=>r.json());
       if(boards.error){bar.innerHTML='<div class="lx-empty">⚠️ '+boards.error+'</div>';return;}
       lxRenderBoards(boards);
       lxBoardsLoaded=true;
@@ -2540,11 +2540,11 @@ async function lxLoadBoard(bangid,name){
   hint.textContent=`${name} · 加载中…`;
   list.innerHTML='';
   try{
-    const api=boardSrc==='md'?`/api/md/board?bangid=${encodeURIComponent(bangid)}&page=1&limit=100`:`/api/lx/board?bangid=${encodeURIComponent(bangid)}&page=1&limit=100`;
+    const api=boardSrc==='md'?`/api/md/board?bangid=${encodeURIComponent(bangid)}&page=1&limit=100`:`/api/lx/board?bangid=${encodeURIComponent(bangid)}&page=1&limit=100&src=${boardSrc}`;
     const r=await fetch(api).then(x=>x.json());
     if(seq!==lxSeq)return; // 已切到其它榜单，丢弃过期结果
     if(r.error){hint.textContent='⚠️ '+r.error;return;}
-    hint.textContent=`${boardSrc==='md'?'麦动':'酷我'} · ${name} · ${r.total||r.list.length}首 · 点歌后自动下载/播放`;
+    hint.textContent=`${srcName(boardSrc)} · ${name} · ${r.total||r.list.length}首 · 点歌后自动下载/播放`;
     lxRenderList(list,r.list);
   }catch(e){if(seq===lxSeq)hint.textContent='⚠️ 榜单加载失败：'+e.message;}
 }
@@ -2572,7 +2572,7 @@ async function lxOrder(idx){
   const btn=event&&event.target;
   if(btn){btn.disabled=true;btn.textContent='…';}
   try{
-    const r=await fetch(boardSrc==='md'?'/api/md/queue':'/api/lx/queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({songmid:s.songmid,name:s.name,singer:s.singer,url:s.url||null,pic:s.pic,format:dlFormat,src:s.src||''})}).then(x=>x.json());
+    const r=await fetch(boardSrc==='md'?'/api/md/queue':'/api/lx/queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({songmid:s.songmid,name:s.name,singer:s.singer,url:s.url||null,pic:s.pic,format:dlFormat,src:s.src||boardSrc})}).then(x=>x.json());
     if(r.error==='NO_ACTIVE_SOURCE'){showToast('⚠️ '+r.message);if(btn){btn.disabled=false;btn.textContent='点歌';}return;}
     if(r.error){showToast('⚠️ '+r.error);if(btn){btn.disabled=false;btn.textContent='点歌';}return;}
     showToast(r.downloaded?`《${s.name}》下载完成，已加入队列 🎶`:`《${s.name}》已加入队列 🎶`);
@@ -2591,13 +2591,17 @@ function toggleDlFormat(){
   showToast(dlFormat==='mp3'?'✅ 点唱榜下载格式：MP3（320K 音频）':'✅ 点唱榜下载格式：MV（封面+320K 音频合成视频）');
 }
 updateDlFmtUI();
-// ===== 点歌榜来源（酷我 / 麦动）+ 麦动点歌配置 =====
+// ===== 点歌榜来源（麦动 / 酷我 / 网易云 / QQ音乐 / 酷狗）+ 麦动点歌配置 =====
 // 麦动两种数据源（可同时配）：网络曲库 catalog.json（榜单/搜索/下载直链）与
 // API 音源服务（/search + /resolve，maidong docs/音源导入集成设计.md 协议）。
 // 配置存服务端 settings 表（/api/md/config），本机只记住当前选的来源。
-let boardSrc=localStorage.getItem('tv-board-src')==='md'?'md':'kw';
+const BOARD_SRCS=['kw','wy','tx','kg','md'];
+const BOARD_SRC_NAMES={kw:'酷我',wy:'网易云',tx:'QQ音乐',kg:'酷狗',md:'麦动'};
+function srcName(s){return BOARD_SRC_NAMES[s]||'酷我';}
+const BOARD_DEFAULTS={md:['muse_all','全部歌曲'],kw:['255','KTV点唱榜'],wy:['3778678','热歌榜'],tx:['26','热歌榜'],kg:['8888','TOP500']};
+let boardSrc=BOARD_SRCS.includes(localStorage.getItem('tv-board-src'))?localStorage.getItem('tv-board-src'):'kw';
 let mdCfg={catalogUrl:'',apiBase:''};
-function updateBoardSrcUI(){const el=document.getElementById('s-boardsrc');if(el)el.textContent=boardSrc==='md'?'麦动':'酷我';}
+function updateBoardSrcUI(){const el=document.getElementById('s-boardsrc');if(el)el.textContent=srcName(boardSrc);}
 function updateMdCfgUI(){const el=document.getElementById('s-mdcfg');if(!el)return;
   const parts=[];
   if(mdCfg.catalogUrl&&mdCfg.apiBase)parts.push('曲库+API');else if(mdCfg.catalogUrl)parts.push('曲库');else if(mdCfg.apiBase)parts.push('API');
@@ -2605,11 +2609,13 @@ function updateMdCfgUI(){const el=document.getElementById('s-mdcfg');if(!el)retu
   el.textContent=parts.length?parts.join(' · '):'未配置';}
 async function refreshMdCfg(){try{mdCfg=await fetch('/api/md/config').then(r=>r.json());}catch(e){}updateMdCfgUI();}
 function toggleBoardSrc(){
-  boardSrc=boardSrc==='kw'?'md':'kw';
+  boardSrc=BOARD_SRCS[(BOARD_SRCS.indexOf(boardSrc)+1)%BOARD_SRCS.length];
   localStorage.setItem('tv-board-src',boardSrc);
-  lxBoardsLoaded=false;lxBoardBangid=boardSrc==='md'?'muse_all':'255';lxBoardName=boardSrc==='md'?'全部歌曲':'KTV点唱榜';
+  lxBoardsLoaded=false;
+  const [bid,bname]=BOARD_DEFAULTS[boardSrc];
+  lxBoardBangid=bid;lxBoardName=bname;
   updateBoardSrcUI();
-  showToast(boardSrc==='md'?'✅ 点歌榜来源：麦动（需先配置麦动点歌）':'✅ 点歌榜来源：酷我');
+  showToast('✅ 点歌榜来源：'+srcName(boardSrc));
   const pf=document.getElementById('pf-lx');if(pf&&pf.classList.contains('open'))initLX();
 }
 function editMdConfig(){

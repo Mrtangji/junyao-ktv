@@ -227,8 +227,7 @@ function deactivateSource() {
 
 // 通过 LX 源解析 musicUrl（quality 降级重试）
 async function resolveMusicUrl(musicInfo, preferQuality = '320k') {
-  if (!activeSource) throw new Error('NO_ACTIVE_SOURCE');
-  // 网络点唱/榜单的曲目来自内置酷我(kw)源（kwSearch/kwBoardSongs 的 songmid），
+  if (!activeSource) throw new Error('NO_ACTIVE_SOURCE');  // 网络点唱/榜单的曲目来自内置酷我(kw)源（kwSearch/kwBoardSongs 的 songmid），
   // 因此必须用脚本声明的 kw 源解析；仅当脚本不支持 kw 时才退回其第一个源
   //（此时平台不匹配大概率失败，报错会注明平台，方便换源）。
   const keys = Object.keys(activeSource.sources);
@@ -245,6 +244,73 @@ async function resolveMusicUrl(musicInfo, preferQuality = '320k') {
   }
   const plat = keys.includes('kw') ? 'kw' : `${sourceKey}(非kw，与榜单平台不匹配)`;
   throw new Error(`音源「${activeSource.meta.name}」${plat} 解析失败：${(lastErr && lastErr.message) || '未知原因'}，可在曲库管理换音源重试`);
+}
+
+// ---------- 换链自动换源（源过期兜底） ----------
+// resolveMusicUrl 失败（脚本过期/接口失效/NO_ACTIVE_SOURCE）时依次：
+//   1) 轮换其余已导入的 LX 源脚本（实例按 id 缓存，避免每首歌重新拉起沙箱）；
+//   2) kw 平台再用内置 antiserver 直链兜底（不依赖任何脚本）。
+// 歌曲来自哪个平台（musicInfo.src：kw/wy/tx/kg）就优先用各脚本的同平台源解析。
+const _altSourceCache = new Map(); // id -> inst | null（拉起失败的记 null 避免反复重试）
+
+async function getAltSourceInstance(id) {
+  if (_altSourceCache.has(id)) return _altSourceCache.get(id);
+  let inst = null;
+  try {
+    const row = db.prepare('SELECT script FROM lx_sources WHERE id=?').get(id);
+    if (row) inst = await runSourceScript(row.script);
+  } catch (e) { inst = null; }
+  _altSourceCache.set(id, inst);
+  return inst;
+}
+
+async function resolveViaInstance(inst, sourceKey, musicInfo, preferQuality) {
+  const keys = Object.keys(inst.sources);
+  const key = keys.includes(sourceKey) ? sourceKey : null;
+  if (!key) throw new Error(`音源「${inst.meta.name}」不支持 ${sourceKey} 平台`);
+  const qualitys = inst.sources[key].qualitys || ['128k', '320k'];
+  const order = [preferQuality, ...qualitys.filter(q => q !== preferQuality)];
+  let lastErr;
+  for (const q of order) {
+    try {
+      const url = await inst.requestHandler({ source: key, action: 'musicUrl', info: { type: q, musicInfo } });
+      if (url && typeof url === 'string' && /^https?:/.test(url)) return url;
+      lastErr = new Error('脚本返回无效 url');
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error('解析失败');
+}
+
+// 带自动换源的 musicUrl 解析。platform：歌曲来源平台（kw/wy/tx/kg）。
+async function resolveMusicUrlWithFallback(platform, musicInfo, preferQuality = '320k') {
+  const errors = [];
+  // 1) 当前激活源
+  if (activeSource) {
+    try { return await resolveViaInstance(activeSource, platform, musicInfo, preferQuality); }
+    catch (e) { errors.push(`当前源「${activeSource.meta.name}」: ${e.message}`); }
+  } else {
+    errors.push('NO_ACTIVE_SOURCE');
+  }
+  // 2) 其余已导入源逐个轮换
+  const rows = activeSource
+    ? db.prepare('SELECT id, name FROM lx_sources WHERE id != ? ORDER BY id').all(activeSource.id)
+    : db.prepare('SELECT id, name FROM lx_sources ORDER BY id').all();
+  for (const row of rows) {
+    const inst = await getAltSourceInstance(row.id);
+    if (!inst) { errors.push(`源#${row.id} 拉起失败`); continue; }
+    try { return await resolveViaInstance(inst, platform, musicInfo, preferQuality); }
+    catch (e) { errors.push(`源「${inst.meta.name}」: ${e.message}`); }
+  }
+  // 3) kw 平台最后用内置酷我直链兜底
+  if (platform === 'kw') {
+    try {
+      const { resolveKwUrl } = require('./kw-url');
+      const url = await resolveKwUrl(musicInfo.songmid || musicInfo.songId || musicInfo.musicId, preferQuality);
+      if (url) return url;
+      errors.push('内置酷我直链也失败');
+    } catch (e) { errors.push(`内置酷我直链: ${e.message}`); }
+  }
+  throw new Error(`所有音源解析失败（${errors.join('；')}）`);
 }
 
 // ---------- 内置酷我(kw)源：搜索 + 榜单 ----------
@@ -285,6 +351,8 @@ function kwSong(item, nameField, singerField) {
     album: item.albumName || item.ALBUM || item.album || '',
     pic: item.pic || item.img || item.picPath || null,
     source: 'kw',
+    // 秒（酷我搜索 DURATION / 榜单 duration；取不到为 0，调用方不过滤）
+    duration: parseInt(item.DURATION) || parseInt(item.duration) || parseInt(item.interval) || 0,
     types: item.types || kwParseQuality(item.n_minfo || item.N_MINFO),
   };
 }
@@ -301,7 +369,7 @@ async function kwSearch(str, page = 1, limit = 30) {
   const resp = await httpReq(url);
   let body = resp.body;
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { throw new Error('酷我搜索响应解析失败'); } }
-  const list = (body.abslist || []).map(info => kwSong({ songmid: String(info.MUSICRID || '').replace('MUSIC_', ''), name: info.SONGNAME, singer: formatSinger(info.ARTIST), album: info.ALBUM, types: kwParseQuality(info.N_MINFO) }));
+  const list = (body.abslist || []).map(info => kwSong({ songmid: String(info.MUSICRID || '').replace('MUSIC_', ''), name: info.SONGNAME, singer: formatSinger(info.ARTIST), album: info.ALBUM, DURATION: info.DURATION, types: kwParseQuality(info.N_MINFO) }));
   return { list, total: parseInt(body.TOTAL || list.length), page, limit };
 }
 
@@ -422,7 +490,7 @@ function sniffAudio(buf) {
 // format: 'mp3'（默认，320K 音质优先，存 MP3_DIR）| 'mv'（同一 320K 音频 + 封面
 //         合成为 .mp4 存 MV_DIR；同时保留同名 .mp3 与 .lrc 到 MP3_DIR——曲库里
 //         MV/MP3 双版本可用，LRC 跟 MP3 走）
-async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, format = 'mp3' }) {
+async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, format = 'mp3', lrcText = null }) {
   const mp3Root = dlcfg.getMp3Dir();
   const mvRoot = path.resolve(dlcfg.MV_DIR);
   const isMv = format === 'mv';
@@ -447,8 +515,11 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   const key = rel.replace(/\\/g, '/');
   const existed = db.prepare('SELECT * FROM songs WHERE filename=?').get(key);
   if (existed) return existed;
-  // 1) 解析 url（320K 优先）；2) 拉流到临时文件；3) mp3 直存 / 转码 / 合成 MV
-  const url = await resolveMusicUrl(source === 'kw' ? { songmid, songId: songmid, musicId: songmid, name, singer } : musicInfoOf(songmid, name, singer));
+  // 1) 解析 url（320K 优先；当前源失效自动轮换其余源，kw 再退内置直链）；
+  // 2) 拉流到临时文件；3) mp3 直存 / 转码 / 合成 MV
+  const platform = ['kw', 'wy', 'tx', 'kg'].includes(source) ? source : 'kw';
+  const musicInfo = { songmid, songId: songmid, musicId: songmid, hash: songmid, id: songmid, name, singer, singerName: singer, source: platform };
+  const url = await resolveMusicUrlWithFallback(platform, musicInfo);
   const tmpPath = path.join(TMP_DIR, `dl_${Date.now()}_${process.pid}`);
   const resp = await httpReq(url, { responseType: 'buffer', timeout: 120000 });
   if (resp.statusCode !== 200) throw new Error(`下载失败 HTTP ${resp.statusCode}`);
@@ -483,14 +554,15 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
     }
   } catch (e) { try { fs.unlinkSync(finalPath); } catch (e2) {} throw e; }
   // 同步下载 LRC 歌词（同名 .lrc 放一起，扫描器自动关联 lyrics_path）；
-  // 歌词属附属信息，失败不影响歌曲入库。仅酷我源提供该接口。
-  if (source === 'kw') {
-    try {
-      const lrc = await kwLyric(songmid);
-      // LRC 跟 MP3 走：存到 MP3_DIR 里与 mp3 同名放一起，扫描时自动关联
+  // 歌词属附属信息，失败不影响歌曲入库。外部传入 lrcText（wy/tx/kg 由 boardsdk 取）
+  // 优先使用；kw 平台用内置酷我歌词接口兜底。
+  try {
+    let lrc = lrcText;
+    if (!lrc && platform === 'kw') { try { lrc = await kwLyric(songmid); } catch (e) { lrc = null; } }
+    if (lrc) {
       fs.writeFileSync(path.join(mp3Root, rel.replace(/\.(mp3|mp4)$/i, '.lrc')), lrc, 'utf8');
-    } catch (e) { console.error('LRC 下载失败(忽略):', name, e.message); }
-  }
+    } else { console.error('LRC 下载失败(忽略):', name); }
+  } catch (e) { console.error('LRC 下载失败(忽略):', name, e.message); }
   // 4) 扫描入库并返回新行
   const { scanLibrary } = require('./scanner');
   await scanLibrary();
@@ -516,7 +588,7 @@ function findLocalSong(name, singer) {
 
 module.exports = {
   initActiveSource, activateSourceById, deactivateSource, activateScript, activeSource: () => activeSource,
-  resolveMusicUrl, kwSearch, kwBoardSongs, KW_BOARDS, kwLyric,
+  resolveMusicUrl, resolveMusicUrlWithFallback, kwSearch, kwBoardSongs, KW_BOARDS, kwLyric,
   downloadSong, findLocalSong, parseScriptMeta,
   // 内部工具：供 maidong.js 等模块复用下载入库链路
   internals: { httpReq, sniffAudio, moveFile, ffmpegToMp3, ffmpegMp3ToMv, downloadCover, sanitize, TMP_DIR },

@@ -175,6 +175,13 @@ main{max-width:960px;margin:0 auto;padding:24px}
   border-radius:18px;padding:26px
 }
 #bulk-modal h3{font-size:17px;margin-bottom:18px}
+/* 歌手批量下载弹窗（复用 bulk-modal 样式） */
+#sb-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;z-index:50;display:none;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.6);backdrop-filter:blur(6px)}
+#sb-modal-overlay.open{display:flex}
+#sb-modal{width:min(560px,92vw);max-height:86vh;overflow-y:auto;background:var(--card);border:1px solid rgba(255,255,255,.1);
+  border-radius:18px;padding:26px}
+#sb-modal h3{font-size:17px;margin-bottom:18px}
 </style>
 </head>
 <body>
@@ -203,6 +210,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
   <button class="hbtn" onclick="window.open('/m','_blank')">📱 手机端</button>
   <button class="hbtn primary" onclick="doScan()">🔄 扫描曲库</button>
   <button class="hbtn" onclick="openBulkModal()">📦 全曲库下载</button>
+  <button class="hbtn" onclick="openSingerModal()">🎤 歌手批量下载</button>
   <button class="hbtn" onclick="openLxModal()">🎼 LX 音源</button>
   <button class="hbtn" onclick="openPwModal()">🔑 修改密码</button>
   <button class="hbtn" onclick="doLogout()">🚪 退出登录</button>
@@ -294,6 +302,65 @@ main{max-width:960px;margin:0 auto;padding:24px}
 </div>
 
 <div id="toast"></div>
+
+<!-- 歌手批量下载弹窗（学习 LX Music 歌手批量下载，四平台搜索收集 → 下载入库） -->
+<div id="sb-modal-overlay" onclick="closeSingerModal()">
+  <div id="sb-modal" onclick="event.stopPropagation()">
+    <h3>🎤 歌手批量下载</h3>
+    <div id="sb-config">
+      <div class="form-row">
+        <label>歌手名单（每行一个，可从 .txt 导入）</label>
+        <textarea id="sb-names" rows="6" oninput="sbCountNames()" placeholder="周杰伦&#10;林俊杰&#10;邓丽君" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--fg);padding:8px;font-size:13px;resize:vertical"></textarea>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+          <button class="hbtn" onclick="document.getElementById('sb-file').click()">📂 导入名单</button>
+          <input type="file" id="sb-file" accept=".txt,.csv,text/plain" style="display:none" onchange="sbFileChosen(this)">
+          <span style="font-size:12px;color:var(--sub)" id="sb-count">0 位歌手</span>
+        </div>
+      </div>
+      <div class="form-row" style="display:flex;gap:10px">
+        <div style="flex:1"><label>搜索/下载平台</label>
+          <select id="sb-src" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--fg);padding:8px">
+            <option value="kw">酷我</option><option value="wy">网易云</option><option value="tx">QQ音乐</option><option value="kg">酷狗</option>
+          </select></div>
+        <div style="flex:1"><label>下载格式</label>
+          <select id="sb-format" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--fg);padding:8px">
+            <option value="mp3">MP3（320K 音频+歌词）</option><option value="mv">MV（封面合成视频）</option>
+          </select></div>
+      </div>
+      <div class="form-row" style="display:flex;gap:10px">
+        <div style="flex:1"><label>时长下限（秒，0=不限）</label><input id="sb-mindur" type="number" min="0" value="0"></div>
+        <div style="flex:1"><label>时长上限（秒，0=不限）</label><input id="sb-maxdur" type="number" min="0" value="0"></div>
+      </div>
+      <div class="form-row">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="sb-usefilter" checked> 启用歌名过滤词（现场/伴奏/翻唱/DJ 等噪声清洗）
+        </label>
+        <textarea id="sb-filterwords" rows="3" style="width:100%;margin-top:6px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--fg);padding:8px;font-size:11px;font-family:monospace;resize:vertical" placeholder="加载默认过滤词…"></textarea>
+      </div>
+      <div style="font-size:12px;color:var(--sub);line-height:1.7;margin:8px 0 12px">
+        逐个歌手搜索收集（自动翻页），过滤噪声歌名与时长后逐首下载入库；本地已有的自动跳过。
+        单首下载失败会<b>自动换平台</b>（酷我/网易云/QQ/酷狗 轮换）找同名歌续下；下载保存到
+        MP3_DIR / MV_DIR（与点歌下载一致，按歌手分目录）。
+      </div>
+      <div id="sb-err" style="color:var(--pink);font-size:12px;min-height:14px;margin-bottom:8px"></div>
+      <div class="modal-btns" style="justify-content:flex-start;flex-wrap:wrap;gap:8px">
+        <button class="hbtn primary" onclick="sbStart()">⬇️ 开始</button>
+        <button class="hbtn" onclick="sbStop()">⏹ 停止</button>
+        <button class="hbtn" onclick="closeSingerModal()">关闭</button>
+      </div>
+    </div>
+    <div id="sb-running" style="display:none">
+      <div id="sb-status" style="font-size:13px;color:var(--sub);line-height:1.9">运行中…</div>
+      <div style="height:8px;background:rgba(255,255,255,.08);border-radius:4px;overflow:hidden;margin:10px 0">
+        <div id="sb-bar" style="height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--cyan));transition:width .4s"></div>
+      </div>
+      <div class="modal-btns" style="justify-content:flex-start">
+        <button class="hbtn" onclick="sbStop()">⏹ 停止</button>
+        <button class="hbtn" onclick="closeSingerModal()">后台运行并关闭</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- 全曲库批量下载弹窗（麦动 muse.db 源，最常唱优先，下载到 MV 目录的 ts/ 子目录） -->
 <div id="bulk-modal-overlay" onclick="closeBulkModal()">
@@ -763,6 +830,97 @@ async function bulkStop(){
     toast(r.ok ? '已请求停止（当前正在下载的一首会完成）' : (r.error || '无需停止'));
     bulkRefresh();
   }catch(e){ toast('⚠️ 停止失败：'+e.message); }
+}
+
+// ===== 歌手批量下载（学习 LX Music 歌手批量下载） =====
+let sbTimer = null;
+async function openSingerModal(){
+  document.getElementById('sb-modal-overlay').classList.add('open');
+  document.getElementById('sb-err').textContent = '';
+  sbCountNames();
+  const fw = document.getElementById('sb-filterwords');
+  if(!fw.value.trim()){
+    try{
+      const d = await fetch('/api/singer-batch/defaults').then(r=>r.json());
+      if(d.filterWords) fw.value = d.filterWords;
+    }catch(e){}
+  }
+  sbRefresh();
+  if(sbTimer) clearInterval(sbTimer);
+  sbTimer = setInterval(sbRefresh, 2000);   // 弹窗打开期间轮询进度
+}
+function closeSingerModal(){
+  document.getElementById('sb-modal-overlay').classList.remove('open');
+  if(sbTimer){ clearInterval(sbTimer); sbTimer = null; }
+}
+function sbNames(){
+  const seen = new Set(), names = [];
+  for(let line of document.getElementById('sb-names').value.split(/\r?\n/)){
+    line = line.trim();
+    if(!line || seen.has(line)) continue;
+    seen.add(line); names.push(line);
+  }
+  return names;
+}
+function sbCountNames(){
+  document.getElementById('sb-count').textContent = sbNames().length + ' 位歌手';
+}
+function sbFileChosen(input){
+  const file = input.files && input.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    document.getElementById('sb-names').value = String(reader.result || '');
+    sbCountNames();
+  };
+  reader.readAsText(file, 'utf-8');
+  input.value = '';
+}
+async function sbRefresh(){
+  let st;
+  try{ st = await fetch('/api/singer-batch/status').then(r=>r.json()); }catch(e){ return; }
+  const running = st.phase === 'running';
+  document.getElementById('sb-config').style.display = running ? 'none' : '';
+  document.getElementById('sb-running').style.display = running ? '' : 'none';
+  if(!running && st.phase === 'done' && st.message){
+    document.getElementById('sb-config').style.display = 'none';
+    document.getElementById('sb-running').style.display = '';
+  }
+  if(!running) return;
+  const pct = st.singersTotal ? Math.round(st.singersDone / st.singersTotal * 100) : 0;
+  document.getElementById('sb-bar').style.width = pct + '%';
+  document.getElementById('sb-status').innerHTML =
+    `${st.message || '运行中…'}<br>` +
+    `歌手进度：${st.singersDone}/${st.singersTotal} · 当前：${st.current || '—'}<br>` +
+    `<span style="color:var(--accent)">已下载 ${st.done}</span>` +
+    (st.fallback ? `（其中换源成功 ${st.fallback}）` : '') +
+    ` · 本地已有跳过 ${st.skipped} · <span style="color:${st.failed ? 'var(--pink)' : 'inherit'}">失败 ${st.failed}</span>` +
+    (st.lastError ? `<br><span style="color:var(--pink)">${st.lastError}</span>` : '');
+}
+async function sbStart(){
+  const err = document.getElementById('sb-err');
+  err.textContent = '';
+  const names = sbNames();
+  if(!names.length){ err.textContent = '请先填写歌手名单（每行一个）'; return; }
+  const body = {
+    text: names.join('\n'),
+    src: document.getElementById('sb-src').value,
+    format: document.getElementById('sb-format').value,
+    minDur: parseInt(document.getElementById('sb-mindur').value) || 0,
+    maxDur: parseInt(document.getElementById('sb-maxdur').value) || 0,
+    useFilter: document.getElementById('sb-usefilter').checked,
+    filterWords: document.getElementById('sb-filterwords').value.trim(),
+  };
+  try{
+    const r = await fetch('/api/singer-batch/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
+    if(r.error){ err.textContent = r.error; return; }
+    toast('歌手批量下载已启动');
+    sbRefresh();
+  }catch(e){ err.textContent = '启动失败：'+e.message; }
+}
+async function sbStop(){
+  try{ await fetch('/api/singer-batch/stop',{method:'POST'}); toast('已请求停止（正在下载的一首会完成）'); sbRefresh(); }
+  catch(e){ toast('⚠️ 停止失败：'+e.message); }
 }
 
 checkSession();

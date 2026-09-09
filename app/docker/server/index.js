@@ -467,6 +467,7 @@ app.get('/api/scores/recent', (req, res) => {
 
 // ---------- LX Music（音源导入 / 网络搜索 / 榜单 / 下载点唱） ----------
 const lxmusic = require('./lxmusic');
+const boardsdk = require('./boardsdk');
 lxmusic.initActiveSource();
 
 // 当前激活源 + 已导入源列表
@@ -578,42 +579,50 @@ function attachLocalFlags(list) {
 }
 
 // 榜单列表（KTV点唱榜等）
-app.get('/api/lx/boards', (req, res) => {
-  res.json(lxmusic.KW_BOARDS);
+// 榜单列表（src: kw/wy/tx/kg，缺省 kw；四平台统一由 boardsdk 提供）
+app.get('/api/lx/boards', async (req, res) => {
+  const src = boardsdk.isValidSource(req.query.src) ? req.query.src : 'kw';
+  try { res.json(await boardsdk.boards(src)); }
+  catch (e) { res.status(502).json({ error: '榜单获取失败: ' + e.message }); }
 });
 
 // 榜单歌曲
 app.get('/api/lx/board', async (req, res) => {
+  const src = boardsdk.isValidSource(req.query.src) ? req.query.src : 'kw';
   try {
-    const r = await lxmusic.kwBoardSongs(req.query.bangid || '255', parseInt(req.query.page) || 1, parseInt(req.query.limit) || 100);
+    const r = await boardsdk.boardSongs(src, req.query.bangid || '255', parseInt(req.query.page) || 1, parseInt(req.query.limit) || 100);
     r.list = attachLocalFlags(r.list);
     res.json(r);
   } catch (e) { res.status(502).json({ error: '榜单获取失败: ' + e.message }); }
 });
 
-// 网络搜索
+// 网络搜索（src: kw/wy/tx/kg，缺省 kw；四平台统一由 boardsdk 提供）
 app.get('/api/lx/search', async (req, res) => {
   const q = (req.query.q || '').trim();
   if (!q) return res.json({ list: [], total: 0, page: 1, limit: 30 });
+  const src = boardsdk.isValidSource(req.query.src) ? req.query.src : 'kw';
   try {
-    res.json(await lxmusic.kwSearch(q, parseInt(req.query.page) || 1, parseInt(req.query.limit) || 30));
+    res.json(await boardsdk.search(src, q, parseInt(req.query.page) || 1, parseInt(req.query.limit) || 30));
   } catch (e) { res.status(502).json({ error: '网络搜索失败: ' + e.message }); }
 });
 
-// 点唱：本地有直接入队；没有则下载入库再入队。body: {songmid,name,singer,pic,format}
+// 点唱：本地有直接入队；没有则下载入库再入队。body: {songmid,name,singer,pic,format,src}
+// src: 歌曲来源平台 kw/wy/tx/kg（缺省 kw），服务端据此用对应平台源换链下载（源过期自动换源）；
 // format: 'mp3'（默认，320K 优先）| 'mv'（320K 音频+封面合成视频，走 MV 播放路径；
 //         同时保留同名 .mp3 与 .lrc，曲库自动入库双版本）
 app.post('/api/lx/queue', async (req, res) => {
-  const { songmid, name, singer, pic, format } = req.body || {};
+  const { songmid, name, singer, pic, format, src } = req.body || {};
   if (!songmid || !name) return res.status(400).json({ error: '缺少 songmid/name' });
+  const platform = boardsdk.isValidSource(src) ? src : 'kw';
   let song = lxmusic.findLocalSong(name, singer);
   let downloaded = false;
   if (!song) {
     try {
-      song = await lxmusic.downloadSong({ songmid, name, singer, pic: pic || null, format: format === 'mv' ? 'mv' : 'mp3' });
+      let lrcText = null;
+      try { lrcText = await boardsdk.lyricText(platform, { songmid, name, singer, pic }); } catch (e) {}
+      song = await lxmusic.downloadSong({ songmid, name, singer, pic: pic || null, format: format === 'mv' ? 'mv' : 'mp3', source: platform, lrcText });
       downloaded = true;
     } catch (e) {
-      if (e.message === 'NO_ACTIVE_SOURCE') return res.status(400).json({ error: 'NO_ACTIVE_SOURCE', message: '尚未导入 LX 音源，请先在曲库管理后台导入' });
       if (e.message === 'MV_DIR_UNAVAILABLE') return res.status(503).json({ error: '曲库目录不可访问' });
       return res.status(502).json({ error: '下载失败: ' + e.message });
     }
@@ -707,6 +716,18 @@ app.post('/api/bulk/stop', requireAdminAuth, (req, res) => res.json(bulk.stop())
 app.post('/api/bulk/clear-skipped', requireAdminAuth, (req, res) => res.json(bulk.clearSkipped()));
 // 读取跳过清单文件内容（填入「按清单下载」输入框）
 app.get('/api/bulk/skipped-text', requireAdminAuth, (req, res) => res.json(bulk.skippedText()));
+
+// ---------- 歌手批量下载（学习 lx-music-desktop 歌手批量下载，见 server/singer-batch.js） ----------
+// 四平台（kw/wy/tx/kg）按歌手搜索收集歌曲（过滤词+时长区间清洗）→ 逐首下载入库，
+// 单首下载失败自动换平台找同名歌续下（换源链见 lxmusic.resolveMusicUrlWithFallback）。
+const singerBatch = require('./singer-batch');
+app.get('/api/singer-batch/status', (req, res) => res.json(singerBatch.status()));
+app.get('/api/singer-batch/defaults', (req, res) => res.json({ filterWords: singerBatch.DEFAULT_FILTER_WORDS }));
+app.post('/api/singer-batch/start', requireAdminAuth, async (req, res) => {
+  const r = await singerBatch.start(req.body || {});
+  res.status(r.ok ? 200 : 400).json(r);
+});
+app.post('/api/singer-batch/stop', requireAdminAuth, (req, res) => { singerBatch.stop(); res.json({ ok: true }); });
 
 // ---------- 爱唱榜 (按播放次数) ----------
 app.get('/api/charts', (req, res) => {
