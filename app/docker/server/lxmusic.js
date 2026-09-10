@@ -490,7 +490,7 @@ function sniffAudio(buf) {
 // format: 'mp3'（默认，320K 音质优先，存 MP3_DIR）| 'mv'（同一 320K 音频 + 封面
 //         合成为 .mp4 存 MV_DIR；同时保留同名 .mp3 与 .lrc 到 MP3_DIR——曲库里
 //         MV/MP3 双版本可用，LRC 跟 MP3 走）
-async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, format = 'mp3', lrcText = null }) {
+async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, format = 'mp3', lrcText = null, info = null }) {
   const mp3Root = dlcfg.getMp3Dir();
   const mvRoot = path.resolve(dlcfg.MV_DIR);
   const isMv = format === 'mv';
@@ -518,7 +518,15 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   // 1) 解析 url（320K 优先；当前源失效自动轮换其余源，kw 再退内置直链）；
   // 2) 拉流到临时文件；3) mp3 直存 / 转码 / 合成 MV
   const platform = ['kw', 'wy', 'tx', 'kg'].includes(source) ? source : 'kw';
+  // musicInfo：脚本换链入参。不同平台字段要求不同——kg 需要 FileHash（hash=Audioid
+  // 必然解析失败）、tx 需要 songId（数字 id）/strMediaMid、wy 需要数字 id。
+  // 调用方经 info 透传搜索结果里的平台字段，覆盖下面的 songmid 兜底值。
   const musicInfo = { songmid, songId: songmid, musicId: songmid, hash: songmid, id: songmid, name, singer, singerName: singer, source: platform };
+  if (info && typeof info === 'object') {
+    for (const k of ['hash', 'songId', 'musicId', 'strMediaMid', 'albumAudioId', 'albumId', 'duration', 'interval', 'types', 'qualitys']) {
+      if (info[k] != null && info[k] !== '') musicInfo[k] = info[k];
+    }
+  }
   const url = await resolveMusicUrlWithFallback(platform, musicInfo);
   const tmpPath = path.join(TMP_DIR, `dl_${Date.now()}_${process.pid}`);
   const resp = await httpReq(url, { responseType: 'buffer', timeout: 120000 });

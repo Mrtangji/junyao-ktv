@@ -2572,7 +2572,7 @@ async function lxOrder(idx){
   const btn=event&&event.target;
   if(btn){btn.disabled=true;btn.textContent='…';}
   try{
-    const r=await fetch(boardSrc==='md'?'/api/md/queue':'/api/lx/queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({songmid:s.songmid,name:s.name,singer:s.singer,url:s.url||null,pic:s.pic,format:dlFormat,src:s.src||boardSrc})}).then(x=>x.json());
+    const r=await fetch(boardSrc==='md'?'/api/md/queue':'/api/lx/queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({songmid:s.songmid,name:s.name,singer:s.singer,url:s.url||null,pic:s.pic,format:dlFormat,src:s.src||boardSrc,hash:s.hash||'',songId:s.songId||'',strMediaMid:s.strMediaMid||'',albumAudioId:s.albumAudioId||'',duration:s.duration||0})}).then(x=>x.json());
     if(r.error==='NO_ACTIVE_SOURCE'){showToast('⚠️ '+r.message);if(btn){btn.disabled=false;btn.textContent='点歌';}return;}
     if(r.error){showToast('⚠️ '+r.error);if(btn){btn.disabled=false;btn.textContent='点歌';}return;}
     showToast(r.downloaded?`《${s.name}》下载完成，已加入队列 🎶`:`《${s.name}》已加入队列 🎶`);

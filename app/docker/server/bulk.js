@@ -3,7 +3,7 @@
 // 移植自 maidong-server/src/bulk.js，适配 junyao 环境：
 //  - 目录解析与实时换链复用 muse.js（ensureMuseDb/openDb + resolveMuseUrl，
 //    自带广告直链过滤与换设备重试，cloud_url 旧签名不复用）
-//  - 落盘到 MV_DIR（/mv）根目录：平铺「歌手 - 歌名.ts」（冲突时带 [编号] 系列
+//  - 落盘到 MV_DIR/ts 子目录：平铺「歌手 - 歌名.ts」（冲突时带 [编号] 系列
 //    后缀）；扫描曲库后自动入库（scanner 已识别 .ts，文件名可解析出歌名/歌手）
 //  - 无需手动导入曲库目录：muse.db 已内置镜像，启动下载时自动解析
 //  - 进度持久化在 DATA_DIR/bulk-state.json；区间下载按「已存在文件跳过」

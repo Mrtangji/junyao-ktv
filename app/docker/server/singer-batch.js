@@ -107,6 +107,8 @@ async function downloadOne(song, format) {
   return lxmusic.downloadSong({
     songmid: song.songmid, name: song.name, singer: song.singer, pic: song.pic || null,
     source: song.src, format, lrcText,
+    // 平台换链必需字段：kg 的 FileHash、tx 的数字 songId/strMediaMid 等
+    info: { hash: song.hash, songId: song.songId, strMediaMid: song.strMediaMid, albumAudioId: song.albumAudioId, duration: song.duration },
   });
 }
 

@@ -614,13 +614,18 @@ app.post('/api/lx/queue', async (req, res) => {
   const { songmid, name, singer, pic, format, src } = req.body || {};
   if (!songmid || !name) return res.status(400).json({ error: '缺少 songmid/name' });
   const platform = boardsdk.isValidSource(src) ? src : 'kw';
+  // 平台换链必需字段（kg 的 FileHash、tx 的数字 songId/strMediaMid 等）原样透传
+  const info = {};
+  for (const k of ['hash', 'songId', 'strMediaMid', 'albumAudioId', 'duration']) {
+    if (req.body[k] != null && req.body[k] !== '') info[k] = req.body[k];
+  }
   let song = lxmusic.findLocalSong(name, singer);
   let downloaded = false;
   if (!song) {
     try {
       let lrcText = null;
-      try { lrcText = await boardsdk.lyricText(platform, { songmid, name, singer, pic }); } catch (e) {}
-      song = await lxmusic.downloadSong({ songmid, name, singer, pic: pic || null, format: format === 'mv' ? 'mv' : 'mp3', source: platform, lrcText });
+      try { lrcText = await boardsdk.lyricText(platform, { songmid, name, singer, pic, ...info }); } catch (e) {}
+      song = await lxmusic.downloadSong({ songmid, name, singer, pic: pic || null, format: format === 'mv' ? 'mv' : 'mp3', source: platform, lrcText, info });
       downloaded = true;
     } catch (e) {
       if (e.message === 'MV_DIR_UNAVAILABLE') return res.status(503).json({ error: '曲库目录不可访问' });
