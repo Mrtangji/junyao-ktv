@@ -18,6 +18,8 @@ import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -93,23 +95,22 @@ public class MainActivity extends Activity {
                 // 服务器使用自签证书（HTTPS 8443，麦克风评分需要 HTTPS），局域网内直接信任
                 handler.proceed();
             }
+            // Bug修复：只有"主框架"加载失败才做 HTTPS→HTTP→本地模式 的降级。
+            // 旧写法只覆写了已废弃的 onReceivedError(WebView,int,String,String)，而这个
+            // 重载在 Android 6 及更早的系统上是"任何资源失败都会回调"——电视盒子网络
+            // 稍有不稳，一个字体/图片子资源加载失败就会把整个 App 踢到 HTTP 甚至本地模式，
+            // 结果就是：网页端明明能用的功能（麦克风评分、LX 音源），在盒子上全都不可用。
             @Override
+            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                if (request != null && !request.isForMainFrame()) return;
+                onMainFrameError(request != null && request.getUrl() != null ? request.getUrl().toString() : null);
+            }
+
+            @Override
+            @SuppressWarnings("deprecation")
             public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
-                // 主框架加载失败：先尝试 HTTPS→HTTP 回退（旧镜像没有 8443），
-                // HTTP 也失败（服务器没开/地址失效）才降级本地模式。
-                // 该重载在所有 API 级别都只对主框架回调，子资源失败不会误触发；
-                // file:// 本地页自身出错不再回落，避免死循环。
-                if (failingUrl != null && failingUrl.startsWith("https") && httpFallbackUrl != null && !httpFallbackUsed) {
-                    httpFallbackUsed = true;
-                    Toast.makeText(MainActivity.this, "HTTPS 不可用，改用 HTTP（评分需 HTTPS）", Toast.LENGTH_LONG).show();
-                    web.loadUrl(httpFallbackUrl);
-                    return;
-                }
-                if (failingUrl != null && failingUrl.startsWith("http")) {
-                    Toast.makeText(MainActivity.this, "服务器连接失败，已进入本地模式", Toast.LENGTH_LONG).show();
-                    prefs.edit().remove(KEY_SERVER).apply();
-                    loadLocal();
-                }
+                if (Build.VERSION.SDK_INT >= 23) return; // 新回调已处理，避免重复降级
+                onMainFrameError(failingUrl);
             }
         });
         web.setWebChromeClient(new ChromeClient());
@@ -162,6 +163,24 @@ public class MainActivity extends Activity {
     /** 本地模式：加载打包在 assets 里的 TV 页（页面按 file: 协议自动切本地模式） */
     private void loadLocal() {
         web.loadUrl(LOCAL_PAGE);
+    }
+
+    /**
+     * 主框架加载失败时的降级：HTTPS(8443) 失败 → 试 HTTP(8080) → 还失败才进本地模式。
+     * 只在主框架失败时调用（见 WebViewClient 里的两个 onReceivedError 重载）。
+     */
+    private void onMainFrameError(String failingUrl) {
+        if (failingUrl != null && failingUrl.startsWith("https") && httpFallbackUrl != null && !httpFallbackUsed) {
+            httpFallbackUsed = true;
+            Toast.makeText(this, "HTTPS(8443) 不可用，改用 HTTP（评分需 HTTPS）", Toast.LENGTH_LONG).show();
+            web.loadUrl(httpFallbackUrl);
+            return;
+        }
+        if (failingUrl != null && failingUrl.startsWith("http")) {
+            Toast.makeText(this, "服务器连接失败，已进入本地模式", Toast.LENGTH_LONG).show();
+            prefs.edit().remove(KEY_SERVER).apply();
+            loadLocal();
+        }
     }
 
     private boolean hasServer() {

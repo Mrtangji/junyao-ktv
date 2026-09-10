@@ -1838,15 +1838,41 @@ function scoreMPM(frame,rate){
   if(freq<65||freq>1050)return null;
   return {freq,clarity:v0};
 }
+// ===== 麦克风（评分）获取：兼容老 Android WebView =====
+// 安卓电视盒子/老手机里的 WebView 内核版本可能很旧：没有 navigator.mediaDevices，
+// 只提供已废弃的 navigator.getUserMedia / webkitGetUserMedia。原实现只认前者，
+// 一旦缺失就直接判定"麦克风不可用"，且不分青红皂白提示"需 HTTPS"——即使当前
+// 明明就是 https（真实原因是内核太老）。这里两种都试，并把提示分清楚。
+const MIC_CONSTRAINTS={audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1}};
+function micUnavailableReason(){
+  const secure=window.isSecureContext||location.protocol==='https:'||location.protocol==='file:'
+    ||location.hostname==='localhost'||location.hostname==='127.0.0.1';
+  if(!secure)return '麦克风不可用：评分需要安全上下文，请用 https://'+location.hostname+':8443/tv 打开（自签证书点「继续访问」）';
+  return '当前播放内核不支持麦克风采集，请在系统里更新「Android System WebView」后重试';
+}
+async function micGetStream(){
+  if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)
+    return await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
+  const legacy=navigator.getUserMedia||navigator.webkitGetUserMedia||navigator.mozGetUserMedia;
+  if(!legacy)throw Object.assign(new Error('内核不支持'),{name:'NotSupportedError'});
+  return await new Promise((res,rej)=>legacy.call(navigator,MIC_CONSTRAINTS,res,rej));
+}
 async function toggleScore(){
   const btn=document.getElementById('ob-score');
   if(!scoreState.on){
-    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
-      showToast('麦克风不可用：评分需 HTTPS。请用 https://'+location.hostname+':8443/tv 打开（自签证书点「继续访问」）',true);return;}
+    // 本地模式（没连上服务器）：参考音高曲线要从服务端 /api/songs/:id/pitch 取，
+    // 这里提前说清楚，免得用户拿到麦克风权限后只看到一句"参考曲线提取失败"。
+    if(LOCAL_MODE){showToast('本地模式没有服务器，评分不可用；请先在设置里填写服务器地址',true);return;}
     try{
-      scoreState.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1}});
-    }catch(e){showToast('无法获取麦克风：'+e.name,true);return;}
+      scoreState.stream=await micGetStream();
+    }catch(e){
+      showToast(e&&e.name==='NotSupportedError'?micUnavailableReason():('无法获取麦克风：'+(e&&e.name||e&&e.message||'未知错误')),true);
+      return;
+    }
     scoreState.audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    // 安卓上 AudioContext 常常以 suspended 状态创建，不 resume 的话 analyser 拿到的
+    // 全是静音数据（表现为"评分一直是 0 分"），这里显式唤醒。
+    if(scoreState.audioCtx.state==='suspended'){try{await scoreState.audioCtx.resume();}catch(e){}}
     const src=scoreState.audioCtx.createMediaStreamSource(scoreState.stream);
     scoreState.analyser=scoreState.audioCtx.createAnalyser();
     scoreState.analyser.fftSize=2048;scoreState.analyser.smoothingTimeConstant=0;
@@ -2708,6 +2734,20 @@ let lxMode=localStorage.getItem(LX_MODE_KEY)||(LOCAL_MODE?'loc':'srv');
 function lxLocalList(){try{return JSON.parse(localStorage.getItem(LX_LOCAL_KEY)||'[]');}catch(e){return[];}}
 function lxSaveLocal(list){try{localStorage.setItem(LX_LOCAL_KEY,JSON.stringify(list));}catch(e){showToast('⚠️ 本机保存失败（存储空间不足）');}}
 function lxLocalActive(){try{return JSON.parse(localStorage.getItem(LX_LOCAL_ACT)||'null');}catch(e){return null;}}
+// Bug修复：写入"当前启用的本机音源"。此前 lxImportFile / lxActivateLocal / lxDeleteLocal
+// 三处都调用了 lxSetActiveLocal，但这个函数从来没有定义过 —— 在「本机音源」这一支上：
+//   · 点「启用」→ ReferenceError 落在 async 函数里变成未捕获的 Promise rejection，
+//     界面上完全没有任何反应（没有 toast、列表也不刷新）；
+//   · 「从本机文件导入」→ 脚本已写进 localStorage，但紧接着抛错走到 catch，
+//     用户看到的是"导入失败"；
+//   · 删除正在使用的音源 → 同样静默失败。
+// 传 null 表示取消启用。
+function lxSetActiveLocal(s){
+  try{
+    if(s&&s.id!=null)localStorage.setItem(LX_LOCAL_ACT,JSON.stringify({id:s.id,name:s.name||'未命名音源',version:s.version||'',author:s.author||''}));
+    else localStorage.removeItem(LX_LOCAL_ACT);
+  }catch(e){showToast('⚠️ 本机保存失败（存储空间不足）');}
+}
 // 从音源脚本里粗提取 name/version/author（lx 脚本头部一般是 name:"xx" 形式）
 function lxParseMeta(script,fn){
   const g=k=>{const m=script.match(new RegExp(k+'\\s*[:=]\\s*[\'"]([^\'"\\n\\r]+)'));return m?m[1]:'';};
@@ -2800,13 +2840,16 @@ async function lxActivateLocal(id){
   }else{
     showToast('✅ 已启用本机音源（连接服务器后自动可用）');
   }
-  lxSetActiveLocal(s);lxRenderLocalList();
+  // 兜底：写 localStorage/重渲染万一出错也给出提示，避免又变成"点了没反应"
+  try{lxSetActiveLocal(s);lxRenderLocalList();}catch(e){showToast('⚠️ 启用失败：'+e.message);}
 }
 function lxDeleteLocal(id){
-  lxSaveLocal(lxLocalList().filter(x=>x.id!==id));
-  const act=lxLocalActive();
-  if(act&&act.id===id)lxSetActiveLocal(null);
-  refreshLxSrcBadge();lxRenderLocalList();showToast('已删除');
+  try{
+    lxSaveLocal(lxLocalList().filter(x=>x.id!==id));
+    const act=lxLocalActive();
+    if(act&&act.id===id)lxSetActiveLocal(null);
+    refreshLxSrcBadge();lxRenderLocalList();showToast('已删除');
+  }catch(e){showToast('⚠️ 删除失败：'+e.message);}
 }
 async function lxImportSrc(){
   const inp=document.getElementById('lx-url'),url=inp.value.trim();

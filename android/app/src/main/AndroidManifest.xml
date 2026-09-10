@@ -9,6 +9,9 @@
     <!-- 手机与电视/盒子都能装 -->
     <uses-feature android:name="android.software.leanback" android:required="false"/>
     <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
+    <!-- 评分（麦克风）是可选功能：声明 RECORD_AUDIO 会隐含"必须有麦克风"，
+         加上这一行才能让没有麦克风的电视盒子/投影仪也照常安装使用 -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false"/>
 
     <application
         android:label="君耀KTV"
