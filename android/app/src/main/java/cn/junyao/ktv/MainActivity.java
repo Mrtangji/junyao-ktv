@@ -35,6 +35,7 @@ import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.URL;
 import java.util.ArrayList;
+import org.json.JSONObject;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -726,10 +727,39 @@ public class MainActivity extends Activity {
             return LocalMusicStore.listJson(MainActivity.this);
         }
 
-        /** 本机音频播放地址（127.0.0.1 本地流服务，带 Range 支持拖动进度） */
+        /** 本机音频播放地址（127.0.0.1 本地流服务，带 Range 支持拖动进度）。
+         *  用实际端口（服务可能顺延到 8091+），避免写死 8090 在端口冲突时连不上。 */
         @JavascriptInterface
         public String localPlayUrl(int id) {
-            return "http://127.0.0.1:8090/local/" + id;
+            int p = mediaServer != null ? mediaServer.getPort() : 8090;
+            if (p <= 0) p = 8090;
+            return "http://127.0.0.1:" + p + "/local/" + id;
+        }
+
+        /** 本地流服务实际监听端口；-1 表示启动失败（本机播放不可用）。页面据此判断兜底。 */
+        @JavascriptInterface
+        public int localServerPort() {
+            return mediaServer != null ? mediaServer.getPort() : -1;
+        }
+
+        /** 本机音频的 content:// URI（SAF 文档 URI，带持久授权）。
+         *  页面优先用它直连媒体框架播放，绕过本地 HTTP 服务与 file://→http 安全策略，最稳；
+         *  返回 null（索引失效/授权丢失）时页面回落 http 本地服务并提示重新授权。 */
+        @JavascriptInterface
+        public String localPlayContentUri(int id) {
+            try {
+                JSONObject item = LocalMusicStore.byId(MainActivity.this, id);
+                if (item == null) return null;
+                String uri = item.optString("uri", null);
+                if (uri == null || uri.isEmpty()) return null;
+                // 兜底续一次持久授权（万一系统回收了也尽量续上），失败不影响返回 URI
+                try {
+                    getContentResolver().takePersistableUriPermission(Uri.parse(uri), Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                } catch (Exception ignored) {}
+                return uri;
+            } catch (Exception e) {
+                return null;
+            }
         }
 
         /** 清空本机曲库索引 */

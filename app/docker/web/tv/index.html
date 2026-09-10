@@ -3103,26 +3103,42 @@ async function playLocalSong(id){
   // 别静默返回：找不到多半是索引被重扫/清过，用户只看到"点了没反应"会无从下手
   if(!s){showToast('⚠️ 找不到这首本机歌曲（索引已变化），请到设置里重新扫描本机曲库',true);return;}
   // App 内：原生本地服务流式播放；浏览器：IndexedDB blob → objectURL
-  let srcUrl;
+  let srcUrl, viaContent=false;
   if(!HAS_APP_LIB()){
     if(localPlay.url){try{URL.revokeObjectURL(localPlay.url);}catch(e){}}
     const blob=new Blob([s.buf],{type:LOCAL_MIME[s.ext]||'audio/mpeg'});
     localPlay.url=URL.createObjectURL(blob);srcUrl=localPlay.url;
   }else{
-    srcUrl='http://127.0.0.1:8090/local/'+id;
-    // 播放前先探测本地服务：403=SAF授权失效 404=索引失效/文件被移 503=文件打不开
-    // ——这些情况 <video> 只会笼统报错4，探测后能给出可行动的根因
-    // fetch 抛异常不一定代表服务不可达（部分 WebView 拦 file:// 页面的 fetch），
-    // 此时继续尝试播放：video 元素请求不走 CORS，真实失败由 video 错误事件上报
-    let st=0;
-    try{const pr=await fetch(srcUrl,{method:'HEAD'});st=pr.status;}catch(e){st=-1;}
-    if(st>=400){
-      const why=st===403?'文件夹授权已失效（App 重启/切后台后常见）→ 到设置里点「重新授权本机曲库」'
-        :st===404?'曲库索引失效或文件已被移动 → 到设置里点「重新授权本机曲库」重新扫描'
-        :st===503?'文件无法打开（可能已损坏或被系统清理）→ 请重新扫描本机曲库'
-        :('本地服务返回 HTTP '+st);
-      showToast('⚠️ 本地播放失败：'+why,true);
-      return;
+    // 安卓：优先用 content:// URI 直连媒体框架播放——绕过本地 HTTP 服务（端口冲突/
+    // 服务没起来）与 file://→http 安全策略，是最稳的路径。拿不到（索引失效/授权丢失）
+    // 才回落 http 本地流服务（用真实端口，且先 HEAD 探测给出可行动的根因）。
+    let contentUri=null;
+    try{ if(window.KtvBridge&&window.KtvBridge.localPlayContentUri) contentUri=window.KtvBridge.localPlayContentUri(id); }catch(e){}
+    if(contentUri){
+      srcUrl=contentUri;viaContent=true;
+    }else{
+      // 真实端口：服务可能顺延到 8091+；-1 表示根本没起来
+      let port=8090;
+      try{ if(window.KtvBridge&&window.KtvBridge.localServerPort) port=window.KtvBridge.localServerPort(); }catch(e){}
+      if(port<=0){
+        showToast('⚠️ 本地播放失败：本地媒体服务未启动（端口被占用），请重启 App 后重试',true);
+        return;
+      }
+      srcUrl='http://127.0.0.1:'+port+'/local/'+id;
+      // 播放前先探测本地服务：403=SAF授权失效 404=索引失效/文件被移 503=文件打不开
+      // ——这些情况 <video> 只会笼统报错4，探测后能给出可行动的根因
+      // fetch 抛异常不一定代表服务不可达（部分 WebView 拦 file:// 页面的 fetch），
+      // 此时继续尝试播放：video 元素请求不走 CORS，真实失败由 video 错误事件上报
+      let st=0;
+      try{const pr=await fetch(srcUrl,{method:'HEAD'});st=pr.status;}catch(e){st=-1;}
+      if(st>=400){
+        const why=st===403?'文件夹授权已失效（App 重启/切后台后常见）→ 到设置里点「重新授权本机曲库」'
+          :st===404?'曲库索引失效或文件已被移动 → 到设置里点「重新授权本机曲库」重新扫描'
+          :st===503?'文件无法打开（可能已损坏或被系统清理）→ 请重新扫描本机曲库'
+          :('本地服务返回 HTTP '+st);
+        showToast('⚠️ 本地播放失败：'+why,true);
+        return;
+      }
     }
   }
   localPlay.active=true;localPlay.baseQueueId=curSong?curSong.queue_id:null;
@@ -3152,6 +3168,22 @@ async function playLocalSong(id){
   video.addEventListener('error',function onLE(){
     video.removeEventListener('error',onLE);
     const c=video.error?video.error.code:0;
+    // content:// 直连失败（部分设备媒体框架拿不到 content:// 权限，会笼统报"格式不支持"）
+    // → 自动回落 http 本地流服务重试一次，给用户最大成功率；仍失败才报根因。
+    if(viaContent && c===4){
+      let port=-1;
+      try{ if(window.KtvBridge&&window.KtvBridge.localServerPort) port=window.KtvBridge.localServerPort(); }catch(e){}
+      if(port>0){
+        viaContent=false;
+        video.src='http://127.0.0.1:'+port+'/local/'+id;
+        video.play().catch(()=>{});
+        showToast('⚠️ content:// 直连失败，已改用本地服务重试');
+        return;
+      }
+      // content:// 失败且本地服务也没起来（端口冲突）→ 明确提示重启，而不是笼统"格式不支持"
+      showToast('⚠️ 本地播放失败：本地媒体服务未启动（端口被占用），请重启 App 后重试',true);
+      return;
+    }
     showToast('⚠️ 本地播放失败：'+(ERR_TXT[c]||'未知原因'),true);
   },{once:true});
   video.play().catch(()=>{ /* 真实失败原因由上面的 error 事件给出 */ });

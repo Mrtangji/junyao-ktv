@@ -20,26 +20,38 @@ import java.net.URLDecoder;
 final class LocalMediaServer extends Thread {
 
     private final Context ctx;
-    private final int port;
+    private final int basePort;
     private volatile boolean running = true;
+    private volatile int actualPort = -1;
 
     LocalMediaServer(Context ctx, int port) {
         this.ctx = ctx.getApplicationContext();
-        this.port = port;
+        this.basePort = port;
         setDaemon(true);
     }
 
+    /** 实际监听的端口（端口被占用时会在 basePort..basePort+9 之间顺延）；-1=启动失败 */
+    int getPort() { return actualPort; }
+
     @Override
     public void run() {
-        try {
-            ServerSocket ss = new ServerSocket(port, 64, InetAddress.getLoopbackAddress());
-            while (running) {
-                final Socket s = ss.accept();
-                new Thread(() -> handle(s)).start();
+        // 端口被占用（旧进程没释放、其它 App 占用等）是"本地播放连不上"的头号原因：
+        // 原先写死 8090，一旦 bind 失败就静默退出，视频元素拿到的是连接拒绝 → 笼统报
+        // "格式不支持"。这里顺延到 basePort+9，总能起一个；真实端口经 getPort() 暴露给页面。
+        for (int p = basePort; p < basePort + 10; p++) {
+            try {
+                ServerSocket ss = new ServerSocket(p, 64, InetAddress.getLoopbackAddress());
+                actualPort = p;
+                while (running) {
+                    final Socket s = ss.accept();
+                    new Thread(() -> handle(s)).start();
+                }
+                return;
+            } catch (Exception ignored) {
+                // 该端口不可用，试下一个
             }
-        } catch (Exception ignored) {
-            // 端口被占用等情况：本机播放不可用，但不影响 App 其它功能
         }
+        actualPort = -1; // 全部失败：本机播放不可用，但不影响 App 其它功能
     }
 
     private void handle(Socket s) {
@@ -47,7 +59,10 @@ final class LocalMediaServer extends Thread {
         OutputStream out = null;
         InputStream media = null;
         try {
-            s.setSoTimeout(8000);
+            // 读请求头超时放宽到 30s：电视盒子上视频元素偶尔分段发请求头，8s 太激进会
+            // 把正常请求误杀成连接关闭 → 媒体框架拿到半截响应 → 报"格式不支持"。
+            // 注意：此超时只作用于"读请求"，流式写媒体不受影响（写无超时，由连接关闭标记结束）。
+            s.setSoTimeout(30000);
             // 循环读满请求头（单次 read 可能只拿到半截，导致 Range 头丢失）
             java.io.ByteArrayOutputStream head = new java.io.ByteArrayOutputStream();
             byte[] buf = new byte[4096];
