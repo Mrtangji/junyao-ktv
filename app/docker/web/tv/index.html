@@ -1029,6 +1029,7 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
     <div class="set-r" data-f style="cursor:pointer" onclick="doScan()" data-page-node-id="h6eOYDLjT1y806yq5yzV4w"><span class="set-l" data-page-node-id="0lPmMUEA9nLgTt7ocIa4Pb">重新扫描曲库</span><span style="color:var(--ac2)" data-page-node-id="swWFQDPZvYroJ32yMv4cyN">▶ 扫描</span></div>
     <div class="set-r" data-f id="row-app-server" style="cursor:pointer;display:none" onclick="window.KtvBridge&&window.KtvBridge.editServer()"><span class="set-l">服务器地址</span><span class="set-v" id="s-app-server">—</span></div>
     <div class="set-r" data-f id="row-local-scan" style="cursor:pointer;display:none" onclick="pickLocalFolder()"><span class="set-l">扫描本机文件夹</span><span class="set-v" id="s-locals">0首</span></div>
+    <div class="set-r" data-f id="row-local-relink" style="cursor:pointer;display:none" onclick="relinkLocalFolder()"><span class="set-l">重新授权本机曲库</span><span style="color:var(--ac2)">⟳</span></div>
     <div class="set-r" data-f id="row-local-files" style="cursor:pointer;display:none" onclick="pickLocalFiles()"><span class="set-l">选择音频文件</span><span style="color:var(--ac2)">＋</span></div>
     <div class="set-r" data-f id="row-local-clear" style="cursor:pointer;display:none" onclick="clearLocalSongs()"><span class="set-l">清空本机音频</span><span style="color:#ff7a93">🗑</span></div>
     <input type="file" id="local-dir-input" multiple webkitdirectory style="display:none" onchange="onLocalFilesChosen(this.files,'dir')">
@@ -3009,10 +3010,27 @@ function mergePagedLocal(srvSongs,pg,PG,srvTotal,loc){
   if(start<0)return srvSongs.concat(loc.slice(0,PG-srvSongs.length));
   return loc.slice(start,start+PG);
 }
+// 本机曲库授权状态行：选过目录才显示；授权已失效则标红，引导用户一键恢复。
+// （App 重启/切后台后 Activity 重建，SAF 授权可能失效 → 列表还在但播放报 403）
+function refreshLocalAuthRow(){
+  const rr=document.getElementById('row-local-relink');
+  if(!rr||!window.KtvBridge||typeof window.KtvBridge.localAuthState!=='function')return;
+  let st='';
+  try{st=window.KtvBridge.localAuthState();}catch(e){}
+  if(!st||st==='none'){rr.style.display='none';return;}
+  rr.style.display='';
+  const lbl=rr.querySelector('.set-l');
+  if(lbl)lbl.textContent=st==='lost'?'⚠ 重新授权本机曲库（授权已失效）':'重新扫描本机曲库';
+}
 // 原生扫描完成回调（MainActivity 扫完目录树后 evaluateJavascript 调用）
+// n<0 = 扫描失败（多半是文件夹授权失效）；此时旧索引被保留，不能报成"完成 0 首"
 window.localScanDone=function(n){
   appLibCache=null;_artistsMerged=false;allArtists=[];
-  localList(true).then(()=>{updateLocalBadge();hideToast();showToast(`✅ 本机曲库扫描完成：${n} 首`);});
+  localList(true).then(()=>{
+    updateLocalBadge();hideToast();refreshLocalAuthRow();
+    if(n<0){showToast('⚠️ 扫描失败：本机文件夹授权可能已失效，请点「重新授权本机曲库」',true);return;}
+    showToast(`✅ 本机曲库扫描完成：${n} 首`);
+  });
 };
 // 文件名解析："歌手 - 歌名.mp3" → artist+title；无分隔符则整名当歌名。
 // 兼容：无空格连字符(歌手-歌名)、全角－、en/em 破折号、音轨序号前缀(01. / 01、/ 01 )。
@@ -3030,6 +3048,12 @@ function pickLocalFolder(){
   // 浏览器：webkitdirectory 文件夹选择
   if(window.KtvBridge&&window.KtvBridge.pickMusicFolder){showToast('正在打开文件夹选择器…');window.KtvBridge.pickMusicFolder();return;}
   const inp=document.getElementById('local-dir-input');inp.value='';inp.click();
+}
+// 一键恢复本机曲库：授权还在就直接按原文件夹重扫（不用再翻一遍目录），
+// 授权丢了才重新拉起选择器。App 重启/Activity 重建后播放报 403 时用这个。
+function relinkLocalFolder(){
+  if(window.KtvBridge&&window.KtvBridge.relinkFolder){showToast('正在恢复本机曲库授权…');window.KtvBridge.relinkFolder();return;}
+  showToast('仅安卓客户端支持（浏览器端可重新选文件夹）');
 }
 function pickLocalFiles(){const inp=document.getElementById('local-file-input');inp.value='';inp.click();}
 // Android 7~14 兼容：File → ArrayBuffer（FileReader 全版本支持，不用 file.arrayBuffer()）；
@@ -3075,7 +3099,9 @@ function updateLocalBadge(){
 }
 // 本机插播：不动服务器队列（baseQueueId 记住插播时的队列状态），播完自动接队列下一首
 async function playLocalSong(id){
-  const list=await localList();const s=list.find(x=>x.id===id);if(!s)return;
+  const list=await localList();const s=list.find(x=>x.id===id);
+  // 别静默返回：找不到多半是索引被重扫/清过，用户只看到"点了没反应"会无从下手
+  if(!s){showToast('⚠️ 找不到这首本机歌曲（索引已变化），请到设置里重新扫描本机曲库',true);return;}
   // App 内：原生本地服务流式播放；浏览器：IndexedDB blob → objectURL
   let srcUrl;
   if(!HAS_APP_LIB()){
@@ -3091,9 +3117,9 @@ async function playLocalSong(id){
     let st=0;
     try{const pr=await fetch(srcUrl,{method:'HEAD'});st=pr.status;}catch(e){st=-1;}
     if(st>=400){
-      const why=st===403?'文件夹授权已失效，请重新扫描本机曲库文件夹'
-        :st===404?'曲库索引失效或文件已被移动，请重新扫描本机曲库'
-        :st===503?'文件无法打开（可能已损坏或被系统清理），请重新扫描'
+      const why=st===403?'文件夹授权已失效（App 重启/切后台后常见）→ 到设置里点「重新授权本机曲库」'
+        :st===404?'曲库索引失效或文件已被移动 → 到设置里点「重新授权本机曲库」重新扫描'
+        :st===503?'文件无法打开（可能已损坏或被系统清理）→ 请重新扫描本机曲库'
         :('本地服务返回 HTTP '+st);
       showToast('⚠️ 本地播放失败：'+why,true);
       return;
@@ -3133,7 +3159,7 @@ async function playLocalSong(id){
 }
 function localStop(){localPlay.active=false;if(localPlay.url){try{URL.revokeObjectURL(localPlay.url);}catch(e){}localPlay.url=null;}}
 // 本机歌曲播完：清插播态 → 队列切下一首（系统 ended 监听器已由 advanceToNextSong 的 localPlay 守卫跳过）
-video.addEventListener('ended',()=>{if(!localPlay.active)return;localStop();fetch('/api/queue/next',{method:'POST'});});
+video.addEventListener('ended',()=>{if(!localPlay.active)return;localStop();if(!LOCAL_MODE)fetch('/api/queue/next',{method:'POST'}).catch(()=>{});});
 // 搜索结果里追加本机音频匹配（「本地」标签 + 播放按钮）
 async function appendLocalMatches(el,q){
   if(!IS_ANDROID&&!LOCAL_MODE)return;
@@ -3157,6 +3183,9 @@ if(IS_ANDROID){
   if(rs&&(canDir||HAS_APP_LIB()))rs.style.display='';
   if(rf&&!HAS_APP_LIB())rf.style.display='';
   if(rc)rc.style.display='';
+  // 授权自检：选过目录但持久授权已丢失时，把「重新授权」入口显出来并标红——
+  // 否则用户只会在播放时看到一句「授权已失效」，却不知道该去哪恢复。
+  refreshLocalAuthRow();
   localList(true).then(updateLocalBadge).catch(()=>{});
 }
 // 安卓 APK 桥接：显示「服务器地址」行（点击唤起原生重新配置对话框）

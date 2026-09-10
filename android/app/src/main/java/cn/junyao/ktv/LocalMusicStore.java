@@ -74,17 +74,25 @@ final class LocalMusicStore {
         final Context app = ctx.getApplicationContext();
         POOL.execute(() -> {
             List<JSONObject> out = new ArrayList<>();
+            boolean ok = true;
             try {
                 walk(app, DocumentsContract.getTreeDocumentId(treeUri), treeUri, out);
-            } catch (Exception ignored) {}
-            JSONArray arr = new JSONArray();
-            for (JSONObject o : out) arr.put(o);
-            try {
-                FileOutputStream fos = new FileOutputStream(indexFile(app));
-                fos.write(arr.toString().getBytes(StandardCharsets.UTF_8));
-                fos.close();
-            } catch (Exception ignored) {}
-            if (cb != null) cb.onDone(out.size());
+            } catch (Exception e) {
+                // 扫描失败（最常见的是 SAF 授权已失效）时**绝不能覆盖已有索引**：
+                // 否则用户点一次重新扫描就把曲库清成 0 首，以为歌全丢了。
+                // 保留旧索引，并把失败如实上报给页面（-1）。
+                ok = false;
+            }
+            if (ok) {
+                JSONArray arr = new JSONArray();
+                for (JSONObject o : out) arr.put(o);
+                try {
+                    FileOutputStream fos = new FileOutputStream(indexFile(app));
+                    fos.write(arr.toString().getBytes(StandardCharsets.UTF_8));
+                    fos.close();
+                } catch (Exception ignored) {}
+            }
+            if (cb != null) cb.onDone(ok ? out.size() : -1);
         });
     }
 
@@ -96,7 +104,11 @@ final class LocalMusicStore {
                 DocumentsContract.Document.COLUMN_MIME_TYPE,
                 DocumentsContract.Document.COLUMN_SIZE,
         }, null, null, null);
-        if (c == null) return;
+        if (c == null) {
+            // query 返回 null = 授权不可用（不是"空目录"，空目录会返回空 Cursor）。
+            // 抛出去让上层把这次扫描标记为失败，避免用空结果覆盖掉好索引。
+            throw new IllegalStateException("query returned null (folder permission lost?)");
+        }
         List<String> subDirs = new ArrayList<>();
         while (c.moveToNext()) {
             String docId = c.getString(0);

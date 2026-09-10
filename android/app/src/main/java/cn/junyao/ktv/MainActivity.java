@@ -52,6 +52,8 @@ public class MainActivity extends Activity {
 
     private static final String PREFS = "ktv";
     private static final String KEY_SERVER = "server";
+    // 本机曲库选中的 SAF 目录树（持久化，用于「授权自检 / 一键重新授权」）
+    private static final String KEY_TREE = "tree_uri";
     private static final String LOCAL_PAGE = "file:///android_asset/tv/index.html?local=1";
     private static final int REQ_FILE_CHOOSER = 1001;
     private static final int REQ_MIC = 2001;
@@ -379,18 +381,53 @@ public class MainActivity extends Activity {
             fileCb.onReceiveValue(out);
             fileCb = null;
         } else if (requestCode == REQ_TREE && resultCode == RESULT_OK && data != null && data.getData() != null) {
-            // SAF 文件夹选择成功：持久化读权限 → 后台递归扫描音频 → 通知页面刷新
+            // SAF 文件夹选择成功 → 后台递归扫描音频，扫完通知页面刷新。
+            // 关键：必须先 takePersistableUriPermission 把读权限持久化，否则拿到的只是
+            // 临时授权——Activity 一重建（电视盒子上切后台再回来、系统回收内存）或 App
+            // 一重启，授权就没了，表现为「曲库列表还在、点播放却报文件夹授权已失效」。
+            Uri tree = data.getData();
+            // mode flags 必须取自返回 Intent（系统在这里声明它实际授予了什么），只保留
+            // READ/WRITE 位；传错 flag 会让 takePersistableUriPermission 直接抛异常。
+            int takeFlags = data.getFlags()
+                    & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            if (takeFlags == 0) takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION;
+            boolean persisted = false;
             try {
-                getContentResolver().takePersistableUriPermission(data.getData(),
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            } catch (Exception ignored) {}
-            Toast.makeText(this, "正在扫描本机曲库…", Toast.LENGTH_SHORT).show();
-            LocalMusicStore.scanAsync(this, data.getData(), count ->
+                getContentResolver().takePersistableUriPermission(tree, takeFlags);
+                persisted = true;
+            } catch (Exception e) {
+                persisted = false; // 不静默：下面据此提示，避免用户反复"扫描了却播不了"
+            }
+            prefs.edit().putString(KEY_TREE, tree.toString()).apply();
+            Toast.makeText(this,
+                    persisted ? "正在扫描本机曲库…" : "系统未授予持久权限；若重启后无法播放，请重新选一次文件夹",
+                    Toast.LENGTH_LONG).show();
+            LocalMusicStore.scanAsync(this, tree, count ->
                     runOnUiThread(() -> web.evaluateJavascript(
                             "window.localScanDone&&localScanDone(" + count + ")", null)));
         } else {
             super.onActivityResult(requestCode, resultCode, data);
         }
+    }
+
+    /** 文件夹选择 Intent：带上持久化授权所需的全套 flag（缺 PERSISTABLE 就只有临时授权） */
+    private Intent treePickerIntent() {
+        Intent it = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        it.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        return it;
+    }
+
+    /** 该目录树是否仍持有「持久化」读授权（App 重启、Activity 重建后靠它继续读文件） */
+    private boolean hasPersistedTree(Uri tree) {
+        try {
+            for (android.content.UriPermission p : getContentResolver().getPersistedUriPermissions()) {
+                if (p.isReadPermission() && p.getUri().equals(tree)) return true;
+            }
+        } catch (Exception ignored) {}
+        return false;
     }
 
     @Override
@@ -631,7 +668,52 @@ public class MainActivity extends Activity {
         public void pickMusicFolder() {
             runOnUiThread(() -> {
                 try {
-                    startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_TREE);
+                    // 这几个 flag 缺一不可：
+                    //  · READ/WRITE      —— 读写许可
+                    //  · PERSISTABLE     —— 允许 takePersistableUriPermission 长期保留授权，
+                    //                       缺它则只有临时授权，Activity 一重建就失效
+                    //  · PREFIX          —— 授权覆盖该目录树下所有子文档，否则只能访问
+                    //                       目录节点本身、访问子文件会抛 SecurityException
+                    startActivityForResult(treePickerIntent(), REQ_TREE);
+                } catch (Exception e) {
+                    Toast.makeText(MainActivity.this, "本系统不支持文件夹选择器", Toast.LENGTH_LONG).show();
+                }
+            });
+        }
+
+        /**
+         * 本机曲库授权状态：none=没选过目录 / ok=授权有效 / lost=选过但授权已失效。
+         * 页面据此决定是提示「重新授权」还是直接「重新扫描」。
+         */
+        @JavascriptInterface
+        public String localAuthState() {
+            String saved = prefs.getString(KEY_TREE, null);
+            if (saved == null) return "none";
+            if (hasPersistedTree(Uri.parse(saved))) return "ok";
+            return "lost";
+        }
+
+        /**
+         * 一键恢复本机曲库：授权还在就直接重扫（不弹选择器），授权丢了才重新拉起
+         * 文件夹选择器。这样 App 重启/Activity 重建后用户不必再翻一遍目录。
+         */
+        @JavascriptInterface
+        public void relinkFolder() {
+            runOnUiThread(() -> {
+                String saved = prefs.getString(KEY_TREE, null);
+                if (saved != null) {
+                    Uri tree = Uri.parse(saved);
+                    if (hasPersistedTree(tree)) {
+                        Toast.makeText(MainActivity.this, "正在按原文件夹重新扫描…", Toast.LENGTH_SHORT).show();
+                        LocalMusicStore.scanAsync(MainActivity.this, tree, count ->
+                                runOnUiThread(() -> web.evaluateJavascript(
+                                        "window.localScanDone&&localScanDone(" + count + ")", null)));
+                        return;
+                    }
+                    Toast.makeText(MainActivity.this, "需要重新授权原来的文件夹", Toast.LENGTH_SHORT).show();
+                }
+                try {
+                    startActivityForResult(treePickerIntent(), REQ_TREE);
                 } catch (Exception e) {
                     Toast.makeText(MainActivity.this, "本系统不支持文件夹选择器", Toast.LENGTH_LONG).show();
                 }
