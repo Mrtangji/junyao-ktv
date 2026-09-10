@@ -404,7 +404,9 @@ async function kwLyric(songmid) {
 // ---------- 下载入库 ----------
 function ffmpegToMp3(src, dst) {
   return new Promise((resolve, reject) => {
-    const p = spawn('ffmpeg', ['-y', '-i', src, '-codec:a', 'libmp3lame', '-q:a', '2', dst], { windowsHide: true });
+    // -q:a 0 = LAME 最高质量 VBR（约 245kbps）。原来用 2（约 190kbps），
+    // 把无损源压成 MP3 时白白丢掉一截；源本身是 mp3 的走 copy 不会进这里。
+    const p = spawn('ffmpeg', ['-y', '-i', src, '-codec:a', 'libmp3lame', '-q:a', '0', dst], { windowsHide: true });
     let err = '';
     p.stderr.on('data', d => { if (err.length < 2000) err += d.toString(); });
     p.on('close', code => code === 0 ? resolve() : reject(new Error('ffmpeg 转码失败: ' + err.slice(-300))));
@@ -423,7 +425,7 @@ function ffmpegMp3ToMv(mp3Path, coverBuf, mp4Path) {
       args.push('-i', mp3Path,
         '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p',
         '-tune', 'stillimage', '-preset', 'ultrafast', '-shortest',
-        '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '192k', mp4Path);
+        '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', mp4Path);
       const p = spawn('ffmpeg', args, { windowsHide: true });
       let err = '';
       p.stderr.on('data', d => { if (err.length < 2000) err += d.toString(); });

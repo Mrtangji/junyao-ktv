@@ -131,6 +131,15 @@ function isFresh(id, srcPath) {
 // 在白名单里的编码才走 copy，其余一律直接转码，保证任何源格式最终都能出片。
 const SAFE_VIDEO_CODECS = new Set(['h264']);
 const SAFE_AUDIO_CODECS = new Set(['aac']);
+// 确实需要重新编码时，画质/音质一律按"不降品质"配置：
+//  - h264_vaapi 不指定质量参数会用编码器默认值（码率偏低，1080p 会明显发糊），
+//    这里显式给恒定 QP 22（≈ libx264 crf 22），与软件编码质量对齐。老版本
+//    ffmpeg 不认这个参数会直接报错，外层 Tier 结构会自动降级，最坏也只是回到
+//    原来的默认质量，不会导致出不了片。
+//  - AAC 音轨码率由 192k 提到 320k（原值属于被迫降质），AAC 320k 已是透明级。
+//    源音轨本身是 aac 的走 -c copy 零损失，根本不会走到这一步。
+const VAAPI_QUALITY = ['-qp', '22'];
+const AUDIO_BITRATE = '320k';
 
 function probeCodecName(filepath, selector) {
   try {
@@ -218,7 +227,7 @@ async function buildVideoRendition(filepath, dir, songTag) {
         '-loglevel', 'error', '-y',
         '-hwaccel', 'vaapi', '-hwaccel_device', VAAPI_DEVICE, '-hwaccel_output_format', 'vaapi',
         '-i', filepath, '-map', '0:v:0', '-an',
-        '-c:v', 'h264_vaapi',
+        '-c:v', 'h264_vaapi', ...VAAPI_QUALITY,
         ...out,
       ]);
       log.info('TRANSCODE', `${songTag} 视频轨: 核显调用成功(Tier1 硬解+硬编 h264_vaapi)，耗时 ${Date.now() - t1}ms`);
@@ -234,7 +243,7 @@ async function buildVideoRendition(filepath, dir, songTag) {
         ...common,
         '-vaapi_device', VAAPI_DEVICE,
         '-vf', 'format=nv12,hwupload',
-        '-c:v', 'h264_vaapi',
+        '-c:v', 'h264_vaapi', ...VAAPI_QUALITY,
         ...out,
       ]);
       log.info('TRANSCODE', `${songTag} 视频轨: 核显调用成功(Tier2 软解+硬编 h264_vaapi)，耗时 ${Date.now() - t2}ms`);
@@ -276,7 +285,7 @@ async function buildAudioRendition(filepath, dir, track, songTag) {
     }
   }
   const t1 = Date.now();
-  await runFFmpeg([...common, '-c:a', 'aac', '-b:a', '192k', ...out]);
+  await runFFmpeg([...common, '-c:a', 'aac', '-b:a', AUDIO_BITRATE, ...out]);
   log.info('TRANSCODE', `${songTag} 音轨${track}(${trackName}): 软件编码(aac)完成，耗时 ${Date.now() - t1}ms`);
 }
 

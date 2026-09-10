@@ -107,6 +107,7 @@ docker compose up -d
 - **Intel / AMD 核显**：挂载 `/dev/dri` 设备节点即可自动启用 VAAPI 硬件转码
 - **NVIDIA 显卡**：需安装 [nvidia-container-toolkit](https://github.com/NVIDIA/nvidia-container-toolkit)，并在 compose 中启用 `runtime: nvidia`
 - 无对应硬件时自动回退到 CPU 软件转码，不影响正常使用
+- **转码不降品质**：视频源是 H.264、音轨是 AAC 时一律直接封装拷贝（零转码）；确实需要重编码时按恒定 QP 22（≈CRF 20）出 H.264、AAC 320k 出音轨，硬件编码也显式指定同等质量参数，不会用编码器默认的低码率糊掉画质
 
 ---
 
