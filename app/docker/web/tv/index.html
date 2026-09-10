@@ -504,6 +504,7 @@ html[data-layout="mobile"] #lyrics-panel.ktv .lyrics-line.knxt{font-size:3.9vw}
 .mt-srv{color:#9db8ff;background:rgba(120,150,255,.14);border:1px solid rgba(120,150,255,.3)}
 .mt-loc{color:#ffb27e;background:rgba(255,150,90,.15);border:1px solid rgba(255,150,90,.35)}
 .mt-both{color:#7ee0ff;background:rgba(54,217,247,.14);border:1px solid rgba(54,217,247,.38)}
+.mt-lossless{color:#c9a7ff;background:rgba(160,120,255,.16);border:1px solid rgba(160,120,255,.38)}
 /* 点唱榜面板：榜单横条 + 歌曲列表 */
 .lx-main{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:16px 26px}
 #lx-boardbar{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px}
@@ -2386,7 +2387,7 @@ function renderSongs(el,songs){
     const d=document.createElement('div');d.className='so-row';
     if(s.local){ // 本机歌曲：不走服务器点歌/收藏，直接本机插播播放
       d.innerHTML=`<div class="so-num">${i+1}</div>
-        <div class="so-info"><div class="so-t">${esc(s.title)}<span class="mt-b mt-a">${(s.ext||'mp3').toUpperCase()}</span><span class="mt-b mt-loc">本地</span></div><div class="so-a">${esc(s.artist||'')}</div></div>
+        <div class="so-info"><div class="so-t">${esc(s.title)}${mediaBadge(s)}<span class="mt-b mt-loc">本地</span></div><div class="so-a">${esc(s.artist||'')}</div></div>
         <div class="so-acts"><button class="btn-add" data-f onclick="playLocalSong(${s.id})">播放</button></div>`;
     }else{
     const fk='fav_'+s.id,isFaved=localStorage.getItem(fk)==='1';
@@ -3177,6 +3178,21 @@ function activateFocused(){blurRealInput();focEls=getFocusables();if(focEls[focI
 document.addEventListener('keydown',e=>{if(isFS)showOverlay();switch(e.key){case 'ArrowUp':moveFocus('up');e.preventDefault();break;case 'ArrowDown':moveFocus('down');e.preventDefault();break;case 'ArrowLeft':moveFocus('left');e.preventDefault();break;case 'ArrowRight':moveFocus('right');e.preventDefault();break;case 'Enter':activateFocused();break;case ' ':togglePause();e.preventDefault();break;case 'Escape':closeTopPanel();break;case 'f':case 'F':isFS?exitKtvFullscreen():enterFullscreen();break;case 'n':case 'N':cutSong();break;}
 });
 function esc(s){return String(s||'').replace(/'/g,"&#39;");}
+// 歌名后媒体类型角标：无损（flac/wav/ape…）/ MV / 音频扩展名。
+// 优先按 filename 后缀判断（老数据 media_type 可能缺失），media_type 兜底。
+function mediaBadge(s){
+  if(!s) return '';
+  const fn=String(s.filename||'').toLowerCase();
+  let ext=fn.slice(fn.lastIndexOf('.'));
+  if(!/^\.[a-z0-9]+$/.test(ext)){const e=String(s.ext||'').toLowerCase().replace(/^\./,'');ext=e?'.'+e:'';}
+  if(s.media_type==='video'||['.ts','.mp4','.mkv','.avi','.flv','.mov','.webm','.mpg'].includes(ext))
+    return '<span class="mt-b mt-v">MV</span>';
+  if(['.flac','.wav','.ape','.alac','.aiff'].includes(ext))
+    return '<span class="mt-b mt-lossless">无损</span>';
+  if(['.m4a','.aac','.ogg','.opus'].includes(ext))
+    return '<span class="mt-b mt-a">'+ext.slice(1).toUpperCase()+'</span>';
+  return '<span class="mt-b mt-a">MP3</span>';
+}
 function showToast(m,persist){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._hideTimer);if(!persist)t._hideTimer=setTimeout(()=>t.classList.remove('show'),1800);}
 function hideToast(){const t=document.getElementById('toast');clearTimeout(t._hideTimer);t.classList.remove('show');}
 // MV框保持3:2比例：老电视浏览器内核对 CSS aspect-ratio 支持不可靠（跟之前 inset

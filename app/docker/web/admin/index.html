@@ -574,7 +574,7 @@ function render(list){
     tr.dataset.id = s.id;
     tr.innerHTML = `
       <td style="color:var(--sub);font-size:12px">${songPage*SONG_PAGE_SIZE+i+1}</td>
-      <td class="title-cell">${esc(s.title)}${s.media_type === 'audio' ? '<span class="mt-b mt-a">MP3</span>' : s.media_type === 'video' ? '<span class="mt-b mt-v">MV</span>' : ''}</td>
+      <td class="title-cell">${esc(s.title)}${mediaBadge(s)}</td>
       <td class="artist-cell">${esc(s.artist||'未知歌手')}</td>
       <td class="count-cell">${s.play_count}</td>
       <td>
@@ -650,6 +650,21 @@ function toast(msg){
   setTimeout(()=>t.classList.remove('show'), 1800);
 }
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,'&#39;'); }
+// 歌名后媒体类型角标：无损（flac/wav/ape…）/ MV / 音频扩展名。
+// 优先按 filename 后缀判断（老数据 media_type 可能缺失），media_type 兜底。
+function mediaBadge(s){
+  if(!s) return '';
+  const fn = String(s.filename||'').toLowerCase();
+  let ext = fn.slice(fn.lastIndexOf('.'));
+  if(!/^\.[a-z0-9]+$/.test(ext)){ const e = String(s.ext||'').toLowerCase().replace(/^\./,''); ext = e ? '.'+e : ''; }
+  if(s.media_type === 'video' || ['.ts','.mp4','.mkv','.avi','.flv','.mov','.webm','.mpg'].includes(ext))
+    return '<span class="mt-b mt-v">MV</span>';
+  if(['.flac','.wav','.ape','.alac','.aiff'].includes(ext))
+    return '<span class="mt-b mt-lossless">无损</span>';
+  if(['.m4a','.aac','.ogg','.opus'].includes(ext))
+    return '<span class="mt-b mt-a">'+ext.slice(1).toUpperCase()+'</span>';
+  return '<span class="mt-b mt-a">MP3</span>';
+}
 
 // 本地脚本文件 → 读入粘贴框
 function lxFileChosen(inp){
