@@ -487,33 +487,37 @@ function sniffAudio(buf) {
 }
 
 // 下载一首网络歌曲到曲库，返回 songs 表行
-// format: 'mp3'（默认，320K 音质优先，存 MP3_DIR）| 'mv'（同一 320K 音频 + 封面
-//         合成为 .mp4 存 MV_DIR；同时保留同名 .mp3 与 .lrc 到 MP3_DIR——曲库里
-//         MV/MP3 双版本可用，LRC 跟 MP3 走）
+// format: 'mp3'（默认，320K 音质优先，存 MP3_DIR）
+//       | 'flac'（无损优先：向音源请求 flac 音质，拿到 FLAC 原样落盘不转码；
+//                源确实没有无损时自动回落 320K MP3，落盘为 .mp3）
+//       | 'mv'（320K 音频 + 封面合成为 .mp4 存 MV_DIR；同时保留同名 .mp3 与 .lrc
+//               到 MP3_DIR——曲库里 MV/MP3 双版本可用，LRC 跟音频走）
 async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, format = 'mp3', lrcText = null, info = null }) {
   const mp3Root = dlcfg.getMp3Dir();
   const mvRoot = path.resolve(dlcfg.MV_DIR);
   const isMv = format === 'mv';
+  const lossless = format === 'flac';
   const dlRoot = isMv ? mvRoot : mp3Root; // 本次下载主文件的目标根目录
   if (!fs.existsSync(dlRoot)) throw new Error('MV_DIR_UNAVAILABLE');
   if (!fs.existsSync(isMv ? mp3Root : mvRoot)) throw new Error('MV_DIR_UNAVAILABLE');
   const artist = sanitize(singer) || '未知歌手';
   const title = sanitize(name) || '未知歌名';
-  // 主文件（mp3 或 mp4）落 dlRoot；MV 模式下同时保留的 mp3/lrc 落 mp3Root
+  // 主文件（mp3/flac/mp4）落 dlRoot；MV 模式下同时保留的 mp3/lrc 落 mp3Root
   const mainDir = path.join(dlRoot, artist);
   if (!fs.existsSync(mainDir)) fs.mkdirSync(mainDir, { recursive: true });
   if (isMv && mp3Root !== mvRoot) {
     const mp3Dir = path.join(mp3Root, artist);
     if (!fs.existsSync(mp3Dir)) fs.mkdirSync(mp3Dir, { recursive: true });
   }
-  const ext = isMv ? 'mp4' : 'mp3';
-  const rel = path.join(artist, `${artist} - ${title}.${ext}`);
-  const finalPath = path.join(dlRoot, rel);
+  const baseName = `${artist} - ${title}`;
+  const relOf = (e) => path.join(artist, `${baseName}.${e}`);
   // 已存在同名歌曲 → 直接返回库里的记录（可能上次已下过）。
   // Bug修复：必须按 filename（相对路径，扫描入库的唯一键）查——旧写法按 filepath
   // 查，而 filepath 存的是绝对路径，永远查不到，导致每次下载最后都报"入库失败"。
-  const key = rel.replace(/\\/g, '/');
-  const existed = db.prepare('SELECT * FROM songs WHERE filename=?').get(key);
+  // 无损模式两个后缀都查：音源没有无损时上一次会回落存成 .mp3，也算已下载。
+  const inLib = (e) => db.prepare('SELECT * FROM songs WHERE filename=?').get(relOf(e).replace(/\\/g, '/'));
+  let existed = inLib(isMv ? 'mp4' : (lossless ? 'flac' : 'mp3'));
+  if (!existed && lossless && !isMv) existed = inLib('mp3');
   if (existed) return existed;
   // 1) 解析 url（320K 优先；当前源失效自动轮换其余源，kw 再退内置直链）；
   // 2) 拉流到临时文件；3) mp3 直存 / 转码 / 合成 MV
@@ -527,7 +531,10 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
       if (info[k] != null && info[k] !== '') musicInfo[k] = info[k];
     }
   }
-  const url = await resolveMusicUrlWithFallback(platform, musicInfo);
+  // 无损模式先请求 flac 音质（脚本按 preferQuality 优先、失败才轮换其余音质；
+  // 内置酷我直链兜底也支持 flac 参数），拿不到无损时返回值会是 mp3 直链，
+  // 由下面的落盘分支自动按 MP3 处理。
+  const url = await resolveMusicUrlWithFallback(platform, musicInfo, lossless ? 'flac' : '320k');
   const tmpPath = path.join(TMP_DIR, `dl_${Date.now()}_${process.pid}`);
   const resp = await httpReq(url, { responseType: 'buffer', timeout: 120000 });
   if (resp.statusCode !== 200) throw new Error(`下载失败 HTTP ${resp.statusCode}`);
@@ -539,10 +546,17 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   const isMp3Src = sniff.kind === 'mp3';
   const rawAudio = isMp3Src || ['flac', 'ogg', 'm4a', 'wav', 'aac'].includes(sniff.kind);
   if (!rawAudio) throw new Error('音源返回的内容不是有效音频（可能已加密或链接已失效），请换音源或稍后重试');
+  // 无损模式且源确实给了 FLAC → 原样落盘 .flac（不转码，保住无损）；
+  // 否则（源只有 MP3 / 其它有损容器）统一转成 MP3 落盘，
+  // 后缀必须跟着实际内容走，不能出现"内容是 mp3 名字是 .flac"的假无损文件。
+  const keepFlac = lossless && !isMv && sniff.kind === 'flac';
+  const rel = relOf(isMv ? 'mp4' : (keepFlac ? 'flac' : 'mp3'));
+  const finalPath = path.join(dlRoot, rel);
+  const key = rel.replace(/\\/g, '/');
   fs.writeFileSync(tmpPath, resp.body);
   try {
     if (!isMv) {
-      if (isMp3Src) moveFile(tmpPath, finalPath);
+      if (isMp3Src || keepFlac) moveFile(tmpPath, finalPath);
       else { await ffmpegToMp3(tmpPath, finalPath); try { fs.unlinkSync(tmpPath); } catch (e) {} }
     } else {
       // MV 模式：先统一为 mp3，再与封面合成 mp4；mp3 与 LRC 一并保留到 MP3_DIR
@@ -568,7 +582,7 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
     let lrc = lrcText;
     if (!lrc && platform === 'kw') { try { lrc = await kwLyric(songmid); } catch (e) { lrc = null; } }
     if (lrc) {
-      fs.writeFileSync(path.join(mp3Root, rel.replace(/\.(mp3|mp4)$/i, '.lrc')), lrc, 'utf8');
+      fs.writeFileSync(path.join(mp3Root, rel.replace(/\.(mp3|mp4|flac|m4a|aac|ogg|opus|wav)$/i, '.lrc')), lrc, 'utf8');
     } else { console.error('LRC 下载失败(忽略):', name); }
   } catch (e) { console.error('LRC 下载失败(忽略):', name, e.message); }
   // 4) 扫描入库并返回新行

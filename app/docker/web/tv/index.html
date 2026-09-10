@@ -2391,7 +2391,7 @@ function renderSongs(el,songs){
     }else{
     const fk='fav_'+s.id,isFaved=localStorage.getItem(fk)==='1';
     d.innerHTML=`<div class="so-num">${i+1}</div>
-      <div class="so-info"><div class="so-t">${s.title}<span class="mt-b ${s.media_type==='audio'?'mt-a':'mt-v'}">${s.media_type==='audio'?'MP3':'MV'}</span><span class="mt-b mt-srv">服务器</span></div><div class="so-a">${s.artist||''}</div></div>
+      <div class="so-info"><div class="so-t">${s.title}${mediaBadge(s)}<span class="mt-b mt-srv">服务器</span></div><div class="so-a">${s.artist||''}</div></div>
       <div class="so-acts">
         <button class="btn-fav${isFaved?' faved':''}" data-f onclick="toggleFav(${s.id},this)">❤</button>
         <button class="btn-add" data-f onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button>
@@ -2407,7 +2407,7 @@ async function addSong(id,title){await fetch('/api/queue',{method:'POST',headers
 function loadQueue(){const el=document.getElementById('pl-queue');el.innerHTML='';if(!queueData.length){el.innerHTML='<div style="color:#555;text-align:center;padding:30px">暂无点歌</div>';return;}queueData.forEach((q,i)=>{const d=document.createElement('div');d.className='qr-row'+(q.status==='playing'?' qrp':'');d.innerHTML=`<div class="qr-num">${q.status==='playing'?'♪':i+1}</div><div class="qr-info"><div class="qr-t">${q.title}</div><div class="qr-m">${q.artist||''} · ${q.nickname}${q.status==='playing'?' <span style="color:var(--ac)">播放中</span>':''}</div></div><div class="qr-acts">${q.status!=='playing'?`<button class="ma ma-top" data-f onclick="topQ(${q.queue_id})">置顶</button>`:''}<button class="ma ma-del" data-f onclick="delQ(${q.queue_id})">✕</button></div>`;el.appendChild(d);});}
 async function topQ(id){await fetch(`/api/queue/${id}/top`,{method:'POST'});}
 async function delQ(id){await fetch(`/api/queue/${id}`,{method:'DELETE'});}
-async function loadCharts(){const el=document.getElementById('pl-charts');el.innerHTML='';const songs=(await fetch('/api/charts').then(r=>r.json())).slice(0,10);if(!songs.length){el.innerHTML='<div style="color:#555;text-align:center;padding:30px">还没有人唱过歌</div>';return;}songs.forEach((s,i)=>{const d=document.createElement('div');d.className='chart-row';const rk=i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}`;d.innerHTML=`<div class="ck ${i<3?'r'+(i+1):''}"> ${rk}</div><div class="chart-info"><div class="ct">${s.title}<span class="mt-b ${s.media_type==='audio'?'mt-a':'mt-v'}">${s.media_type==='audio'?'MP3':'MV'}</span><span class="mt-b mt-srv">服务器</span></div><div class="cm">${s.artist||'未知歌手'}</div></div><span class="cp">${s.play_count}次</span><button class="btn-add" onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button>`;el.appendChild(d);});}
+async function loadCharts(){const el=document.getElementById('pl-charts');el.innerHTML='';const songs=(await fetch('/api/charts').then(r=>r.json())).slice(0,10);if(!songs.length){el.innerHTML='<div style="color:#555;text-align:center;padding:30px">还没有人唱过歌</div>';return;}songs.forEach((s,i)=>{const d=document.createElement('div');d.className='chart-row';const rk=i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}`;d.innerHTML=`<div class="ck ${i<3?'r'+(i+1):''}"> ${rk}</div><div class="chart-info"><div class="ct">${s.title}${mediaBadge(s)}<span class="mt-b mt-srv">服务器</span></div><div class="cm">${s.artist||'未知歌手'}</div></div><span class="cp">${s.play_count}次</span><button class="btn-add" onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button>`;el.appendChild(d);});}
 let st2;
 // 40,000+ 曲库修复：搜索结果原本被硬限在 60 首、且无法翻看更多——一个宽泛
 // 关键词（如歌手姓、单字）能命中成千上万首，却永远只看到前 60 首。
@@ -2580,15 +2580,20 @@ async function lxOrder(idx){
   }catch(e){showToast('⚠️ 点唱失败：'+e.message);if(btn){btn.disabled=false;btn.textContent='点歌';}}
 }
 // ===== 点唱榜下载格式（设置面板开关） =====
-// MP3（默认）：下载 320K 音频；MV：同一 320K 音频 + 专辑封面合成视频（走 MV 播放路径）。
-// 两种模式都会同时下载 LRC 歌词。状态存本机 localStorage(tv-dl-format)。
-let dlFormat=localStorage.getItem('tv-dl-format')==='mv'?'mv':'mp3';
-function updateDlFmtUI(){const el=document.getElementById('s-dlfmt');if(el)el.textContent=dlFormat.toUpperCase();}
+// MP3（默认）：下载 320K 音频；FLAC：优先无损，源没有无损时自动回落 MP3；
+// MV：同一 320K 音频 + 专辑封面合成视频（走 MV 播放路径）。
+// 三种模式都会同时下载 LRC 歌词。状态存本机 localStorage(tv-dl-format)。
+const DL_FORMATS=['mp3','flac','mv'];
+const DL_FMT_LABEL={mp3:'MP3',flac:'FLAC',mv:'MV'};
+let dlFormat=DL_FORMATS.includes(localStorage.getItem('tv-dl-format'))?localStorage.getItem('tv-dl-format'):'mp3';
+function updateDlFmtUI(){const el=document.getElementById('s-dlfmt');if(el)el.textContent=DL_FMT_LABEL[dlFormat]||dlFormat.toUpperCase();}
 function toggleDlFormat(){
-  dlFormat=dlFormat==='mp3'?'mv':'mp3';
+  dlFormat=DL_FORMATS[(DL_FORMATS.indexOf(dlFormat)+1)%DL_FORMATS.length];
   localStorage.setItem('tv-dl-format',dlFormat);
   updateDlFmtUI();
-  showToast(dlFormat==='mp3'?'✅ 点唱榜下载格式：MP3（320K 音频）':'✅ 点唱榜下载格式：MV（封面+320K 音频合成视频）');
+  showToast(dlFormat==='mp3'?'✅ 点唱榜下载格式：MP3（320K 音频）'
+    :dlFormat==='flac'?'✅ 点唱榜下载格式：无损 FLAC（源无无损自动回落 MP3）'
+    :'✅ 点唱榜下载格式：MV（封面+320K 音频合成视频）');
 }
 updateDlFmtUI();
 // ===== 点歌榜来源（麦动 / 酷我 / 网易云 / QQ音乐 / 酷狗）+ 麦动点歌配置 =====

@@ -164,7 +164,8 @@ async function start(opts = {}) {
   const names = String(opts.text || '').split(/\r?\n/).map(s => s.trim()).filter((s, i, arr) => s && arr.indexOf(s) === i);
   if (!names.length) return { ok: false, error: '歌手名单为空' };
   const src = boardsdk.isValidSource(opts.src) ? opts.src : 'kw';
-  const format = opts.format === 'mv' ? 'mv' : 'mp3';
+  // mp3（320K 有声）/ flac（无损优先，源无无损回落 MP3）/ mv（封面合成视频）
+  const format = opts.format === 'mv' ? 'mv' : (opts.format === 'flac' ? 'flac' : 'mp3');
   const useFilter = opts.useFilter !== false;
   const filterWords = useFilter ? (opts.filterWords || DEFAULT_FILTER_WORDS) : '';
   const filterRegs = buildFilterRegs(filterWords);

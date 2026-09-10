@@ -30,7 +30,10 @@ function scanRoots() {
 // .ts（MPEG-TS）同理：麦动曲库的原生格式就是编号.ts，用户直接把 ts 文件放进
 // /mv 即可入库播放（h264/ts 走直拷贝，其它编码自动转码）。
 const VIDEO_EXT = ['.mp4', '.mkv', '.avi', '.flv', '.mov', '.webm', '.mpg', '.ts'];
-const AUDIO_EXT = ['.mp3'];
+// 音频白名单：除 MP3 外，无损（FLAC/WAV）与其它常见音频（M4A/AAC/OGG/Opus）一并入库。
+// 媒体类型只决定播放走"纯音频 HLS"（hlsgen 对非 aac 编码一律重新编码为 aac），
+// 因此这里放宽后缀不会影响播放兼容性；下载目录里混入的 .flac 无损文件也能直接扫到。
+const AUDIO_EXT = ['.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.wav'];
 const MEDIA_EXT = new Set([...VIDEO_EXT, ...AUDIO_EXT]);
 
 // hlsgen.js 生成的 HLS 播放缓存分片也是 .ts（video_0001.ts / audio0_0001.ts）。

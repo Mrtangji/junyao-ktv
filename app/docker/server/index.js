@@ -301,7 +301,15 @@ app.get('/stream/:id', (req, res) => {
   }
 
   const stat = fs.statSync(song.filepath);
-  const contentType = song.media_type === 'audio' ? 'audio/mpeg' : 'video/mp4';
+  // 音频按实际后缀给 Content-Type（曲库现在也收 FLAC/WAV 等无损文件），
+  // 认不出的后缀仍旧回落 audio/mpeg，行为与之前一致。
+  const AUDIO_MIME = {
+    '.mp3': 'audio/mpeg', '.flac': 'audio/flac', '.m4a': 'audio/mp4',
+    '.aac': 'audio/aac', '.ogg': 'audio/ogg', '.opus': 'audio/ogg', '.wav': 'audio/wav',
+  };
+  const contentType = song.media_type === 'audio'
+    ? (AUDIO_MIME[path.extname(song.filepath).toLowerCase()] || 'audio/mpeg')
+    : 'video/mp4';
   const range = req.headers.range;
   if (!range) {
     res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': contentType });
@@ -625,7 +633,7 @@ app.post('/api/lx/queue', async (req, res) => {
     try {
       let lrcText = null;
       try { lrcText = await boardsdk.lyricText(platform, { songmid, name, singer, pic, ...info }); } catch (e) {}
-      song = await lxmusic.downloadSong({ songmid, name, singer, pic: pic || null, format: format === 'mv' ? 'mv' : 'mp3', source: platform, lrcText, info });
+      song = await lxmusic.downloadSong({ songmid, name, singer, pic: pic || null, format: ['mv', 'flac'].includes(format) ? format : 'mp3', source: platform, lrcText, info });
       downloaded = true;
     } catch (e) {
       if (e.message === 'MV_DIR_UNAVAILABLE') return res.status(503).json({ error: '曲库目录不可访问' });
