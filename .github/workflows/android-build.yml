@@ -32,11 +32,58 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Build debug APK
-        run: gradle -p android assembleDebug --no-daemon
+      # 统一签名：把 Secrets 里的 keystore 落盘，并用环境变量告诉 Gradle 用它签名。
+      # 没有配 secret 时给出 warning 并退回调试签名（构建仍继续，不中断维护流程）。
+      - name: Decode signing keystore
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PW: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/junyao.jks"
+            {
+              echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/junyao.jks"
+              echo "ANDROID_KEYSTORE_PASSWORD=$KS_PW"
+              echo "ANDROID_KEY_ALIAS=${KS_ALIAS:-junyao}"
+              echo "ANDROID_KEY_PASSWORD=$KS_PW"
+            } >> "$GITHUB_ENV"
+            echo "已载入统一签名密钥"
+          else
+            echo "::warning::未配置 ANDROID_KEYSTORE_BASE64，本次退回调试签名——签名会随构建机变化，无法覆盖安装"
+          fi
+
+      # versionCode 必须单调递增（降级安装会被系统拒绝），用 run_number 保证。
+      - name: Set version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "ANDROID_VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+            echo "ANDROID_VERSION_NAME=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_ENV"
+          else
+            echo "ANDROID_VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+            echo "ANDROID_VERSION_NAME=1.0.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build APK
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_PATH" ]; then
+            gradle -p android assembleRelease --no-daemon
+          else
+            gradle -p android assembleDebug --no-daemon
+          fi
 
       - name: Rename APK
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk junyao-ktv.apk
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          [ -f "$APK" ] || APK=android/app/build/outputs/apk/debug/app-debug.apk
+          cp "$APK" junyao-ktv.apk
+          ls -l junyao-ktv.apk
+
+      # 留个证据：这一行指纹应当每次构建、每个版本都完全相同。
+      - name: Verify APK signature
+        run: |
+          echo "== APK 签名证书（各版本应始终是同一枚指纹）=="
+          keytool -printcert -jarfile junyao-ktv.apk | grep -Ei "所有者|Owner|SHA1|SHA256" || true
 
       - uses: actions/upload-artifact@v4
         with:

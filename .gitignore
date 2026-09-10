@@ -22,3 +22,16 @@ data/
 
 # CI 下载的麦动曲库（Release muse-db 附件），不进 git
 app/docker/vendor/
+
+# Android 构建产物与本地配置
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+# CI 构建时由 app/docker/web/tv 拷入 assets，不入库
+android/app/src/main/assets/tv/
+
+# 签名密钥：绝对不能进仓库（私钥泄露 = 任何人都能伪造成你的正式更新包）
+*.jks
+*.keystore
+*.apk

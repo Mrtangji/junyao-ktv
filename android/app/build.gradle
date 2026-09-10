@@ -1,5 +1,21 @@
 plugins { id 'com.android.application' }
 
+// ===== 统一签名 =====
+// APK 的签名是"应用身份"：签名一变，系统就认为是另一个应用，覆盖安装会直接失败
+// （报"应用未安装"/"签名不一致"），只能卸载重装（本机数据全丢）。
+// 原先 CI 走 assembleDebug，用的是 AGP 在构建机上临时生成的调试签名——每次
+// runner 都是全新的，RSA 密钥随机生成，所以每次构建出来的 APK 签名都不同，
+// 用户每换一个版本就得卸载重装一次。
+//
+// 现在统一到一把固定密钥：CI 从 GitHub Secrets 解码出 jks 后，用环境变量把
+// 路径/口令传进来（见 .github/workflows/android-build.yml）。本地开发不设这些
+// 变量，则维持原样（debug 用 AGP 自动生成的调试签名），互不影响。
+def ksPath = System.getenv('ANDROID_KEYSTORE_PATH')
+def ksPass = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+def ksAlias = System.getenv('ANDROID_KEY_ALIAS') ?: 'junyao'
+def ksKeyPass = System.getenv('ANDROID_KEY_PASSWORD') ?: ksPass
+def unifiedSigning = ksPath && ksPass && file(ksPath).exists()
+
 android {
     namespace 'cn.junyao.ktv'
     compileSdk 34
@@ -8,13 +24,34 @@ android {
         applicationId 'cn.junyao.ktv'
         minSdk 21          // Android 5+；实际覆盖 Android 7~14
         targetSdk 34
-        versionCode 1
-        versionName '1.0.0'
+        // 版本号可由 CI 注入：versionCode 必须单调递增，否则系统拒绝覆盖安装
+        // （降级安装会被拒）。CI 用 run_number 保证每次都比上一次大。
+        // 注意用 `=` 赋值：写成 `versionCode (...).toInteger()` 会被 Groovy 当成
+        // 方法调用 versionCode(...) 再 .toInteger()，落到空返回值上报 "Value is null"。
+        versionCode = (System.getenv('ANDROID_VERSION_CODE') ?: '1').toInteger()
+        versionName = System.getenv('ANDROID_VERSION_NAME') ?: '1.0.0'
+    }
+
+    signingConfigs {
+        if (unifiedSigning) {
+            unified {
+                storeFile file(ksPath)
+                storePassword ksPass
+                keyAlias ksAlias
+                keyPassword ksKeyPass
+            }
+        }
     }
 
     buildTypes {
+        debug {
+            // 提供统一密钥时 debug 也用同一把，避免"本地装的包 / CI 下的包"
+            // 互相覆盖安装时因签名不同而失败。
+            if (unifiedSigning) signingConfig signingConfigs.unified
+        }
         release {
             minifyEnabled false
+            if (unifiedSigning) signingConfig signingConfigs.unified
         }
     }
 

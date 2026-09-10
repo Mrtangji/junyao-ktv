@@ -32,6 +32,25 @@
 
 浏览器打开服务器地址（如 `http://局域网IP:8080`）会看到一个导航首页，三个入口一目了然。
 
+### 📱 Android APK 与签名
+
+APK 全部由 CI 构建，两种获取方式：
+
+- **日常**：Actions 页面最新一次 run 的产物 `junyao-ktv-apk`（推 main 即自动构建）
+- **发版**：打 `v*` tag 时会把 APK 挂到 Release 附件
+
+**统一签名**——所有版本都用同一枚固定证书签名，所以新版本能直接**覆盖安装**，不用卸载、不丢数据：
+
+```
+SHA-1: 10:6C:FC:01:36:96:93:D0:FA:10:B0:3B:19:6F:E9:67:75:97:2B:03
+```
+
+`versionCode` 随 CI 构建次数自增（降级安装会被系统拒绝），`versionName` 为 `1.0.<构建号>`，打 tag 时用 tag 名。
+
+> ⚠️ **早期版本**（用构建机临时调试签名，每次构建签名都不同）升级到统一签名的包，需要**卸载重装一次**；此后即可一直覆盖升级。
+
+签名密钥不入库：`.jks` 以 base64 存在仓库 Secrets（`ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`），CI 构建时解码使用。**密钥一旦丢失或更换，新包就无法覆盖已安装的旧包**（系统会当成另一个应用），请务必备份。CI 的 `Verify APK signature` 一步会打印证书指纹，各版本应当完全一致。
+
 ---
 
 ## 🚀 快速开始
