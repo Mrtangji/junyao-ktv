@@ -1585,9 +1585,30 @@ async function loadLyrics(song){
     if(song.media_type==='audio')panel.classList.add('show','no-lyrics');
   }
 }
-// 加载一首新歌：优先用 hls.js 播放 HLS(master.m3u8 里声明的每条音轨都是独立分片，
-// 切音轨/拖进度条都不会打断视频)；hls.js 不可用但浏览器原生支持 HLS(如 Safari)则
-// 直接把 src 指过去；两者都不支持时兜底退回旧的整段直传接口(仅默认音轨，无法切换)。
+// 纯音频文件的直传 MIME 映射。为什么要绕开 HLS：hlsgen 的音频轨只对 aac 做
+// -c copy，FLAC/WAV/MP3 一律被重编码成 aac 192k——等于把无损和 320K MP3 都降质。
+// 浏览器/Android WebView 本来就能原生解码这些格式，直接流原文件即可零转码保真。
+const DIRECT_AUDIO_MIME={
+  '.mp3':'audio/mpeg', '.flac':'audio/flac', '.wav':'audio/wav',
+  '.m4a':'audio/mp4', '.aac':'audio/aac', '.ogg':'audio/ogg', '.opus':'audio/ogg',
+};
+function directAudioMime(song){
+  const fn=String((song&&song.filename)||'').toLowerCase();
+  return DIRECT_AUDIO_MIME[fn.slice(fn.lastIndexOf('.'))]||'';
+}
+// 是否直传：纯音频 + 单音轨（多音轨要靠 hls.js 切原/伴唱）+ 内核认这个格式。
+// 返回非空表示走直传，返回空串表示照旧走 HLS。
+function wantDirectPlay(song,v){
+  if(!song||song.media_type!=='audio')return '';
+  if((song.audio_tracks||1)>=2)return '';
+  const mime=directAudioMime(song);
+  return (mime&&v.canPlayType(mime))?mime:'';
+}
+// 加载一首新歌：纯音频(mp3/flac/wav…)优先直传原文件，零转码保真；MV 走
+// hls.js 播 HLS(master.m3u8 里每条音轨都是独立分片，切音轨/拖进度条都不打断)，
+// hls.js 不可用但浏览器原生支持 HLS(如 Safari)则把 src 指过去，都不支持时
+// 兜底退回整段直传接口(仅默认音轨，无法切换)。直传侧同样带兜底：内核不认、
+// 起播报错或 15 秒没出声 → 自动回落 HLS（宁可转码也别唱不了）。
 function loadSong(v,songId){
   hideToast();
   document.getElementById('score-result').classList.remove('show');
@@ -1602,34 +1623,58 @@ function loadSong(v,songId){
     v.src=`${BASE}/stream/${songId}`;
     if(!isPaused)v.play().catch(()=>{});
   };
-  if(window.Hls&&Hls.isSupported()){
-    // 服务端现在是"渐进式"生成 HLS：一首歌刚点开时，子播放列表(video.m3u8/
-    // audioN.m3u8)可能还没写入 #EXT-X-ENDLIST(转码仍在后台进行中)，hls.js
-    // 会按它默认的"直播流"启发式规则，把起播位置定到已知分片的末尾附近，
-    // 而不是从头开始——对 KTV 场景这是绝对不能接受的(唱到一半才进画面)。
-    // 显式指定 startPosition:0 强制从第 0 秒起播，转码完成后(出现
-    // ENDLIST)也不受影响，继续正常播放/寻址。
-    const hls=new Hls({ startPosition: 0 });
-    hls.on(Hls.Events.ERROR,(_,data)=>{
-      console.error('[hls]',data.type,data.details);
-      // 致命错误(清单/分片加载失败、当前源文件编码在容器里放不下等)：不再死等，
-      // 直接回退到旧的直传接口兜底，保证至少能听到/看到默认音轨，不会一直黑屏。
-      if(data.fatal&&curSong&&curSong.song_id===songId){
-        console.warn('[hls] 致命错误，回退到直传接口:',songId);
-        fallbackToRaw();
-      }
-    });
-    hls.on(Hls.Events.MANIFEST_PARSED,()=>{if(!isPaused)v.play().catch(()=>{});});
-    hls.loadSource(url);
-    hls.attachMedia(v);
-    hlsInstance=hls;
-  }else if(v.canPlayType('application/vnd.apple.mpegurl')){
-    v.src=url;
-    v.addEventListener('error',fallbackToRaw,{once:true});
+  const startHls=()=>{
+    if(window.Hls&&Hls.isSupported()){
+      // 服务端现在是"渐进式"生成 HLS：一首歌刚点开时，子播放列表(video.m3u8/
+      // audioN.m3u8)可能还没写入 #EXT-X-ENDLIST(转码仍在后台进行中)，hls.js
+      // 会按它默认的"直播流"启发式规则，把起播位置定到已知分片的末尾附近，
+      // 而不是从头开始——对 KTV 场景这是绝对不能接受的(唱到一半才进画面)。
+      // 显式指定 startPosition:0 强制从第 0 秒起播，转码完成后(出现
+      // ENDLIST)也不受影响，继续正常播放/寻址。
+      const hls=new Hls({ startPosition: 0 });
+      hls.on(Hls.Events.ERROR,(_,data)=>{
+        console.error('[hls]',data.type,data.details);
+        // 致命错误(清单/分片加载失败、当前源文件编码在容器里放不下等)：不再死等，
+        // 直接回退到旧的直传接口兜底，保证至少能听到/看到默认音轨，不会一直黑屏。
+        if(data.fatal&&curSong&&curSong.song_id===songId){
+          console.warn('[hls] 致命错误，回退到直传接口:',songId);
+          fallbackToRaw();
+        }
+      });
+      hls.on(Hls.Events.MANIFEST_PARSED,()=>{if(!isPaused)v.play().catch(()=>{});});
+      hls.loadSource(url);
+      hls.attachMedia(v);
+      hlsInstance=hls;
+    }else if(v.canPlayType('application/vnd.apple.mpegurl')){
+      v.src=url;
+      v.addEventListener('error',fallbackToRaw,{once:true});
+      if(!isPaused)v.play().catch(()=>{});
+    }else{
+      fallbackToRaw();
+    }
+  };
+  // 纯音频优先直传原文件（零转码，无损 FLAC/320K MP3 原汁原味）。
+  // 兜底三重：内核不认该格式就直接走 HLS；起播报错或 15 秒内没进入可播状态
+  // （少数智能电视报支持却解不出来）也自动回落 HLS，保证有声音优先于保真。
+  if(wantDirectPlay(curSong,v)){
+    let directDone=false;
+    const toHls=()=>{
+      if(directDone)return;
+      directDone=true;
+      clearTimeout(dTimer);
+      v.removeEventListener('error',onDirectErr);
+      console.warn('[direct] 直传不可用，回落 HLS:',songId);
+      startHls();
+    };
+    const onDirectErr=()=>toHls();
+    const dTimer=setTimeout(()=>{ if(v.readyState<2)toHls(); },15000);
+    v.addEventListener('error',onDirectErr,{once:true});
+    v.addEventListener('loadedmetadata',()=>clearTimeout(dTimer),{once:true});
+    v.src=`${BASE}/stream/${songId}`;
     if(!isPaused)v.play().catch(()=>{});
-  }else{
-    fallbackToRaw();
+    return;
   }
+  startHls();
 }
 window.ktv_fs=false;
 // WS
