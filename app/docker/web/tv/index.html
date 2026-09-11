@@ -2680,7 +2680,9 @@ async function lxLoadBoard(bangid,name){
     const r=await fetch(api).then(x=>x.json());
     if(seq!==lxSeq)return; // 已切到其它榜单，丢弃过期结果
     if(r.error){hint.textContent='⚠️ '+r.error;return;}
-    hint.textContent=`${srcName(boardSrc)} · ${name} · ${r.total||r.list.length}首 · 点歌后自动下载/播放`;
+    let txt=`${srcName(boardSrc)} · ${name} · ${r.total||r.list.length}首 · 点歌后自动下载/播放`;
+    if(r.fallback)txt+=`（${r.fallbackReason}）`;
+    hint.textContent=txt;
     lxRenderList(list,r.list);
   }catch(e){if(seq===lxSeq)hint.textContent='⚠️ 榜单加载失败：'+e.message;}
 }

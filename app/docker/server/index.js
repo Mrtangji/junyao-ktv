@@ -597,11 +597,22 @@ app.get('/api/lx/boards', async (req, res) => {
 // 榜单歌曲
 app.get('/api/lx/board', async (req, res) => {
   const src = boardsdk.isValidSource(req.query.src) ? req.query.src : 'kw';
+  const limit = parseInt(req.query.limit) || 100;
   try {
-    const r = await boardsdk.boardSongs(src, req.query.bangid || '255', parseInt(req.query.page) || 1, parseInt(req.query.limit) || 100);
+    const r = await boardsdk.boardSongs(src, req.query.bangid || '255', parseInt(req.query.page) || 1, limit);
     r.list = attachLocalFlags(r.list);
     res.json(r);
-  } catch (e) { res.status(502).json({ error: '榜单获取失败: ' + e.message }); }
+  } catch (e) {
+    // 四平台榜单直连失败（平台接口失效 / 服务器到不了官网）→ 兜底本站热门点唱榜，保证点唱榜可用
+    // 服务器能直连时上方 try 已返回真实榜，不会走到这里
+    try {
+      const rows = db.prepare('SELECT id,title,artist,album,cover FROM songs WHERE media_type=? ORDER BY play_count DESC, id DESC LIMIT ?').all('audio', limit);
+      const list = rows.map(s => ({ songmid: String(s.id), name: s.title, singer: s.artist || '', album: s.album || '', pic: s.cover || '', src, duration: 0 }));
+      res.json({ list: attachLocalFlags(list), total: list.length, page: 1, limit: list.length, fallback: true, fallbackReason: '平台榜单接口暂不可用，已显示本站热门点唱' });
+    } catch (e2) {
+      res.status(502).json({ error: '榜单获取失败: ' + e.message });
+    }
+  }
 });
 
 // 网络搜索（src: kw/wy/tx/kg，缺省 kw；四平台统一由 boardsdk 提供）
