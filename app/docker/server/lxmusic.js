@@ -538,7 +538,7 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   // 由下面的落盘分支自动按 MP3 处理。
   const url = await resolveMusicUrlWithFallback(platform, musicInfo, lossless ? 'flac' : '320k');
   const tmpPath = path.join(TMP_DIR, `dl_${Date.now()}_${process.pid}`);
-  const resp = await httpReq(url, { responseType: 'buffer', timeout: 120000 });
+  const resp = await httpReq(url, { responseType: 'buffer', timeout: 45000 });
   if (resp.statusCode !== 200) throw new Error(`下载失败 HTTP ${resp.statusCode}`);
   // 内容校验：不是有效音频就直接给出可读原因，不再让 ffmpeg 报晦涩错误，
   // 也避免坏内容被 content-type 误判直接改名为 .mp3 入库

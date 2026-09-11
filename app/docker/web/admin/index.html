@@ -914,7 +914,15 @@ async function sbRefresh(){
     (st.fallback ? `（其中换源成功 ${st.fallback}）` : '') +
     ` · 本地已有跳过 ${st.skipped} · <span style="color:${st.failed ? 'var(--pink)' : 'inherit'}">失败 ${st.failed}</span>` +
     (st.lastError ? `<br><span style="color:var(--pink)">${st.lastError}</span>` : '');
-}
+  const fwEl = document.getElementById('sb-failed-wrap');
+  const flEl = document.getElementById('sb-failed');
+  const fcEl = document.getElementById('sb-failed-count');
+  if (st.failedList && st.failedList.length) {
+    fwEl.style.display = '';
+    fcEl.textContent = st.failedList.length;
+    flEl.innerHTML = st.failedList.slice(0, 200).map(x => `· ${x.name} - ${x.singer} <span style="color:var(--sub)">[${x.src}]</span>：${x.reason}`).join('<br>');
+  } else { fwEl.style.display = 'none'; }
+  }
 async function sbStart(){
   const err = document.getElementById('sb-err');
   err.textContent = '';

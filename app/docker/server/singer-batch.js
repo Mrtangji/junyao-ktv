@@ -115,12 +115,15 @@ async function downloadOne(song, format) {
 // 换平台找同名歌续下：按 [其它三个平台] 顺序，搜索歌名过滤歌手+歌名匹配，取第一个下载成功
 async function downloadViaOtherSources(song, format, excludeSrc) {
   for (const s of boardsdk.SOURCES.map(x => x.id)) {
-    if (s === excludeSrc || stopFlag) continue;
+    if (s === excludeSrc) continue;
+    if (stopFlag) return null;
     try {
       const r = await boardsdk.search(s, song.name, 1, 30);
+      if (stopFlag) return null;
       const cand = (r.list || []).find(m =>
         titleMatch(m.name, song.name) && singerMatch(m.singer, song.singer.split('、')[0]));
       if (!cand) continue;
+      if (stopFlag) return null;
       await downloadOne(cand, format);
       return s;
     } catch (e) { /* 下一个平台 */ }
