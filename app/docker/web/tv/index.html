@@ -1566,10 +1566,31 @@ function renderLyrics(){
 }
 async function loadLyrics(song){
   resetLyrics();
-  if(!song || song.song_id<0)return; // MV 也加载 LRC（KTV 双行底部歌词）；本机歌曲无服务端歌词
+  if(!song)return;
   const panel=document.getElementById('lyrics-panel');
   const isAudio=song.media_type==='audio';
+  const isLocal=!!(song.local||(song.queue_id&&String(song.queue_id).startsWith('local_')));
   if(isAudio)panel.classList.add('show');
+  // 本机歌曲（安卓 SAF 曲库）：歌词来自同目录同名 .lrc，经 KtvBridge.localPlayLyric 读文本。
+  // 浏览器 IndexedDB 本机歌曲没带歌词则不显示，属正常。
+  if(isLocal){
+    let lrc=null;
+    try{ if(window.KtvBridge&&typeof window.KtvBridge.localPlayLyric==='function'&&typeof song.localId==='number') lrc=window.KtvBridge.localPlayLyric(song.localId); }catch(e){ lrc=null; }
+    if(lrc&&lrc.length){
+      try{
+        lyricLines=parseLrc(lrc);
+        if(lyricLines.length){
+          panel.classList.remove('no-lyrics');
+          renderLyrics();
+          lyricTimer=setInterval(renderLyrics,150);
+          return;
+        }
+      }catch(e){}
+    }
+    if(isAudio)panel.classList.add('show','no-lyrics'); // 有音频但没词 → 显示"暂无歌词"
+    return;
+  }
+  if(song.song_id<0)return; // MV 也加载 LRC（KTV 双行底部歌词）；服务端歌曲走下面的接口
   if(!song.lyrics_path){if(isAudio)panel.classList.add('no-lyrics');return;}
   try{
     const resp=await fetch(`${BASE}/lyrics/${song.song_id}`);
@@ -3160,7 +3181,8 @@ async function playLocalSong(id){
   document.getElementById('ni-meta').textContent=`${s.artist||'本机音频'} · 本机`;
   document.getElementById('ov-title').textContent=s.title;
   document.getElementById('ov-artist').textContent=`${s.artist||''} · 本机`.replace(/^ · /,'');
-  curSong={queue_id:'local_'+id,song_id:-1,title:s.title,artist:s.artist,media_type:'audio'};
+  curSong={queue_id:'local_'+id,song_id:-1,localId:id,title:s.title,artist:s.artist,media_type:'audio'};
+  loadLyrics(curSong); // 本机歌曲歌词来自同目录同名 .lrc（经 KtvBridge.localPlayLyric 读取）
   updateAudioMode();
   endingNotified=true;
   // 播放失败带具体原因（能走到这里说明本地服务已探测通过，剩余为解码/格式问题）

@@ -16,7 +16,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.zip.CRC32;
@@ -110,6 +112,10 @@ final class LocalMusicStore {
             throw new IllegalStateException("query returned null (folder permission lost?)");
         }
         List<String> subDirs = new ArrayList<>();
+        List<JSONObject> audioItems = new ArrayList<>();
+        // 同目录同名 .lrc（与歌曲在一起）的文档 id：basename(小写) -> docId，
+        // 扫描完挂到对应音频项上当作歌词源（本地模式歌词就靠它，不依赖服务器）。
+        Map<String, String> lrcDoc = new HashMap<>();
         while (c.moveToNext()) {
             String docId = c.getString(0);
             String name = c.getString(1) == null ? "" : c.getString(1);
@@ -117,6 +123,12 @@ final class LocalMusicStore {
             long size = c.isNull(3) ? 0 : c.getLong(3);
             if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
                 subDirs.add(docId);
+                continue;
+            }
+            String lower = name.toLowerCase();
+            if (lower.endsWith(".lrc")) {
+                // 去掉 .lrc 后缀当 basename，大小写不敏感匹配音频文件
+                lrcDoc.put(name.substring(0, name.length() - 4).toLowerCase(), docId);
                 continue;
             }
             String ext = extOf(name);
@@ -130,9 +142,21 @@ final class LocalMusicStore {
             o.put("uri", uriStr);
             // 文件名不含"歌手 - 歌名"分隔符时，读 ID3 元数据兜底补歌手/歌名
             if (!nameLooksTagged(name)) applyMediaMeta(ctx, o, Uri.parse(uriStr));
-            out.add(o);
+            // 暂存 basename(小写) 用于匹配同名 .lrc，构建完再移除
+            o.put("_base", name.substring(0, name.length() - (ext.length() + 1)).toLowerCase());
+            audioItems.add(o);
         }
         c.close();
+        // 把同名 .lrc 的文档 URI 挂到音频项；没有就不挂（歌词面板会显示"暂无歌词"）
+        for (JSONObject o : audioItems) {
+            String base = o.optString("_base", "");
+            o.remove("_base");
+            String lrcId = lrcDoc.get(base);
+            if (lrcId != null) {
+                o.put("lyricUri", DocumentsContract.buildDocumentUriUsingTree(treeUri, lrcId).toString());
+            }
+            out.add(o);
+        }
         for (String dir : subDirs) walk(ctx, dir, treeUri, out);
     }
 

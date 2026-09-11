@@ -33,6 +33,8 @@ import java.net.HttpURLConnection;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.net.URL;
 import java.util.ArrayList;
 import org.json.JSONObject;
@@ -757,6 +759,31 @@ public class MainActivity extends Activity {
                     getContentResolver().takePersistableUriPermission(Uri.parse(uri), Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 } catch (Exception ignored) {}
                 return uri;
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        /** 读取本机歌曲同目录同名 .lrc 的歌词文本（索引里存了 lyricUri）。无歌词返回 null。 */
+        @JavascriptInterface
+        public String localPlayLyric(int id) {
+            try {
+                JSONObject item = LocalMusicStore.byId(MainActivity.this, id);
+                if (item == null) return null;
+                String uri = item.optString("lyricUri", null);
+                if (uri == null || uri.isEmpty()) return null;
+                // 兜底续一次持久授权，失败不影响读取
+                try {
+                    getContentResolver().takePersistableUriPermission(Uri.parse(uri), Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                } catch (Exception ignored) {}
+                InputStream in = getContentResolver().openInputStream(Uri.parse(uri));
+                if (in == null) return null;
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+                in.close();
+                return bos.toString("UTF-8");
             } catch (Exception e) {
                 return null;
             }
