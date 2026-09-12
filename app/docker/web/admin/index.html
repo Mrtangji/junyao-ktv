@@ -379,6 +379,8 @@ main{max-width:960px;margin:0 auto;padding:24px}
         合唱人数超过「合唱人数上限」的歌视为大合唱、直接跳过（0=不限）；合作曲统一保存到<b>第一位歌手</b>的目录
         （「周杰伦、温岚」→ 周杰伦/，文件名仍保留完整歌手）。
         请求已按音源做了节流（同平台最小间隔 350ms），降低被平台限流/封 IP 的风险。
+        任务支持<b>暂停 / 继续</b>：暂停会把断点存到磁盘（服务重启也不丢），之后点「▶ 继续下载」从断点接着下；
+        网络中断、平台抽风、连续多首失败等意外也会<b>自动暂停</b>而不是把剩下的歌记成失败。
       </div>
       <div id="sb-src-status" style="font-size:12px;min-height:16px;margin:2px 0 8px;line-height:1.6"></div>
       <div id="sb-err" style="color:var(--pink);font-size:12px;min-height:14px;margin-bottom:8px"></div>
@@ -390,12 +392,19 @@ main{max-width:960px;margin:0 auto;padding:24px}
     </div>
     <div id="sb-running" style="display:none">
       <div id="sb-status" style="font-size:13px;color:var(--sub);line-height:1.9">运行中…</div>
+      <div id="sb-remains" style="font-size:12px;color:var(--sub);line-height:1.7;margin-top:6px"></div>
       <div style="height:8px;background:rgba(255,255,255,.08);border-radius:4px;overflow:hidden;margin:10px 0">
         <div id="sb-bar" style="height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--cyan));transition:width .4s"></div>
       </div>
-      <div class="modal-btns" style="justify-content:flex-start">
+      <div class="modal-btns" style="justify-content:flex-start;flex-wrap:wrap;gap:8px">
+        <button id="sb-pause-btn" class="hbtn" onclick="sbPause()">⏸ 暂停</button>
+        <button id="sb-resume-btn" class="hbtn primary" onclick="sbResume()" style="display:none">▶ 继续下载</button>
         <button class="hbtn" onclick="sbStop()">⏹ 停止</button>
         <button class="hbtn" onclick="closeSingerModal()">后台运行并关闭</button>
+      </div>
+      <div style="font-size:12px;color:var(--sub);line-height:1.7;margin-top:8px">
+        「暂停」会断开在途请求并把进度存到磁盘（当前这首会在继续时重下），可在任意时候点「继续下载」接着下；
+        服务重启 / 网络中断等意外也会自动暂停而不是丢进度；「停止」才是放弃任务（会连同断点一起清掉）。
       </div>
     </div>
   </div>
@@ -971,18 +980,27 @@ function sbFileChosen(input){
 async function sbRefresh(){
   let st;
   try{ st = await fetch('/api/singer-batch/status').then(r=>r.json()); }catch(e){ return; }
-  const running = st.phase === 'running';
-  document.getElementById('sb-config').style.display = running ? 'none' : '';
-  document.getElementById('sb-running').style.display = running ? '' : 'none';
-  if(!running && st.phase === 'done' && st.message){
-    document.getElementById('sb-config').style.display = 'none';
-    document.getElementById('sb-running').style.display = '';
+  const active = st.phase === 'running' || st.phase === 'paused';
+  const showRun = active || (st.phase === 'done' && !!st.message);
+  document.getElementById('sb-config').style.display = showRun ? 'none' : '';
+  document.getElementById('sb-running').style.display = showRun ? '' : 'none';
+  if(!showRun) return;
+  const paused = st.phase === 'paused';
+  const pb = document.getElementById('sb-pause-btn');
+  const rb = document.getElementById('sb-resume-btn');
+  if(pb) pb.style.display = (active && !paused) ? '' : 'none';
+  if(rb) rb.style.display = (active && paused) ? '' : 'none';
+  const rem = document.getElementById('sb-remains');
+  if(rem){
+    rem.innerHTML = (active && (st.remainingSingers || st.pendingSongs))
+      ? `剩余：<b>${st.remainingSingers}</b> 个歌手${st.pendingSongs ? `（当前歌手还有 <b>${st.pendingSongs}</b> 首待下）` : ''}`
+      : '';
   }
-  if(!running) return;
   const pct = st.singersTotal ? Math.round(st.singersDone / st.singersTotal * 100) : 0;
   document.getElementById('sb-bar').style.width = pct + '%';
   document.getElementById('sb-status').innerHTML =
     (st.stopping ? `<span style="color:var(--cyan)">⏹ 正在停止…已断开在途请求，当前这首收尾后立即结束</span><br>` : '') +
+    (paused ? `<span style="color:var(--cyan)">⏸ 已暂停${st.pausedReason ? `（${st.pausedReason}）` : ''} · 进度已保存，点「▶ 继续下载」接着下</span><br>` : '') +
     (st.sources && st.sources.length > 1 ? `搜索平台：全部（${st.sources.join('/')}）${st.sqOnly ? ' · <span style="color:var(--cyan)">只收无损</span>' : ''}<br>` : (st.sqOnly ? '<span style="color:var(--cyan)">只收无损</span><br>' : '')) +
     `${st.message || '运行中…'}<br>` +
     `歌手进度：${st.singersDone}/${st.singersTotal} · 当前：${st.current || '—'}<br>` +
@@ -1025,9 +1043,28 @@ async function sbStart(){
     sbRefresh();
   }catch(e){ err.textContent = '启动失败：'+e.message; }
 }
+async function sbPause(){
+  try{
+    const r = await fetch('/api/singer-batch/pause',{method:'POST'}).then(r=>r.json());
+    toast(r.ok ? '⏸ 已暂停：进度已保存，点「▶ 继续下载」可接着下' : (r.error || '暂停失败'));
+    sbRefresh();
+  }catch(e){ toast('⚠️ 暂停失败：'+e.message); }
+}
+async function sbResume(){
+  try{
+    const r = await fetch('/api/singer-batch/resume',{method:'POST'}).then(r=>r.json());
+    if(!r.ok){ toast(r.error || '继续失败'); sbRefresh(); return; }
+    toast(r.resumed === 'cold' ? '▶ 已从断点继续下载（上次中断前的进度）' : '▶ 已继续下载');
+    sbRefresh();
+  }catch(e){ toast('⚠️ 继续失败：'+e.message); }
+}
 async function sbStop(){
-  try{ await fetch('/api/singer-batch/stop',{method:'POST'}); toast('已请求停止：正在断开在途请求，通常 1~2 秒内停下'); sbRefresh(); }
-  catch(e){ toast('⚠️ 停止失败：'+e.message); }
+  try{
+    const r = await fetch('/api/singer-batch/stop',{method:'POST'}).then(r=>r.json());
+    if(r && r.discarded) toast('已放弃上次未完成的任务（断点已清除）');
+    else toast('已请求停止：正在断开在途请求，通常 1~2 秒内停下');
+    sbRefresh();
+  }catch(e){ toast('⚠️ 停止失败：'+e.message); }
 }
 
 // ---------- 服务端版本 ----------

@@ -767,7 +767,18 @@ app.post('/api/singer-batch/start', requireAdminAuth, async (req, res) => {
   const r = await singerBatch.start(req.body || {});
   res.status(r.ok ? 200 : 400).json(r);
 });
-app.post('/api/singer-batch/stop', requireAdminAuth, (req, res) => { singerBatch.stop(); res.json({ ok: true }); });
+// 暂停：断开在途请求 + 保存断点（当前这首会在继续时重下），可再「继续下载」接着下
+app.post('/api/singer-batch/pause', requireAdminAuth, (req, res) => {
+  const r = singerBatch.pause();
+  res.status(r.ok ? 200 : 400).json(r);
+});
+// 继续：内存里挂着的任务直接放行；服务重启/意外中断留下的快照则冷启动续传
+app.post('/api/singer-batch/resume', requireAdminAuth, (req, res) => {
+  const r = singerBatch.resume();
+  res.status(r.ok ? 200 : 400).json(r);
+});
+// 停止才是真正放弃（连同断点快照一起清掉）
+app.post('/api/singer-batch/stop', requireAdminAuth, (req, res) => res.json(singerBatch.stop()));
 
 // ---------- 爱唱榜 (按播放次数) ----------
 app.get('/api/charts', (req, res) => {
