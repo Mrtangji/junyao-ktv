@@ -89,6 +89,18 @@ const JOB_VERSION = 1;
 const SAVE_THROTTLE_MS = 20000;
 const AUTO_PAUSE_AFTER_FAILS = 5; // 连续失败多少首后自动暂停（多半是断网/被平台限流）
 
+// "本地已有跳过"的口径按任务格式区分——库里已有的其它版本不应挡住本次下载：
+//   · flac 任务：只认已有 .flac（TS/MV 是视频、MP3 是有损，都不算"已有无损"，
+//     否则库里有 MV 或 MP3 的歌永远补不上 FLAC 版）
+//   · mp3 任务：.mp3 或 .flac 都算（无损文件转出的 MP3 需求已满足），MV 不算
+//   · mv 任务：只认视频行（media_type='video'，含 .ts/.mp4 等），音频版不算
+// 点唱接口（/api/lx/queue 等）不传 filter，保持老口径：任何版本都算已有（能播就行）。
+const LOCAL_FILTERS = {
+  flac: { exts: ['flac'] },
+  mp3: { exts: ['mp3', 'flac'] },
+  mv: { mediaTypes: ['video'] },
+};
+
 /** 全部平台（多音源模式）——顺序即优先级：先命中先入库，后到的同名歌由本地查重跳过 */
 const ALL_SOURCES = boardsdk.SOURCES.map(s => s.id);
 
@@ -417,8 +429,9 @@ async function runJob(job) {
         job.pendingSongs = songs.slice(k);
         syncPending(job);
         saveJobSoon();
-        // 本地已有 → 跳过
-        if (lxmusic.findLocalSong(song.name, song.singer)) {
+        // 本地已有 → 跳过（按任务格式限口径：FLAC 任务不被已有 MV/MP3 挡住，
+        // 见 LOCAL_FILTERS 注释）
+        if (lxmusic.findLocalSong(song.name, song.singer, LOCAL_FILTERS[opts.format])) {
           bump(job, 'skipped');
           k++; continue;
         }

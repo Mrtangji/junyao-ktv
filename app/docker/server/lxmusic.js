@@ -689,11 +689,26 @@ function musicInfoOf(songmid, name, singer) {
   return { songmid, songId: songmid, musicId: songmid, hash: songmid, id: songmid, name, singer, singerName: singer, source: Object.keys(activeSource ? activeSource.sources : {})[0] || 'kw' };
 }
 
-// 本地曲库匹配：标题+歌手模糊查（给"点唱榜/搜索结果"判断是否已有）
-function findLocalSong(name, singer) {
+// 本地曲库匹配：标题+歌手模糊查（给"点唱榜/搜索结果"判断是否已有）。
+// filter（可选）限定"算已有"的范围，用于歌手批量下载——不同格式任务对"已有"
+// 的口径不同（FLAC 任务不应被库里已有的 TS/MV 或 MP3 挡住）：
+//   · filter.exts：只认这些后缀的行（如 ['flac']），按 LOWER(filename) 尾缀匹配
+//   · filter.mediaTypes：只认这些媒体类型的行（如 ['video']，MV 任务用）
+//   · 不传 filter → 老口径：任何同名同歌手的行都算已有（点唱接口用这个）
+function findLocalSong(name, singer, filter) {
   const title = sanitize(name);
   if (!title) return null;
-  const rows = db.prepare(`SELECT * FROM songs WHERE title LIKE ? LIMIT 10`).all(`%${title}%`);
+  let sql = 'SELECT * FROM songs WHERE title LIKE ?';
+  const args = [`%${title}%`];
+  if (filter && Array.isArray(filter.exts) && filter.exts.length) {
+    sql += ` AND (${filter.exts.map(() => `LOWER(filename) LIKE ?`).join(' OR ')})`;
+    for (const e of filter.exts) args.push(`%.${String(e).replace(/^\./, '').toLowerCase()}`);
+  } else if (filter && Array.isArray(filter.mediaTypes) && filter.mediaTypes.length) {
+    sql += ` AND media_type IN (${filter.mediaTypes.map(() => '?').join(',')})`;
+    args.push(...filter.mediaTypes);
+  }
+  sql += ' LIMIT 10';
+  const rows = db.prepare(sql).all(...args);
   if (!rows.length) return null;
   if (!singer) return rows[0];
   const s = String(singer);
