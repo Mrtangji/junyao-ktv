@@ -6,11 +6,12 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
 const db = require('./db');
-const { scanLibrary } = require('./scanner');
+const { scanLibrary, getScanState } = require('./scanner');
 const dlcfg = require('./dlconfig');
 const { toPinyin, toPinyinInitial } = require('./pinyin');
 const { detectLang } = require('./lang');
-const { ensureHLS, removeHLS, outDir, waitForFile, scheduleHLSCleanup, cancelAllActive, activeTranscodes } = require('./hlsgen');
+const { ensureHLS, removeHLS, outDir, waitForFile, scheduleHLSCleanup, cancelAllActive, activeTranscodes, runningPids, pendingWaitCount, HLS_DIR } = require('./hlsgen');
+const procmon = require('./procmon');
 const maidong = require('./maidong');
 const muse = require('./muse');
 const { getPitchCurve } = require('./pitch');
@@ -269,6 +270,11 @@ app.get('/hls/:id/:file', async (req, res) => {
 // ?track=0/1（对多音轨文件用 ffmpeg -c copy 现场重新封装出单音轨流），但注意
 // 这个分支吐出的流不支持 Range/寻址，只适合"整段从头播完"的用途，不要再用它
 // 做音轨切换后还要拖进度条的场景——那正是旧 bug 的根因，具体解释见 /hls 路由。
+// /stream 直传兜底（多音轨现场重封装）会临时起一个 ffmpeg。它不走 hlsgen 的
+// 转码登记表，这里单独登记 pid —— 一是让"孤儿 ffmpeg 巡检"知道它是合法进程，
+// 不会误杀；二是 /api/diag 能把它和 HLS 转码区分开。
+const liveStreamProcs = new Set();
+
 app.get('/stream/:id', (req, res) => {
   markPlayerActivity();
   const song = db.prepare('SELECT * FROM songs WHERE id = ?').get(req.params.id);
@@ -295,9 +301,14 @@ app.get('/stream/:id', (req, res) => {
       'pipe:1',
     ]);
     let responded = false;
+    if (ff.pid) liveStreamProcs.add(ff.pid);
     ff.stdout.pipe(res);
     ff.stderr.on('data', d => log.warn('TRANSCODE', `[stream直传兜底][ffmpeg] ${d.toString().trim()}`));
-    const cleanup = () => { if (!ff.killed) { try { ff.kill('SIGKILL'); } catch (e) {} } };
+    const cleanup = () => {
+      liveStreamProcs.delete(ff.pid);
+      if (!ff.killed) { try { ff.kill('SIGKILL'); } catch (e) {} }
+    };
+    ff.on('close', () => liveStreamProcs.delete(ff.pid));
     ff.on('error', err => { log.error('TRANSCODE', `[stream直传兜底] ffmpeg 启动失败: ${err.message}`); if (!responded) { responded = true; res.status(500).end(); } cleanup(); });
     res.on('close', cleanup);
     return;
@@ -1025,6 +1036,69 @@ app.post('/api/player/stop', (req, res) => {
   const r = stopServerPlayback('手动请求');
   res.json({ ok: true, ...r });
 });
+
+// ---------- 自诊断：CPU 到底被谁占了 ----------
+// 容器镜像里没有 top/ps（装 procps 又要加体积），所以这里用 /proc 自己采样，
+// 让 `curl http://NAS:8080/api/diag` 一句话回答：
+//   - 容器内各进程的 CPU 占用（% of 单核）+ 占整机 CPU 的百分比；
+//   - 每个 ffmpeg 的完整命令行与存活时长，以及它有没有被登记（registered）；
+//   - 是否正在全量扫描曲库（scan.scanning / runningSec）；
+//   - 在线客户端数、在途转码数、等分片的请求数。
+// 这样"有东西一直占 CPU"就能直接看出是 node 在建路径、是 ffmpeg 在转码、
+// 还是有个失控的 ffmpeg（未登记 → 下面的巡检会收拾掉）。
+app.get('/api/diag', async (req, res) => {
+  let cpu;
+  try { cpu = await procmon.sampleCpu({ sampleMs: Math.min(3000, Number(req.query.ms) || 500), top: 15 }); }
+  catch (e) { cpu = { error: e.message }; }
+  const registered = new Set([...runningPids(), ...liveStreamProcs]);
+  const mediaProcs = procmon.listMediaProcs().map(p => ({ ...p, registered: registered.has(p.pid) }));
+  let queue = [];
+  try { queue = db.prepare('SELECT status, COUNT(*) AS c FROM queue GROUP BY status').all(); } catch (e) {}
+  res.json({
+    uptimeSec: Math.round(process.uptime()),
+    rssMB: Math.round(process.memoryUsage().rss / 1048576),
+    pid: process.pid,
+    clients: onlineClientCount(),
+    transcoding: activeTranscodes(),
+    pendingWaits: pendingWaitCount(),
+    idleStop: { ms: IDLE_STOP_MS, pending: !!idleTimer, keepPlaying: IDLE_STOP_KEEP_PLAYING },
+    scan: getScanState(),
+    procMonitor: procmon.available ? 'linux(/proc)' : 'unavailable(非 Linux)',
+    cpu,
+    mediaProcs,
+    queue,
+  });
+});
+
+// ---------- 孤儿 ffmpeg 巡检 ----------
+// 凡是"命令行指向 HLS 转码目录、却不在登记表里"的 ffmpeg/ffprobe，都说明有
+// 一次转码脱离了控制（历史版本漏杀、异常路径等）。这种进程会把整首歌转完才
+// 退，正是 NAS 上"什么都没做 CPU 也一直占着"的典型来源。每 5 分钟扫一次，
+// 只收拾同时满足三个条件的：命令行里带 HLS 目录名、存活超过 5 分钟、未登记
+// ——这样下载转码/封面提取/直传流等合法 ffmpeg 不会被误杀。
+const ORPHAN_SWEEP_MS = Number(process.env.ORPHAN_SWEEP_MS) || 5 * 60 * 1000;
+const ORPHAN_MIN_AGE_SEC = Number(process.env.ORPHAN_MIN_AGE_SEC) || 300;
+function sweepOrphanFfmpeg() {
+  if (!procmon.available) return { checked: 0, killed: 0 };
+  const registered = new Set([...runningPids(), ...liveStreamProcs]);
+  const dirTag = path.basename(HLS_DIR);
+  let checked = 0, killed = 0;
+  for (const p of procmon.listMediaProcs()) {
+    checked++;
+    if (registered.has(p.pid)) continue;
+    if (p.ageSec >= 0 && p.ageSec < ORPHAN_MIN_AGE_SEC) continue;
+    if (!(p.cmdline.includes(HLS_DIR) || p.cmdline.includes(dirTag))) continue;
+    log.warn('DIAG', `发现失控的 HLS 转码进程（未登记，已存活 ${p.ageSec}s，pid=${p.pid}），强制结束: ${p.cmdline.slice(0, 160)}`);
+    if (procmon.killProc(p.pid)) killed++;
+  }
+  if (killed) log.info('DIAG', `孤儿 ffmpeg 巡检：检查 ${checked} 个媒体进程，清理 ${killed} 个`);
+  return { checked, killed };
+}
+if (procmon.available) {
+  const t = setInterval(sweepOrphanFfmpeg, ORPHAN_SWEEP_MS);
+  if (t.unref) t.unref();
+  log.info('DIAG', `孤儿 ffmpeg 巡检已启用：每 ${Math.round(ORPHAN_SWEEP_MS / 60000)} 分钟检查一次（存活不足 ${ORPHAN_MIN_AGE_SEC}s 的不动）`);
+}
 wss.on('connection', onWsConnection);
 
 try {

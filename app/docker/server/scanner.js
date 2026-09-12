@@ -424,4 +424,37 @@ function scanFile(f) {
   }
 }
 
-module.exports = { scanLibrary, scanFile, scanRoots, MV_DIR, probeAudioTracks, findLyricsPath };
+// ---------- 扫描状态（供 /api/diag 判断"CPU 高是不是正在扫曲库"） ----------
+// 启动期那一次全量扫描最容易被误判成"CPU 一直高"：曲库大时它要跑很久（每个
+// 文件都要起一次 ffprobe），而且每次重启/重建容器都会重来一遍。把"是否正在
+// 扫描 + 上次结果 + 已跑多久"暴露出去，运维接口就能一眼区分"正在扫描"和
+// "有东西在空转"——这两种情况处理方式完全不同。
+const scanState = { scanning: false, startedAt: 0, finishedAt: 0, last: null };
+
+function getScanState() {
+  return {
+    scanning: scanState.scanning,
+    startedAt: scanState.startedAt,
+    finishedAt: scanState.finishedAt,
+    runningSec: scanState.scanning ? Math.round((Date.now() - scanState.startedAt) / 1000) : 0,
+    last: scanState.last,
+  };
+}
+
+// 对外导出的是"带状态跟踪"的版本（index.js 的定时/启动扫描、bulk 结束后的
+// 扫描都会走它，从而被 /api/diag 看见）；scanner 内部各函数仍调用原始
+// scanLibrary，不额外包一层。
+async function scanLibraryTracked(...args) {
+  scanState.scanning = true;
+  scanState.startedAt = Date.now();
+  try {
+    const r = await scanLibrary(...args);
+    scanState.last = r;
+    return r;
+  } finally {
+    scanState.scanning = false;
+    scanState.finishedAt = Date.now();
+  }
+}
+
+module.exports = { scanLibrary: scanLibraryTracked, scanFile, scanRoots, MV_DIR, probeAudioTracks, findLyricsPath, getScanState };

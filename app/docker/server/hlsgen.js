@@ -522,19 +522,34 @@ async function ensureHLS(song) {
 // 等待某个具体文件（子播放列表或分片）出现，供路由层在文件"还在转码中、
 // 暂时不存在"时短暂轮询，而不是立刻 404 或者反过来等整首歌转完。
 // 一旦文件出现就立刻 resolve，做到"随出随响应"。
+// 正在等待分片出现的请求数（/api/diag 用：这类请求每 200ms 轮询一次，
+// 如果异常情况下堆积，本身也会持续占一点 CPU，需要能看见）。
+let pendingWaits = 0;
+function pendingWaitCount() { return pendingWaits; }
+
+// 当前登记在案的 ffmpeg 子进程 pid（供孤儿进程巡检比对，见 index.js）
+function runningPids() {
+  const pids = [];
+  for (const set of runningProcs.values()) for (const p of set) if (p && p.pid) pids.push(p.pid);
+  return pids;
+}
+
 function waitForFile(filepath, songId, { timeoutMs = 60000, intervalMs = 200 } = {}) {
+  pendingWaits++;
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (fn, v) => { if (settled) return; settled = true; pendingWaits--; fn(v); };
     const deadline = Date.now() + timeoutMs;
     (function poll() {
-      if (fs.existsSync(filepath)) return resolve(filepath);
+      if (fs.existsSync(filepath)) return done(resolve, filepath);
       if (buildErrors.has(songId)) {
-        return reject(Object.assign(new Error('转码失败'), { cause: buildErrors.get(songId), code: 'BUILD_FAILED' }));
+        return done(reject, Object.assign(new Error('转码失败'), { cause: buildErrors.get(songId), code: 'BUILD_FAILED' }));
       }
       if (isCanceled(songId)) {
-        return reject(Object.assign(new Error('转码已取消（客户端已离线，服务端已停止播放）'), { code: 'CANCELED' }));
+        return done(reject, Object.assign(new Error('转码已取消（客户端已离线，服务端已停止播放）'), { code: 'CANCELED' }));
       }
       if (Date.now() > deadline) {
-        return reject(Object.assign(new Error('等待分片生成超时'), { code: 'TIMEOUT' }));
+        return done(reject, Object.assign(new Error('等待分片生成超时'), { code: 'TIMEOUT' }));
       }
       setTimeout(poll, intervalMs);
     })();
@@ -661,4 +676,6 @@ module.exports = {
   ensureHLS, removeHLS, outDir, HLS_DIR, waitForFile, cleanupExpiredHLS, scheduleHLSCleanup,
   // 客户端全部离线时用来停止后台播放/转码（见 index.js 的在线检测）
   cancelSong, cancelAllActive, activeTranscodes, isCanceled,
+  // 诊断用（/api/diag、孤儿 ffmpeg 巡检）
+  pendingWaitCount, runningPids,
 };
