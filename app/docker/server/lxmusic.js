@@ -134,7 +134,14 @@ function lxUtils() {
       },
       md5: (str) => crypto.createHash('md5').update(str).digest('hex'),
       randomBytes: (size) => crypto.randomBytes(size).toString('hex').slice(0, size),
-      rsaEncrypt: (buffer, key) => crypto.publicEncrypt(key, Buffer.from(buffer)),
+      // 对齐 lx-music-desktop preload 的实现：RSA_NO_PADDING 且先补零到 128 字节。
+      // 之前用默认 PKCS#1 填充且不补位——靠 RSA 签名/加密换链的源脚本在桌面版能
+      // 解出高音质直链、在服务端沙箱里签名却对不上，只能降级拿 320K。
+      rsaEncrypt: (buffer, key) => {
+        const buf = Buffer.from(buffer);
+        const padded = Buffer.concat([Buffer.alloc(128 - buf.length), buf]);
+        return crypto.publicEncrypt({ key, padding: crypto.constants.RSA_NO_PADDING }, padded);
+      },
     },
     zlib: {
       inflate: (buf) => new Promise((res, rej) => zlib.inflate(Buffer.from(buf), (e, d) => e ? rej(e) : res(d))),

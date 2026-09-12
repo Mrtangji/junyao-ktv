@@ -647,6 +647,32 @@ app.get('/api/lx/search', async (req, res) => {
   } catch (e) { res.status(502).json({ error: '网络搜索失败: ' + e.message }); }
 });
 
+// 音源解析诊断：不下载不入库，让**当前激活音源**解析指定音质的直链，并抓取
+// 返回内容的头部嗅探真实格式。用于排查"选 FLAC 却拿到 MP3"——脚本对 flac
+// 请求返回的到底是 FLAC 还是 320K，一测便知（ URL 与嗅探结果都给出来）。
+// query: songmid（必填）、src（平台 kw/wy/tx/kg）、quality（flac/flac24bit/320k/128k）、
+//        name/singer（可选，部分源脚本换链要用）
+app.get('/api/lx/probe-url', async (req, res) => {
+  const { songmid, name, singer } = req.query;
+  if (!songmid) return res.status(400).json({ error: '缺少 songmid' });
+  const platform = ['kw', 'wy', 'tx', 'kg'].includes(req.query.src) ? req.query.src : 'kw';
+  const q = ['flac24bit', 'flac', '320k', '128k'].includes(req.query.quality) ? req.query.quality : 'flac';
+  const musicInfo = { songmid, songId: songmid, musicId: songmid, hash: songmid, id: songmid, name: name || '', singer: singer || '', source: platform };
+  try {
+    const url = await lxmusic.resolveMusicUrl(musicInfo, q);
+    let sniff = null;
+    let contentType = null;
+    try {
+      // 只抓头部 64KB（Range，能省则省；服务器不支持 Range 就多下点也无妨）
+      const r = await lxmusic.internals.httpReq(url, { responseType: 'buffer', timeout: 15000, headers: { Range: 'bytes=0-65535' } });
+      contentType = (r.headers && r.headers['content-type']) || null;
+      const s = lxmusic.internals.sniffAudio(r.body);
+      sniff = { kind: s.kind, detail: s.detail || null };
+    } catch (e) { sniff = { kind: 'sniff-error', detail: e.message }; }
+    res.json({ ok: true, platform, quality: q, url: url.replace(/([?&])(sign|token|key)=[^&]*/gi, '$1***'), sniff, contentType });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
 // 点唱：本地有直接入队；没有则下载入库再入队。body: {songmid,name,singer,pic,format,src}
 // src: 歌曲来源平台 kw/wy/tx/kg（缺省 kw），服务端据此用对应平台源换链下载（源过期自动换源）；
 // format: 'mp3'（默认，320K 优先）| 'mv'（320K 音频+封面合成视频，走 MV 播放路径；
