@@ -1785,7 +1785,15 @@ video.addEventListener('pause',releaseWakeLock);
 video.addEventListener('ended',releaseWakeLock);
 document.addEventListener('visibilitychange',()=>{ if(document.hidden) releaseWakeLock(); else if(!video.paused) acquireWakeLock(); });
 function togglePause(){VoiceManager.wake(video);if(video.paused)video.play().catch(()=>{});else video.pause();}
-function cutSong(){fetch('/api/queue/next',{method:'POST'});}
+// 切歌：有队列就切下一首；队列里已经没有任何歌（首页无播放列表）时，服务端会随机
+// 挑一首播（见 server /api/queue/next 的 pickRandomSong），这里把结果提示给用户。
+async function cutSong(){
+  try{
+    const r=await fetch('/api/queue/next',{method:'POST'}).then(r=>r.json());
+    if(r&&r.random&&r.title)showToast(`🎲 随机播放《${r.title}》`);
+    else if(r&&r.empty)showToast('曲库为空，没有可随机播放的歌');
+  }catch(e){}
+}
 function restartSong(){VoiceManager.wake(video);video.currentTime=0;isPaused=false;video.play().catch(()=>{});showToast('重唱 🔄');}
 function toggleVoice(){
   if(VoiceManager.isOriginal) VoiceManager.setAccompaniment(video);

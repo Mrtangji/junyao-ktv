@@ -859,6 +859,30 @@ function getQueueWithSongs() {
 
 // 自动播放队列条目的固定昵称（TV 端首页自动播放功能，见 web/tv 的 maybeAutoPlay）
 const AUTO_NICK = '自动播放';
+// 「首页无播放列表时按切歌」随机点的歌（见 /api/queue/next）。与自动播放同为
+// "非用户点歌"的占位曲目，有人手动点歌时可以直接让位。
+const RANDOM_NICK = '随机播放';
+const isAutoNick = (n) => n === AUTO_NICK || n === RANDOM_NICK;
+
+// 从全曲库随机取一首（避开最近 history 里播过的，避免"按切歌老是同一首"）。
+// 用 COUNT + OFFSET 而不是 ORDER BY RANDOM()：内置 muse.db 曲库可达几十万首，
+// RANDOM() 会整表扫描排序，这里走主键索引取值，代价恒定。
+function pickRandomSong() {
+  let total = 0;
+  try { total = db.prepare('SELECT COUNT(*) AS c FROM songs').get().c || 0; } catch (e) { return null; }
+  if (!total) return null;
+  let recent = [];
+  try { recent = db.prepare('SELECT song_id FROM history ORDER BY id DESC LIMIT 20').all().map(r => r.song_id); } catch (e) {}
+  let fallback = null;
+  for (let i = 0; i < 8; i++) {
+    const offset = Math.floor(Math.random() * total);
+    const song = db.prepare('SELECT * FROM songs LIMIT 1 OFFSET ?').get(offset);
+    if (!song) continue;
+    if (!fallback) fallback = song;
+    if (!recent.includes(song.id)) return song;
+  }
+  return fallback;
+}
 // 点歌入队后的开播判定：
 //  - 队列空闲（无正在播放）→ 新歌直接开播（原有行为）；
 //  - 正在播的是自动播放的歌 → 手动点歌打断自动播放：当前自动歌标记结束，
@@ -866,7 +890,7 @@ const AUTO_NICK = '自动播放';
 //  - 正在播的是手动点的歌 → 正常排队等待，不打断。
 function startPlayingIfIdle(queueId) {
   const playing = db.prepare("SELECT * FROM queue WHERE status='playing'").get();
-  if (playing && playing.nickname !== AUTO_NICK) return;
+  if (playing && !isAutoNick(playing.nickname)) return;
   if (playing) db.prepare("UPDATE queue SET status='done' WHERE id=?").run(playing.id);
   db.prepare("UPDATE queue SET status='playing' WHERE id=?").run(queueId);
 }
@@ -912,8 +936,30 @@ app.post('/api/queue/next', (req, res) => {
     db.prepare('INSERT INTO history (song_id,nickname) VALUES (?,?)').run(cur.song_id, cur.nickname);
   }
   const nxt = db.prepare("SELECT * FROM queue WHERE status='waiting' ORDER BY is_top DESC, id ASC LIMIT 1").get();
-  if (nxt) db.prepare("UPDATE queue SET status='playing' WHERE id=?").run(nxt.id);
-  broadcastQueue(); res.json({ ok: true });
+  if (nxt) {
+    db.prepare("UPDATE queue SET status='playing' WHERE id=?").run(nxt.id);
+    broadcastQueue();
+    return res.json({ ok: true });
+  }
+  // 队列里既没有正在播放的、也没有等候的（首页"无播放列表"）→ 切歌改为随机播一首。
+  // 旧行为是原地不动：用户按了切歌像没反应（既没有歌可切，也没有提示）。
+  // 注意只在"队列完全为空"时随机：随机点歌不算用户点的歌，跑完这一首若队列仍空，
+  // 就回到空闲（要不要继续连着随机播，由「首页自动播放」开关决定）。
+  if (!cur) {
+    const song = pickRandomSong();
+    if (song) {
+      // 不计 play_count：随机播放不是"点唱"，不应把热门榜（按 play_count 排序）搅乱
+      const info = db.prepare('INSERT INTO queue (song_id,nickname,status) VALUES (?,?,?)')
+        .run(song.id, RANDOM_NICK, 'playing');
+      broadcastQueue();
+      log.info('QUEUE', `首页无播放列表，切歌随机播放《${song.title}》`);
+      return res.json({ ok: true, random: true, queue_id: info.lastInsertRowid, song_id: song.id, title: song.title, artist: song.artist || '' });
+    }
+    broadcastQueue();
+    return res.json({ ok: true, empty: true });   // 曲库为空，没得随机
+  }
+  broadcastQueue();
+  res.json({ ok: true });
 });
 
 // ---------- WebSocket ----------

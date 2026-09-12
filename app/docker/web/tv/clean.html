@@ -1265,7 +1265,14 @@ video.addEventListener('pause',releaseWakeLock);
 video.addEventListener('ended',releaseWakeLock);
 document.addEventListener('visibilitychange',()=>{ if(document.hidden) releaseWakeLock(); else if(!video.paused) acquireWakeLock(); });
 function togglePause(){VoiceManager.wake(video);if(video.paused)video.play().catch(()=>{});else video.pause();}
-function cutSong(){fetch('/api/queue/next',{method:'POST'});}
+// 切歌：队列里有歌就切下一首；队列全空（首页无播放列表）时服务端随机播一首
+async function cutSong(){
+  try{
+    const r=await fetch('/api/queue/next',{method:'POST'}).then(r=>r.json());
+    if(r&&r.random&&r.title)showToast(`🎲 随机播放《${r.title}》`);
+    else if(r&&r.empty)showToast('曲库为空，没有可随机播放的歌');
+  }catch(e){}
+}
 function restartSong(){VoiceManager.wake(video);video.currentTime=0;isPaused=false;video.play().catch(()=>{});showToast('重唱 🔄');}
 function toggleVoice(){
   if(VoiceManager.isOriginal) VoiceManager.setAccompaniment(video);
