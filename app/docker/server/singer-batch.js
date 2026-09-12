@@ -52,6 +52,10 @@ const MAX_PAGES = 15;          // 每个歌手最多翻页数（防异常 total 
 const SINGER_GAP_MS = 800;     // 歌手之间间隔
 const SONG_GAP_MS = 300;       // 每首下载之间间隔（对平台友好）
 
+// 用户点「停止」时抛出的标记错误（__stopped=true），下载链路各层都会识别并向上冒泡，
+// 主循环据此干净地中断，而不会把"被停止"记成一首失败。
+const stopError = () => Object.assign(new Error('__SB_STOPPED__'), { __stopped: true });
+
 const state = {
   running: false,
   phase: 'idle',        // idle | running | done
@@ -68,10 +72,16 @@ const state = {
   failedList: [],       // [{name, singer, src, reason}] 上限 500
 };
 let stopFlag = false;
+let sbAbort = null;   // 当前批量任务的 AbortController，stop 时 abort 以中断在途 http 请求
 
 function status() { return { ...state }; }
 
-function stopSingerBatch() { if (state.running) stopFlag = true; }
+function stopSingerBatch() {
+  if (state.running) {
+    stopFlag = true;
+    if (sbAbort) sbAbort.abort();   // 中断正在进行的取链/下载 http 请求，做到"点了就停"
+  }
+}
 
 // 解析过滤词：逗号（中英文）、顿号、竖线分隔；纯英文数字词用词边界匹配（live 不误杀 Oliver），
 // 中文等直接子串匹配（同 LX 实现）
@@ -101,12 +111,14 @@ function singerMatch(songSinger, wanted) {
 }
 
 async function downloadOne(song, format) {
+  if (stopFlag) throw stopError();
   // 取歌词（附属信息，失败不挡下载）
   let lrcText = null;
   try { lrcText = await boardsdk.lyricText(song.src, song); } catch (e) { lrcText = null; }
   return lxmusic.downloadSong({
     songmid: song.songmid, name: song.name, singer: song.singer, pic: song.pic || null,
     source: song.src, format, lrcText,
+    signal: sbAbort ? sbAbort.signal : null,
     // 平台换链必需字段：kg 的 FileHash、tx 的数字 songId/strMediaMid 等
     info: { hash: song.hash, songId: song.songId, strMediaMid: song.strMediaMid, albumAudioId: song.albumAudioId, duration: song.duration },
   });
@@ -126,7 +138,7 @@ async function downloadViaOtherSources(song, format, excludeSrc) {
       if (stopFlag) return null;
       await downloadOne(cand, format);
       return s;
-    } catch (e) { /* 下一个平台 */ }
+    } catch (e) { if (e && e.__stopped) throw e; /* 下一个平台 */ }
   }
   return null;
 }
@@ -176,6 +188,7 @@ async function start(opts = {}) {
   const maxDur = Math.max(0, parseInt(opts.maxDur) || 0);
 
   stopFlag = false;
+  sbAbort = new AbortController();   // 本任务的中断令牌，stop 时 abort
   Object.assign(state, {
     running: true, phase: 'running', message: '', singersTotal: names.length, singersDone: 0,
     current: '', collected: 0, done: 0, failed: 0, skipped: 0, fallback: 0, lastError: '',
@@ -207,12 +220,14 @@ async function start(opts = {}) {
             await downloadOne(song, format);
             state.done++; doneThis++;
           } catch (e) {
+            if (e && e.__stopped) break;   // 用户点了停止，干净中断整批
             // 换平台续下（自动换源）
             try {
               const via = await downloadViaOtherSources(song, format, src);
               if (via) { state.done++; state.fallback++; }
               else throw e;
             } catch (e2) {
+              if (e2 && e2.__stopped) break;   // 换源过程中被停止
               state.failed++;
               const reason = String((e2 && e2.message) || e2).slice(0, 200);
               state.lastError = `${song.name}: ${reason}`;

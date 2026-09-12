@@ -57,6 +57,12 @@ function httpReq(url, options = {}, redirectCount = 0) {
     }
     if (body) headers['Content-Length'] = Buffer.byteLength(body);
     const req = mod.request(u, { method: (options.method || (body ? 'POST' : 'GET')).toUpperCase(), headers, timeout: options.timeout || 15000 }, (res) => {
+    const signal = options.signal;
+    if (signal) {
+      const onAbort = () => { const ae = Object.assign(new Error('request aborted'), { __stopped: true }); req.destroy(ae); };
+      if (signal.aborted) { onAbort(); return; }
+      signal.addEventListener('abort', onAbort);
+    }
       if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirectCount < 5) {
         res.resume();
         const next = new URL(res.headers.location, u).toString();
@@ -271,14 +277,16 @@ async function getAltSourceInstance(id) {
   return inst;
 }
 
-async function resolveViaInstance(inst, sourceKey, musicInfo, preferQuality) {
+async function resolveViaInstance(inst, sourceKey, musicInfo, preferQuality, signal) {
   const keys = Object.keys(inst.sources);
   const key = keys.includes(sourceKey) ? sourceKey : null;
   if (!key) throw new Error(`音源「${inst.meta.name}」不支持 ${sourceKey} 平台`);
   const qualitys = inst.sources[key].qualitys || ['128k', '320k'];
   const order = [preferQuality, ...qualitys.filter(q => q !== preferQuality)];
   let lastErr;
+  if (signal && signal.aborted) throw stopError();
   for (const q of order) {
+    if (signal && signal.aborted) throw stopError();
     try {
       const url = await inst.requestHandler({ source: key, action: 'musicUrl', info: { type: q, musicInfo } });
       if (url && typeof url === 'string' && /^https?:/.test(url)) return url;
@@ -289,12 +297,15 @@ async function resolveViaInstance(inst, sourceKey, musicInfo, preferQuality) {
 }
 
 // 带自动换源的 musicUrl 解析。platform：歌曲来源平台（kw/wy/tx/kg）。
-async function resolveMusicUrlWithFallback(platform, musicInfo, preferQuality = '320k') {
+const stopError = () => Object.assign(new Error('__SB_STOPPED__'), { __stopped: true });
+
+async function resolveMusicUrlWithFallback(platform, musicInfo, preferQuality = '320k', signal) {
   const errors = [];
+  if (signal && signal.aborted) throw stopError();
   // 1) 当前激活源
   if (activeSource) {
-    try { return await resolveViaInstance(activeSource, platform, musicInfo, preferQuality); }
-    catch (e) { errors.push(`当前源「${activeSource.meta.name}」: ${e.message}`); }
+    try { return await resolveViaInstance(activeSource, platform, musicInfo, preferQuality, signal); }
+    catch (e) { if (e && e.__stopped) throw e; errors.push(`当前源「${activeSource.meta.name}」: ${e.message}`); }
   } else {
     errors.push('NO_ACTIVE_SOURCE');
   }
@@ -303,10 +314,11 @@ async function resolveMusicUrlWithFallback(platform, musicInfo, preferQuality = 
     ? db.prepare('SELECT id, name FROM lx_sources WHERE id != ? ORDER BY id').all(activeSource.id)
     : db.prepare('SELECT id, name FROM lx_sources ORDER BY id').all();
   for (const row of rows) {
+    if (signal && signal.aborted) throw stopError();
     const inst = await getAltSourceInstance(row.id);
     if (!inst) { errors.push(`源#${row.id} 拉起失败`); continue; }
-    try { return await resolveViaInstance(inst, platform, musicInfo, preferQuality); }
-    catch (e) { errors.push(`源「${inst.meta.name}」: ${e.message}`); }
+    try { return await resolveViaInstance(inst, platform, musicInfo, preferQuality, signal); }
+    catch (e) { if (e && e.__stopped) throw e; errors.push(`源「${inst.meta.name}」: ${e.message}`); }
   }
   // 3) kw 平台最后用内置酷我直链兜底
   if (platform === 'kw') {
@@ -501,7 +513,7 @@ function sniffAudio(buf) {
 //                源确实没有无损时自动回落 320K MP3，落盘为 .mp3）
 //       | 'mv'（320K 音频 + 封面合成为 .mp4 存 MV_DIR；同时保留同名 .mp3 与 .lrc
 //               到 MP3_DIR——曲库里 MV/MP3 双版本可用，LRC 跟音频走）
-async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, format = 'mp3', lrcText = null, info = null }) {
+async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, format = 'mp3', lrcText = null, info = null, signal = null }) {
   const mp3Root = dlcfg.getMp3Dir();
   const mvRoot = path.resolve(dlcfg.MV_DIR);
   const isMv = format === 'mv';
@@ -543,9 +555,10 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   // 无损模式先请求 flac 音质（脚本按 preferQuality 优先、失败才轮换其余音质；
   // 内置酷我直链兜底也支持 flac 参数），拿不到无损时返回值会是 mp3 直链，
   // 由下面的落盘分支自动按 MP3 处理。
-  const url = await resolveMusicUrlWithFallback(platform, musicInfo, lossless ? 'flac' : '320k');
+  if (signal && signal.aborted) throw stopError();
+  const url = await resolveMusicUrlWithFallback(platform, musicInfo, lossless ? 'flac' : '320k', signal);
   const tmpPath = path.join(TMP_DIR, `dl_${Date.now()}_${process.pid}`);
-  const resp = await httpReq(url, { responseType: 'buffer', timeout: 45000 });
+  const resp = await httpReq(url, { responseType: 'buffer', timeout: 25000, signal });
   if (resp.statusCode !== 200) throw new Error(`下载失败 HTTP ${resp.statusCode}`);
   // 内容校验：不是有效音频就直接给出可读原因，不再让 ffmpeg 报晦涩错误，
   // 也避免坏内容被 content-type 误判直接改名为 .mp3 入库
