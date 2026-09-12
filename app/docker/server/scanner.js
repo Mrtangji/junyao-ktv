@@ -366,4 +366,46 @@ async function scanLibrary() {
   return { total: files.length, added, removed, skipped: brokenRel.size };
 }
 
-module.exports = { scanLibrary, scanRoots, MV_DIR, probeAudioTracks, findLyricsPath };
+// 单文件入库：下载/合成成功后只登记"这一个"文件，避免每首歌都触发整库全量扫描
+// （递归遍历全部目录 + 逐文件 ffprobe + 全库清理缺失记录）导致 CPU 持续拉满。
+// 新增文件以 filename（相对路径唯一键）去重；已存在则直接返回库内记录。同名 .lrc
+// 一并关联。全量扫描（启动 / 手动 / bulk 整批结束）仍负责"清理已缺失文件"等同步。
+function scanFile(f) {
+  if (!f || !fs.existsSync(f)) return null;
+  const base = path.basename(f);
+  if (HLS_SEGMENT_RE.test(base)) return null;          // HLS 缓存分片不入库
+  const ext = path.extname(f).toLowerCase();
+  if (!MEDIA_EXT.has(ext)) return null;                // 非媒体文件忽略
+  // 找到所属扫描根，算出相对路径（filename 唯一键沿用相对路径）
+  const roots = scanRoots();
+  let root = null, rel = null;
+  for (const r of roots) {
+    const rp = path.resolve(r);
+    if (f === rp || f.startsWith(rp + path.sep)) { root = rp; rel = path.relative(rp, f).replace(/\\/g, '/'); break; }
+  }
+  if (!root) return null;
+  const existing = db.prepare('SELECT * FROM songs WHERE filename=?').get(rel);
+  if (existing) return existing;
+  try {
+    const { valid, transient } = probeMedia(f);
+    if (!valid) {
+      console.warn('单文件入库-文件未通过探测，跳过:', rel, transient ? '(暂时性)' : '(损坏)');
+      return null;
+    }
+    const { artist, title } = parseSongMeta(f);
+    const media_type = AUDIO_EXT.includes(ext) ? 'audio' : 'video';
+    const audio_tracks = media_type === 'audio' ? 1 : probeAudioTracks(f);
+    const lyrics_path = findLyricsPath(f) || null;
+    const insert = db.prepare(`
+      INSERT INTO songs (title, artist, filename, filepath, audio_tracks, media_type, lyrics_path, pinyin, pinyin_initial, lang)
+      VALUES (@title, @artist, @filename, @filepath, @audio_tracks, @media_type, @lyrics_path, @pinyin, @pinyin_initial, @lang)
+    `);
+    insert.run({ title, artist, filename: rel, filepath: f, audio_tracks, media_type, lyrics_path, pinyin: toPinyin(title), pinyin_initial: toPinyinInitial(title), lang: detectLang(title, artist) });
+    return db.prepare('SELECT * FROM songs WHERE filename=?').get(rel);
+  } catch (e) {
+    console.error('单文件入库失败(' + rel + '):', e.message);
+    return null;
+  }
+}
+
+module.exports = { scanLibrary, scanFile, scanRoots, MV_DIR, probeAudioTracks, findLyricsPath };

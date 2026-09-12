@@ -532,6 +532,7 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   }
   const baseName = `${artist} - ${title}`;
   const relOf = (e) => path.join(artist, `${baseName}.${e}`);
+  let mp3Path = null;          // MV 模式下保留到 MP3_DIR 的同名 mp3 路径（函数作用域，供末尾入库用）
   // 已存在同名歌曲 → 直接返回库里的记录（可能上次已下过）。
   // Bug修复：必须按 filename（相对路径，扫描入库的唯一键）查——旧写法按 filepath
   // 查，而 filepath 存的是绝对路径，永远查不到，导致每次下载最后都报"入库失败"。
@@ -586,7 +587,7 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
       //   LRC 为两者共用同名文件。扫描器会把 mp4 记为 MV、mp3 记为 audio）
       const tmpMp3 = finalPath + '.tmp.mp3';
       // 保留的 mp3 落 MP3_DIR（与 MV 分库）；可能跨文件系统，用 moveFile 而非 rename
-      const mp3Path = path.join(mp3Root, artist, `${artist} - ${title}.mp3`);
+      mp3Path = path.join(mp3Root, artist, `${artist} - ${title}.mp3`);
       if (isMp3Src) moveFile(tmpPath, tmpMp3);
       else await ffmpegToMp3(tmpPath, tmpMp3);
       try {
@@ -607,9 +608,11 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
       fs.writeFileSync(path.join(mp3Root, rel.replace(/\.(mp3|mp4|flac|m4a|aac|ogg|opus|wav)$/i, '.lrc')), lrc, 'utf8');
     } else { console.error('LRC 下载失败(忽略):', name); }
   } catch (e) { console.error('LRC 下载失败(忽略):', name, e.message); }
-  // 4) 扫描入库并返回新行
-  const { scanLibrary } = require('./scanner');
-  await scanLibrary();
+  // 4) 入库并返回新行：只登记本首（含 MV 模式保留的同名 mp3），不再触发整库全量重扫，
+  //    避免批量下载时每首歌都把整棵目录树 + 全库清理重跑一遍导致 CPU 持续拉满。
+  const { scanFile } = require('./scanner');
+  await scanFile(finalPath);
+  if (isMv && mp3Path) await scanFile(mp3Path);
   const row = db.prepare('SELECT * FROM songs WHERE filename=?').get(key);
   if (!row) throw new Error('入库失败（扫描未识别到新文件）');
   return row;

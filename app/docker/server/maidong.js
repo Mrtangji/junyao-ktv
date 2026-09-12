@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const db = require('./db');
-const { scanLibrary } = require('./scanner');
+const { scanFile } = require('./scanner');
 const dlcfg = require('./dlconfig');
 const muse = require('./muse');
 const tsdec = require('./tsdecrypt');
@@ -251,7 +251,9 @@ async function downloadMd({ songmid, name, singer, url = null, pic = null, forma
     } catch (e) { log.warn('MD', '歌词保存失败: ' + e.message); }
   }
 
-  await scanLibrary();
+  // 只登记本首文件，不触发整库全量扫描（批量麦动下载时每首都全量重扫会持续占满 CPU）
+  const { scanFile } = require('./scanner');
+  await scanFile(finalPath);
   const row = db.prepare('SELECT * FROM songs WHERE filename=?').get(key);
   if (!row) throw new Error('入库失败（扫描未识别到新文件）');
   return row;
