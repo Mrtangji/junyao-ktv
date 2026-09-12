@@ -347,7 +347,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
           </select></div>
         <div style="flex:1"><label>下载格式</label>
           <select id="sb-format" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--text);padding:8px">
-            <option value="mp3">MP3（320K 音频+歌词）</option><option value="flac">无损 FLAC（优先无损，源无则回落 MP3）</option><option value="mv">MV（封面合成视频）</option>
+            <option value="flac" selected>无损 FLAC（默认：优先无损，源无则回落 320K MP3）</option><option value="mp3">MP3（320K 音频+歌词）</option><option value="mv">MV（封面合成视频）</option>
           </select></div>
       </div>
       <div class="form-row" style="display:flex;gap:10px">
@@ -364,7 +364,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
         逐个歌手搜索收集（自动翻页），过滤噪声歌名与时长后逐首下载入库；本地已有的自动跳过。
         单首下载失败会<b>自动换平台</b>（酷我/网易云/QQ/酷狗 轮换）找同名歌续下；下载保存到
         MP3_DIR / MV_DIR（与点歌下载一致，按歌手分目录）。
-        选「无损 FLAC」时会先向音源要 flac 音质，拿到无损就原样存为 .flac（不转码），
+        默认「无损 FLAC」：会先向音源要 flac 音质，拿到无损就原样存为 .flac（不转码），
         源没有无损时自动回落到 320K MP3——四种格式都能入库播放。
       </div>
       <div id="sb-src-status" style="font-size:12px;min-height:16px;margin:2px 0 8px;line-height:1.6"></div>
