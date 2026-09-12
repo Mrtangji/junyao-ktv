@@ -350,6 +350,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
         选「无损 FLAC」时会先向音源要 flac 音质，拿到无损就原样存为 .flac（不转码），
         源没有无损时自动回落到 320K MP3——四种格式都能入库播放。
       </div>
+      <div id="sb-src-status" style="font-size:12px;min-height:16px;margin:2px 0 8px;line-height:1.6"></div>
       <div id="sb-err" style="color:var(--pink);font-size:12px;min-height:14px;margin-bottom:8px"></div>
       <div class="modal-btns" style="justify-content:flex-start;flex-wrap:wrap;gap:8px">
         <button class="hbtn primary" onclick="sbStart()">⬇️ 开始</button>
@@ -867,8 +868,26 @@ async function openSingerModal(){
     }catch(e){}
   }
   sbRefresh();
+  sbRenderSrcStatus();
   if(sbTimer) clearInterval(sbTimer);
   sbTimer = setInterval(sbRefresh, 2000);   // 弹窗打开期间轮询进度
+}
+async function sbRenderSrcStatus(){
+  const el = document.getElementById('sb-src-status');
+  if(!el) return;
+  try{
+    const d = await fetch('/api/lx/source').then(r=>r.json());
+    if(d.active){
+      el.style.color = 'var(--accent)';
+      el.innerHTML = `当前音源：<b>${d.active.name}</b>（${Object.keys(d.active.sources).join(' / ')}）✓`;
+    }else{
+      el.style.color = 'var(--pink)';
+      el.innerHTML = `⚠️ 尚未启用 LX 音源，下载会退回不可用的内置直链而失败。请先在「🎼 LX 音源」里 <a href="javascript:void(0)" onclick="openLxModal()" style="color:var(--cyan);text-decoration:underline">启用音源</a>。`;
+    }
+  }catch(e){
+    el.style.color = 'var(--sub)';
+    el.textContent = '音源状态获取失败：' + e.message;
+  }
 }
 function closeSingerModal(){
   document.getElementById('sb-modal-overlay').classList.remove('open');

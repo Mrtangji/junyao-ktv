@@ -209,9 +209,16 @@ async function activateSourceById(id) {
 }
 
 function initActiveSource() {
-  const v = db.prepare("SELECT value FROM settings WHERE key='lx_active_source'").get();
-  if (!v) return null;
-  activateSourceById(parseInt(v.value)).catch(e => { console.error('LX 源初始化失败:', e.message); return null; });
+  let v = db.prepare("SELECT value FROM settings WHERE key='lx_active_source'").get();
+  let id = v ? parseInt(v.value) : null;
+  if (!id) {
+    // 没有激活记录：典型场景是「修复前导入的音源在旧沙箱下激活失败、lx_active_source 从未写入」。
+    // 若库里已有导入的源，自动启用最近导入的那一个，避免每次重启都退回未激活导致下载全失败。
+    const row = db.prepare('SELECT id FROM lx_sources ORDER BY id DESC LIMIT 1').get();
+    id = row ? row.id : null;
+  }
+  if (!id) return null;
+  activateSourceById(id).catch(e => { console.error('LX 源初始化失败:', e.message); });
   return null;
 }
 
