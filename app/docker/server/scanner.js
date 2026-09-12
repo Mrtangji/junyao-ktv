@@ -131,9 +131,29 @@ function probeAudioTracks(filepath) {
 //      没机会执行，已经真正丢失的文件反而没有被清理掉。
 // 修复：用 fs.existsSync(full) 顺着链接校验目标真实存在性来过滤死链接；用 try/catch 包裹
 // 每一层目录的读取，单个坏目录只跳过不中断整体扫描。
-function listFilesRecursive(dir) {
+// 递归深度上限：极端异常目录结构（如自引用软链接）下的硬性兜底，防止无限递归。
+const MAX_SCAN_DEPTH = 64;
+
+// 递归遍历曲库目录。
+// 严重 bug 修复（CPU 一直吃满约 1 个核、容器一启动就发生且"什么都没做"）：
+// 原实现对"是否目录"用 fs.statSync(full).isDirectory() 判断，而 statSync 会
+// **跟随符号链接**。当 NAS 共享里存在指向自身/上级目录的软链接（音乐共享极常见：
+// "最近添加""全部歌曲"之类链接，或子目录链接回卷根）时，递归会永不终止——表现
+// 为 scanLibrary() 在容器启动后陷入转圈，单线程 Node 持续建路径/stat，占满一个
+// CPU 核且不会自己降下来。这里两重防护彻底杜绝：
+//   1) visited 以 realpath 为键记录已进入过的真实目录，软链接环第二次到达即剪枝
+//      （仍允许正常地跟随一次软链接进入外部真实目录，只是不再重复进入）;
+//   2) 深度上限兜底，防止任何未预料的极端嵌套把栈/内存吃爆。
+function listFilesRecursive(dir, visited, depth) {
+  if (visited === undefined) visited = new Set();
+  if (depth === undefined) depth = 0;
   let results = [];
+  if (depth > MAX_SCAN_DEPTH) return results;
   if (!fs.existsSync(dir)) return results;
+  let real;
+  try { real = fs.realpathSync(dir); } catch (e) { real = path.resolve(dir); }
+  if (visited.has(real)) return results; // 软链接环 / 重复目录：剪枝，不再进入
+  visited.add(real);
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -143,16 +163,12 @@ function listFilesRecursive(dir) {
   }
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
-    // fs.existsSync 会跟随符号链接检查目标是否真实存在；断链/目标已删除的文件在此被排除
-    if (!fs.existsSync(full)) continue;
-    let isDir;
-    try {
-      isDir = entry.isDirectory() || fs.statSync(full).isDirectory();
-    } catch (e) {
-      continue; // 探测失败（如挂载点抖动导致stat失败），视为不可用文件，跳过
-    }
-    if (isDir) {
-      results = results.concat(listFilesRecursive(full));
+    // statSync 会跟随符号链接：目标不存在（断链/已删除）或 stat 失败时抛错，直接跳过；
+    // 挂载点抖动导致的临时失败同样在此被忽略，不中断整体扫描。
+    let st;
+    try { st = fs.statSync(full); } catch (e) { continue; }
+    if (st.isDirectory()) {
+      results = results.concat(listFilesRecursive(full, visited, depth + 1));
     } else if (MEDIA_EXT.has(path.extname(entry.name).toLowerCase())) {
       if (HLS_SEGMENT_RE.test(entry.name)) continue; // HLS 播放缓存分片，不是曲库
       results.push(full);
