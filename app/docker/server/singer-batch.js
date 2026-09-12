@@ -620,7 +620,15 @@ function pauseSingerBatch() {
   state.pausedReason = '用户暂停';
   state.message = '⏸ 已暂停：进度已保存，点「▶ 继续下载」从断点接着下';
   if (currentJob) { currentJob.reason = '用户暂停'; saveJob(); }   // 立即落盘（不等节流）
-  if (sbAbort) { try { sbAbort.abort(); } catch (e) {} }            // 断开在途请求，秒级停下
+  // 旧令牌 abort 只应杀死"此刻在途"的请求；模块级令牌必须立刻换成新的，
+  // 否则暂停期间所有不显式传 signal 的请求（电视端搜索/点歌下载/诊断接口）
+  // 都会因为令牌已中止而立刻失败 __SB_STOPPED__。批量自己的下一首歌不会
+  // 借此"复活"——主循环挂在 pausePoint 上，恢复时 resume 会再换新令牌。
+  if (sbAbort) {
+    try { sbAbort.abort(); } catch (e) {}            // 断开在途请求，秒级停下
+    sbAbort = new AbortController();
+    lxmusic.setCancelSignal(sbAbort.signal);
+  }
   return { ok: true };
 }
 
