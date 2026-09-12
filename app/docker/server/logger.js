@@ -8,6 +8,7 @@
 //   [VOICE]     原唱/伴唱切换事件
 //   [HLS]       播放请求/分片等待相关
 //   [HLS_CLEAN] HLS 缓存每日清理任务相关
+//   [VERSION]   服务端版本/构建信息（启动时打印一次，也和 GET /api/version 对应）
 
 function ts() {
   const d = new Date();

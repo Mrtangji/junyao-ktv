@@ -20,6 +20,21 @@ header{
 .logo{font-size:20px;font-weight:900;background:linear-gradient(90deg,var(--cyan),var(--accent));
   -webkit-background-clip:text;background-clip:text;color:transparent}
 .logo span{font-size:13px;color:var(--sub);font-weight:400;margin-left:6px}
+/* 版本徽标：头部显示当前部署版本（GET /api/version），点击看构建详情。
+   有了它就不用猜"服务器上跑的是不是刚推的最新版"——commit 短 sha + 构建
+   时间可以直接和 GitHub 上的提交对上。 */
+.ver-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;line-height:1;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--sub);
+  border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.04);
+  border-radius:999px;padding:5px 11px;cursor:pointer;white-space:nowrap;user-select:none;
+  transition:color .15s,border-color .15s}
+.ver-badge:hover{color:var(--text);border-color:var(--cyan)}
+.ver-badge.is-ci{border-color:rgba(54,217,247,.45);color:var(--cyan)}
+/* 登录页也要能看版本：还没登录时最想确认的就是"部署生效了没" */
+.login-ver{position:absolute;bottom:22px;left:0;right:0;text-align:center;font-size:12px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--sub);
+  cursor:pointer;user-select:none}
+.login-ver:hover{color:var(--cyan)}
 .spacer{flex:1}
 .hbtn{
   padding:8px 18px;border-radius:10px;font-size:13px;cursor:pointer;border:none;color:#fff;
@@ -207,10 +222,12 @@ main{max-width:960px;margin:0 auto;padding:24px}
     <div id="setup-err"></div>
     <button onclick="doSetup()">设置密码并登录</button>
   </div>
+  <div class="login-ver" id="login-ver" onclick="showVersionDetail()">版本 —</div>
 </div>
 
 <header>
   <div class="logo">骏耀K歌 <span>曲库管理</span></div>
+  <div class="ver-badge" id="ver-badge" onclick="showVersionDetail()" title="点击查看构建详情">版本 —</div>
   <div class="spacer"></div>
   <button class="hbtn" onclick="window.open('/tv','_blank')">📺 TV端</button>
   <button class="hbtn" onclick="window.open('/m','_blank')">📱 手机端</button>
@@ -993,6 +1010,68 @@ async function sbStop(){
   catch(e){ toast('⚠️ 停止失败：'+e.message); }
 }
 
+// ---------- 服务端版本 ----------
+// 镜像 tag 永远是 latest，看不出是哪一次构建。这里显示 commit 短 sha + 构建
+// 时间，可以直接和 GitHub 上的提交比对，确认"部署的到底是不是最新版"。
+let SERVER_VER = null;
+
+function fmtDur(sec){
+  sec = Math.max(0, Math.round(sec || 0));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  if(h) return `${h} 小时 ${m} 分`;
+  if(m) return `${m} 分 ${s} 秒`;
+  return `${s} 秒`;
+}
+
+async function loadVersion(){
+  try{ SERVER_VER = await fetch('/api/version').then(r=>r.json()); }
+  catch(e){ return; }   // 拿不到就不显示，不影响后台功能
+  if(!SERVER_VER) return;
+  const txt = SERVER_VER.label || '未知版本';
+  const b = document.getElementById('ver-badge');
+  if(b){
+    b.textContent = txt;
+    if(SERVER_VER.source === 'ci') b.classList.add('is-ci');
+  }
+  const lv = document.getElementById('login-ver');
+  if(lv) lv.textContent = `服务端版本 ${txt}`;
+}
+
+function showVersionDetail(){
+  const v = SERVER_VER;
+  if(!v){ toast('版本信息读取中，请稍候…'); loadVersion(); return; }
+  const srcTxt = v.source === 'ci' ? 'CI 镜像（构建时注入）'
+    : v.source === 'local-git' ? '本地源码（直接读 git）' : '未知';
+  const rows = [
+    ['版本号', v.version || '—'],
+    ['提交', (v.sha || '—') + (v.ref ? `　（分支/标签：${v.ref}）` : '')],
+    ['构建时间', v.buildTimeLocal || '—（非 CI 构建，无构建时间）'],
+    ['构建来源', srcTxt],
+    ['Node 版本', v.node || '—'],
+    ['容器启动', v.startedAtLocal || '—'],
+    ['已运行', fmtDur(v.uptimeSec)],
+  ];
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;z-index:400;background:rgba(0,0,0,.72);'
+    + 'display:flex;align-items:center;justify-content:center;padding:20px';
+  const line = (k, val) => '<div style="display:flex;gap:14px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.07)">'
+    + `<div style="width:88px;flex:none;color:var(--sub);font-size:13px">${k}</div>`
+    + `<div style="flex:1;word-break:break-all;font-size:13px;font-family:ui-monospace,Menlo,Consolas,monospace">${val}</div></div>`;
+  ov.innerHTML = '<div style="width:min(560px,94vw);max-height:86vh;overflow-y:auto;background:var(--card);'
+    + 'border:1px solid rgba(255,255,255,.12);border-radius:18px;padding:24px 26px">'
+    + '<div style="font-size:17px;font-weight:700;margin-bottom:6px">🔖 服务端版本</div>'
+    + '<div style="color:var(--sub);font-size:12.5px;margin-bottom:16px;line-height:1.6">'
+    + '拿这里的「提交」和 GitHub 上最新提交对比：一致就是最新版；不一致说明还没拉到新镜像或容器没重启。</div>'
+    + rows.map(r => line(r[0], r[1])).join('')
+    + '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px">'
+    + (v.commitUrl ? `<a class="hbtn" href="${v.commitUrl}" target="_blank" rel="noopener">在 GitHub 查看这次提交</a>` : '')
+    + '<button class="hbtn primary" id="ver-close">关闭</button></div></div>';
+  ov.onclick = e => { if(e.target === ov) ov.remove(); };
+  document.body.appendChild(ov);
+  ov.querySelector('#ver-close').onclick = () => ov.remove();
+}
+
+loadVersion();
 checkSession();
 </script>
 </body>

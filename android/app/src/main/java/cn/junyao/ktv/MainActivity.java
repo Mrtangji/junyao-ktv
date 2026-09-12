@@ -7,6 +7,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.content.pm.PackageInfo;
 import android.graphics.Color;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
@@ -802,6 +803,25 @@ public class MainActivity extends Activity {
         /** 唱歌评分：停止原生麦克风采集 */
         @JavascriptInterface
         public void stopMic() { requestMicStop(); }
+
+        /**
+         * App 版本（versionName + versionCode）。电视端设置页用它显示"装的是哪个
+         * 包"，好和 CI 产出的 APK 对上——versionCode 是 CI 构建号，单调递增，
+         * 比较大小就知道是不是最新。
+         * 旧版 APK 没有这个方法，网页端用 typeof 守卫，不会报错。
+         */
+        @JavascriptInterface
+        @SuppressWarnings("deprecation")   // SDK<28 分支要用已废弃的 versionCode
+        public String getAppVersion() {
+            try {
+                PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+                long vc = Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : pi.versionCode;
+                String name = pi.versionName == null ? "?" : pi.versionName;
+                return name + " (" + vc + ")";
+            } catch (Exception e) {
+                return "";
+            }
+        }
     }
 
     @Override

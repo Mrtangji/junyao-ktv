@@ -27,6 +27,9 @@ RUN npm install --omit=dev
 
 COPY server ./server
 COPY web ./web
+# 服务端版本号（人类可读的发布号）。放在这里而不是 git tag，是为了让"没打
+# tag 的 main 构建"也有稳定版本号；真正的构建凭据是下面的 BUILD_SHA/BUILD_TIME。
+COPY VERSION ./VERSION
 
 # 麦动曲库 muse.db（约1GB，67万首）：git 放不下（GitHub 单文件限100MB），由 CI
 # 在构建前从 GitHub Release(muse-db 标签) 下载 muse.db.gz 解压到 vendor/。
@@ -36,6 +39,23 @@ COPY vendor/muse.db /app/vendor/muse.db
 ENV DATA_DIR=/data
 ENV MV_DIR=/mv
 ENV PORT=8080
+
+# ---- 构建版本信息（由 CI 通过 --build-arg 传入，见 docker-publish.yml）----
+# 镜像 tag 永远叫 latest，看不出是哪一次构建；commit sha + 构建时间才能和
+# GitHub 上的提交对齐，用来回答"服务器上跑的是不是最新版"。
+# 这些 ARG/ENV 故意放在最后一层：sha 每次提交都变，放在前面会让 apt/npm 这些
+# 重活层的缓存全部失效。
+# 未传参时留空，服务端 server/version.js 会自动回落到 /app/VERSION 文件。
+ARG APP_VERSION=
+ARG BUILD_SHA=
+ARG BUILD_TIME=
+ARG BUILD_REF=
+ARG BUILD_REPO=Mrtangji/junyao-ktv
+ENV APP_VERSION=${APP_VERSION} \
+    BUILD_SHA=${BUILD_SHA} \
+    BUILD_TIME=${BUILD_TIME} \
+    BUILD_REF=${BUILD_REF} \
+    BUILD_REPO=${BUILD_REPO}
 
 EXPOSE 8080
 VOLUME ["/data", "/mv"]

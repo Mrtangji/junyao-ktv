@@ -53,6 +53,10 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Compute build metadata
+        id: buildinfo
+        run: echo "time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Generate tags
         id: meta
         uses: docker/metadata-action@v5
@@ -77,6 +81,14 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # 版本信息烘进镜像，运行时由 server/version.js 读取并通过
+          # GET /api/version 暴露 —— 用来确认部署的是不是最新构建。
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.version }}
+            BUILD_SHA=${{ github.sha }}
+            BUILD_TIME=${{ steps.buildinfo.outputs.time }}
+            BUILD_REF=${{ github.ref_name }}
+            BUILD_REPO=${{ github.repository }}
           # 用 GitHub Actions 缓存加速 apt / npm 层
           cache-from: type=gha
           cache-to: type=gha,mode=max

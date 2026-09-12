@@ -12,6 +12,7 @@ const { toPinyin, toPinyinInitial } = require('./pinyin');
 const { detectLang } = require('./lang');
 const { ensureHLS, removeHLS, outDir, waitForFile, scheduleHLSCleanup, cancelAllActive, activeTranscodes, runningPids, pendingWaitCount, HLS_DIR } = require('./hlsgen');
 const procmon = require('./procmon');
+const appVersion = require('./version');
 const maidong = require('./maidong');
 const muse = require('./muse');
 const { getPitchCurve } = require('./pitch');
@@ -1045,6 +1046,13 @@ app.post('/api/player/stop', (req, res) => {
   res.json({ ok: true, ...r });
 });
 
+// ---------- 版本：确认服务器上跑的是不是最新版 ----------
+// 镜像 tag 永远是 latest，看不出是哪一次构建；commit sha + 构建时间才能和
+// GitHub 上的提交一一对上。不需要鉴权（前台 TV/安卓端也要用它显示版本）。
+app.get('/api/version', (req, res) => {
+  res.json(appVersion.getVersion());
+});
+
 // ---------- 自诊断：CPU 到底被谁占了 ----------
 // 容器镜像里没有 top/ps（装 procps 又要加体积），所以这里用 /proc 自己采样，
 // 让 `curl http://NAS:8080/api/diag` 一句话回答：
@@ -1089,6 +1097,7 @@ app.get('/api/diag', async (req, res) => {
     }
   }
   res.json({
+    version: appVersion.getVersion(),
     uptimeSec: Math.round(process.uptime()),
     rssMB: Math.round(process.memoryUsage().rss / 1048576),
     pid: process.pid,
@@ -1165,6 +1174,15 @@ try {
 
 server.listen(PORT, () => {
   log.info('SERVER', `KTV 服务已启动: http://0.0.0.0:${PORT}`);
+  // 版本戳放启动日志里：`docker logs` 第一屏就能看到，不用进管理后台，
+  // 也方便直接和 GitHub 上最新提交比对。
+  const v = appVersion.getVersion();
+  log.info('VERSION', `服务端版本 ${v.label}${v.buildTimeLocal ? `（构建于 ${v.buildTimeLocal}）` : ''}`
+    + (v.commitUrl ? `　提交: ${v.commitUrl}` : ''));
+  if (v.source !== 'ci') {
+    log.info('VERSION', `本进程不是从 CI 镜像启动的（${v.source}），版本号取自源码，`
+      + '想要权威的构建版本请部署 CI 镜像。');
+  }
   log.info('PLAYER', `无人在线自动停止后台播放已启用：最后一台电视端/安卓端断开后 ${Math.round(IDLE_STOP_MS / 1000)} 秒停止后台转码`
     + (IDLE_STOP_KEEP_PLAYING ? '（保留队列播放状态）' : '，并把队列播放状态复位为待播'));
 });

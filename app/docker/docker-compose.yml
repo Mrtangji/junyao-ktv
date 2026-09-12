@@ -40,6 +40,10 @@ services:
       # - IDLE_STOP_MS=60000
       # 只停转码、保留队列"正在播放"状态（希望电视重开后接着刚才那首时设 1）。
       # - IDLE_STOP_KEEP_PLAYING=1
+      # 版本信息：CI 构建时已把 commit sha / 构建时间烘进镜像，查当前部署版本：
+      #   curl http://NAS:8080/api/version      （管理后台头部也有徽标）
+      # 想让版本号显示成自定义值（例如本地构建），取消下面这行注释即可。
+      # - APP_VERSION=dev
     volumes:
       # 应用数据和 MV 曲库已取消自定义路径功能，统一固定使用应用默认共享
       # 目录 /vol1/@appshare/junyao-ktv 下的 data、mv 两个子目录，不再支持

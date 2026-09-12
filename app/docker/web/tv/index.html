@@ -1020,6 +1020,8 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
   <div class="ps" data-page-node-id="RUlTSML6RfIxM0MQhsHquy"><div class="ph" data-page-node-id="cGd5OLuSYY1Y2qx2hcjnnt"><h3 data-page-node-id="6hPUiAPX8tJnxYoXn96EIi">⚙ 设置</h3><div class="pc" data-f onclick="closePanel('settings')" data-page-node-id="7swnt30cDoBdWMFavcHOIa">✕</div></div>
   <div class="pb" data-page-node-id="BEtUt0kZwB5mTCukybNGCD">
     <div class="set-r" data-f style="cursor:pointer" onclick="editServerHost()" data-page-node-id="nKT7Mh8HhsuBfyApCpkWLG"><span class="set-l" data-page-node-id="T3ueFT1R1bwTbPtZICupmN">服务器</span><span class="set-v" id="s-host" data-page-node-id="LcHtupKTlzCvBCrfpt52Ot">—</span><span style="color:var(--ac2)">✎</span></div>
+    <div class="set-r" data-f style="cursor:pointer" onclick="showServerVer()"><span class="set-l">服务端版本</span><span class="set-v" id="s-serverver">—</span></div>
+    <div class="set-r" id="row-appver" style="display:none"><span class="set-l">App 版本</span><span class="set-v" id="s-appver">—</span></div>
     <div class="set-r" data-page-node-id="jQFmc22JUITFh70G7FMgqB"><span class="set-l" data-page-node-id="cm7WEluuYuRRwWcA6akc3t">曲库歌曲</span><span class="set-v" id="s-songs" data-page-node-id="MancH463s8fDUp3KER6rWg">—</span></div>
     <div class="set-r" data-f style="cursor:pointer" onclick="toggleAutoPlay()"><span class="set-l">首页自动播放</span><span class="set-v" id="s-autoplay">关</span></div>
     <div class="set-r" data-f style="cursor:pointer" onclick="toggleDlFormat()"><span class="set-l">点唱榜下载格式</span><span class="set-v" id="s-dlfmt">MP3</span></div>
@@ -2606,9 +2608,71 @@ function loadSettings(){
   document.getElementById('s-host').textContent=LOCAL_MODE?'本地模式':location.host;
   const srv=document.getElementById('s-app-server');
   if(srv)srv.textContent=(window.KtvBridge&&window.KtvBridge.getServer())||'—';
+  loadVersionRows(); // 服务端版本 / App 版本
   if(LOCAL_MODE)return;
   fetch('/api/stats').then(r=>r.json()).then(d=>document.getElementById('s-songs').textContent=d.songCount+'首');
   refreshLxSrcBadge(); // 设置面板显示当前音源
+}
+
+// ===== 版本显示：「是不是下载的最新版」一眼可见 =====
+// 镜像 tag 永远叫 latest，看不出是哪次构建；commit 短 sha + 构建时间才能和
+// GitHub 上的提交对齐。
+let SERVER_VER=null;
+
+function fmtDurSec(sec){
+  sec=Math.max(0,Math.round(sec||0));
+  const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;
+  if(h)return h+' 小时 '+m+' 分';
+  if(m)return m+' 分 '+s+' 秒';
+  return s+' 秒';
+}
+
+// App 版本由安卓壳的 KtvBridge.getAppVersion() 提供。旧版 APK 没有这个方法，
+// 用 typeof 守卫：拿不到就整行隐藏，不会因为升级服务端而让页面报错。
+function getAppVer(){
+  try{
+    const b=window.KtvBridge;
+    return (b&&typeof b.getAppVersion==='function')?String(b.getAppVersion()||''):'';
+  }catch(e){return '';}
+}
+
+async function loadVersionRows(){
+  const av=document.getElementById('s-appver'),ar=document.getElementById('row-appver');
+  const appv=getAppVer();
+  if(ar&&av){if(appv){ar.style.display='';av.textContent=appv;}else{ar.style.display='none';}}
+
+  const el=document.getElementById('s-serverver');
+  if(LOCAL_MODE){if(el)el.textContent='本地模式';return;}
+  if(el&&!SERVER_VER)el.textContent='读取中…';
+  try{ SERVER_VER=await fetch('/api/version').then(r=>r.json()); }
+  catch(e){ if(el)el.textContent='读取失败'; return; }
+  if(el&&SERVER_VER)el.textContent=SERVER_VER.label||'—';
+}
+
+function showServerVer(){
+  const v=SERVER_VER;
+  if(!v){showToast('版本信息还在读取，请稍后再打开');loadVersionRows();return;}
+  const srcTxt=v.source==='ci'?'CI 镜像（构建时注入）':v.source==='local-git'?'本地源码（读 git）':'未知';
+  const rows=[
+    ['服务端版本',v.version||'—'],
+    ['提交',(v.sha||'—')+(v.ref?'（'+v.ref+'）':'')],
+    ['构建时间',v.buildTimeLocal||'—（非 CI 构建，无构建时间）'],
+    ['构建来源',srcTxt],
+    ['容器启动',v.startedAtLocal||'—'],
+    ['已运行',fmtDurSec(v.uptimeSec)],
+  ];
+  const appv=getAppVer();
+  if(appv)rows.push(['App 版本',appv]);
+  const ov=document.createElement('div');
+  ov.style.cssText='position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;padding:20px';
+  ov.innerHTML='<div style="width:min(90vw,520px);max-height:84vh;overflow-y:auto;background:#17122e;border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:22px 24px">'
+    +'<div style="font-size:19px;font-weight:700;color:#fff;margin-bottom:8px">🔖 版本信息</div>'
+    +'<div style="color:var(--sub);font-size:13px;margin-bottom:14px;line-height:1.6">把这里的「提交」和 GitHub 上的最新提交对比：一致就说明已经是最新版。</div>'
+    +rows.map(r=>'<div style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.08)"><div style="width:96px;flex:none;color:var(--sub);font-size:14px">'+r[0]+'</div><div style="flex:1;word-break:break-all;font-size:14px;font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff">'+r[1]+'</div></div>').join('')
+    +'<div style="display:flex;justify-content:flex-end;margin-top:18px"><button class="btn-add" id="ver-ok">关闭</button></div></div>';
+  ov.onclick=e=>{if(e.target===ov)ov.remove();};
+  document.body.appendChild(ov);
+  ov.querySelector('#ver-ok').onclick=()=>ov.remove();
 }
 // ===== 设置：服务器 IP 可设定（电视/浏览器端） =====
 // 点击「服务器」行弹出输入框，确认后跳转 http://<新地址>/tv。App 内已有原生
