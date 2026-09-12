@@ -510,6 +510,18 @@ app.get('/api/lx/source', (req, res) => {
   });
 });
 
+// 导出源脚本原文（?download=1 时按文件下载）。局域网内自用：排查音源问题时
+// 把脚本拉到本地沙箱逐请求调试，不必在服务器上反复部署试错。
+app.get('/api/lx/source/:id/script', (req, res) => {
+  const row = db.prepare('SELECT id, name, script FROM lx_sources WHERE id=?').get(parseInt(req.params.id));
+  if (!row) return res.status(404).json({ error: '源不存在' });
+  if (req.query.download) {
+    res.setHeader('Content-Disposition', `attachment; filename="lx-source-${row.id}.js"`);
+    res.type('text/javascript; charset=utf-8');
+  }
+  res.send(row.script);
+});
+
 // 导入源：{ script: '源脚本内容' } 或 { url: 'http://.../source.js' }
 app.post('/api/lx/source', async (req, res) => {
   try {
@@ -540,8 +552,7 @@ app.delete('/api/lx/source/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/lx/source/:id/activate', async (req, res) => {
-  try {
+app.post('/api/lx/source/:id/activate', async (req, res) => {  try {
     const act = await lxmusic.activateSourceById(parseInt(req.params.id));
     res.json({ ok: true, name: act.meta.name, sources: act.sources });
   } catch (e) { res.status(400).json({ error: '源启用失败: ' + e.message }); }
