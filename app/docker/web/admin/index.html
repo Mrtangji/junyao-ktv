@@ -356,6 +356,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
 <div id="sb-modal-overlay" onclick="closeSingerModal()">
   <div id="sb-modal" onclick="event.stopPropagation()">
     <h3>🎤 歌手批量下载</h3>
+    <div id="sb-last" style="display:none;color:var(--sub);font-size:12px;margin:-4px 0 10px"></div>
     <div id="sb-config">
       <div class="form-row">
         <label>歌手名单（每行一个，可从 .txt 导入）</label>
@@ -1116,9 +1117,21 @@ async function sbRefresh(){
     return;
   }
   const active = st.phase === 'running' || st.phase === 'paused';
-  const showRun = active || (st.phase === 'done' && !!st.message);
+  // 只有"正在跑/暂停中"才显示运行面板；任务结束（done，含手动停止/放弃）后
+  // 重新打开弹窗一律回到全新配置界面——上一次的结果压缩成一行摘要放在标题下，
+  // 不会占着弹窗让人误以为必须先处理完旧任务才能开新的。
+  const showRun = active;
   document.getElementById('sb-config').style.display = showRun ? 'none' : '';
   document.getElementById('sb-running').style.display = showRun ? '' : 'none';
+  const lastEl = document.getElementById('sb-last');
+  if (lastEl) {
+    if (!showRun && st.phase === 'done' && st.message) {
+      lastEl.textContent = '上次任务：' + st.message;
+      lastEl.style.display = '';
+    } else {
+      lastEl.style.display = 'none';
+    }
+  }
   if(!showRun) return;
   const paused = st.phase === 'paused';
   const pb = document.getElementById('sb-pause-btn');
