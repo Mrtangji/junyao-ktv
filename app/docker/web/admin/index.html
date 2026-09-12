@@ -102,6 +102,22 @@ main{max-width:960px;margin:0 auto;padding:24px}
 .form-row input:focus{border-color:var(--accent)}
 .modal-btns{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
 
+/* 扫描进度：固定在窗口底部（避开顶部 toast），点「扫描曲库」后立刻可见。
+   旧做法只在歌曲列表下面写一行小字，页面滚动位置不对就会被当成"点了没反应"。 */
+#scan-progress{position:fixed;left:0;right:0;bottom:0;z-index:120;display:none;
+  background:rgba(14,11,30,.97);border-top:1px solid rgba(54,217,247,.35);
+  padding:10px 18px 12px;box-shadow:0 -6px 24px rgba(0,0,0,.45)}
+#scan-progress.show{display:block}
+#scan-progress .sp-head{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text);margin-bottom:8px}
+#scan-progress .sp-meta{color:var(--sub)}
+#scan-progress .sp-pct{margin-left:auto;color:var(--cyan);font-family:ui-monospace,Menlo,Consolas,monospace}
+#scan-progress .sp-track{height:8px;border-radius:4px;background:rgba(255,255,255,.1);overflow:hidden}
+#scan-progress .sp-bar{height:100%;width:0;border-radius:4px;
+  background:linear-gradient(90deg,var(--accent),var(--cyan));transition:width .35s ease}
+#scan-progress .sp-bar.indet{width:100%;animation:spSlide 1.3s linear infinite;
+  background:linear-gradient(90deg,transparent,var(--cyan),transparent)}
+@keyframes spSlide{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+
 /* Scan log */
 #scan-log{
   background:var(--card);border-radius:14px;padding:16px;margin-top:20px;
@@ -273,6 +289,16 @@ main{max-width:960px;margin:0 auto;padding:24px}
     <pre id="scan-pre"></pre>
   </div>
 </main>
+
+<!-- 扫描进度浮层：固定在窗口底部，点了「🔄 扫描曲库」立刻出现并实时推进 -->
+<div id="scan-progress">
+  <div class="sp-head">
+    <span id="scan-title">🔄 正在扫描曲库…</span>
+    <span class="sp-meta" id="scan-meta"></span>
+    <span class="sp-pct" id="scan-pct">0%</span>
+  </div>
+  <div class="sp-track"><div class="sp-bar" id="scan-bar"></div></div>
+</div>
 
 <!-- Edit modal -->
 <div id="modal-overlay" onclick="closeModal()">
@@ -455,6 +481,11 @@ main{max-width:960px;margin:0 auto;padding:24px}
 //   Unexpected token '<', "<!DOCTYPE "... is not valid JSON
 // 完全看不出哪里错了。这里把 Response.json 包一层，换成明确的中文提示。
 (function(){
+  // 老 WebView / 极简内核里可能连 Response 都没有。这段代码只是"把报错换成人话"，
+  // 绝不能因为它把整个 <script> 打断 —— 那样页面里所有函数都会变成未定义，
+  // 表现就是"所有按钮都没反应"，比原本的报错难查得多。所以先做能力检测。
+  if (typeof Response === 'undefined' || !Response.prototype
+      || typeof Response.prototype.text !== 'function') return;
   const origText = Response.prototype.text;
   Response.prototype.json = function(){
     const res = this;
@@ -505,6 +536,7 @@ function showSetup(){
 function showApp(){
   document.getElementById('login-overlay').classList.add('hidden');
   loadAll();
+  scanCheckOnLoad();   // 若服务端正在扫描，直接亮出底部进度条
 }
 
 async function doSetup(){
@@ -703,35 +735,103 @@ async function saveEdit(){
   toast('已保存 ✓');
 }
 
+// ---------- 扫描进度（固定在底部的进度条） ----------
+// 为什么单独做一条：全量扫描要给每个文件起一次 ffprobe，大曲库要跑很久，
+// 而进度只写在歌曲列表下方的一行小字里 —— 页面滚动位置不对就完全看不到，
+// 表现就是"点了扫描曲库没反应"。现在改成固定在窗口底部的进度条，
+// 点下去立刻出现、百分比实时走；刷新页面/别的管理员已在扫时也会自动显示。
+let scanTimer = null;
+
+function scanEls(){
+  return {
+    box: document.getElementById('scan-progress'),
+    title: document.getElementById('scan-title'),
+    meta: document.getElementById('scan-meta'),
+    pct: document.getElementById('scan-pct'),
+    bar: document.getElementById('scan-bar'),
+  };
+}
+
+function renderScanProgress(s){
+  const el = scanEls();
+  if(!el.box) return;
+  el.box.classList.add('show');
+  // files=本轮枚举到的媒体文件总数（枚举阶段为 0，此时没有百分比，用流动条纹表示"在干活"）
+  const known = s.files > 0;
+  const p = known ? Math.min(100, Math.round(s.processed / s.files * 100)) : 0;
+  el.bar.classList.toggle('indet', !known);
+  el.bar.style.width = known ? p + '%' : '100%';
+  el.pct.textContent = known ? p + '%' : '……';
+  el.title.textContent = '🔄 正在扫描曲库…';
+  el.meta.textContent = known
+    ? `已处理 ${s.processed}/${s.files} 个文件 · 已跑 ${fmtDur(s.runningSec)}`
+    : `正在枚举曲库目录（大曲库这一步较慢）· 已跑 ${fmtDur(s.runningSec)}`;
+}
+
+function scanProgressHide(){
+  const el = scanEls();
+  if(el.box) el.box.classList.remove('show');
+}
+
+async function scanPollOnce(){
+  let s = null;
+  try { s = await fetch('/api/scan/status').then(r => r.json()); } catch(e){ return false; }
+  if(s && s.scanning){ renderScanProgress(s); return true; }
+  return false;
+}
+
+function scanPollStart(){
+  if(scanTimer) clearInterval(scanTimer);
+  scanPollOnce();
+  scanTimer = setInterval(async () => {
+    const on = await scanPollOnce();
+    if(!on && scanTimer){ clearInterval(scanTimer); scanTimer = null; }
+  }, 800);
+}
+
+// 页面打开时若服务端正在扫描（上次没扫完 / 另一个管理员触发的），直接把进度条亮出来
+async function scanCheckOnLoad(){
+  if(await scanPollOnce()) scanPollStart();
+}
+
 async function doScan(){
   const log = document.getElementById('scan-log');
   const pre = document.getElementById('scan-pre');
   log.classList.add('show');
-  pre.textContent = '扫描中…';
-  // 扫描期间轮询进度：全量扫描要给每个文件起一次 ffprobe，大曲库要跑很久，
-  // 没有进度提示很容易被当成卡死（这是"看起来没反应"最常见的误判）。
-  // 用轻量的 /api/scan/status，不用 /api/diag（后者为了采样 CPU 会阻塞数百毫秒）。
-  const tracker = setInterval(async () => {
-    try {
-      const s = await fetch('/api/scan/status').then(r => r.json());
-      if (!s.scanning) return;
-      pre.textContent = s.files
-        ? `扫描中… 已处理 ${s.processed}/${s.files} 个文件（每个都要探测，大曲库较慢）`
-        : '扫描中… 正在枚举曲库目录';
-    } catch (e) {}
-  }, 1000);
+  pre.textContent = '扫描中…（进度见页面底部的进度条）';
+  // 先开轮询再发请求：即使返回 409（已有扫描在跑）也能立刻看到那次扫描的进度
+  scanPollStart();
   let d;
   try {
     const res = await fetch('/api/scan',{method:'POST'});
     d = await res.json();
   } catch (e) {
-    clearInterval(tracker);
+    if(scanTimer){ clearInterval(scanTimer); scanTimer = null; }
+    scanProgressHide();
     pre.textContent = '⚠️ 扫描请求失败：' + e.message;
+    toast('⚠️ 扫描请求失败：' + e.message);
     return;
   }
-  clearInterval(tracker);
-  if (d.error === 'IN_PROGRESS') { pre.textContent = '⚠️ ' + (d.message || '已有扫描正在进行中，请稍候'); return; }
-  if (d.error) { pre.textContent = '⚠️ 扫描出错：' + d.error; return; }
+  if (d.error === 'IN_PROGRESS') {
+    pre.textContent = '⚠️ ' + (d.message || '已有扫描正在进行中，请等它跑完再试');
+    toast('已有扫描正在进行中，进度见底部进度条');
+    return;   // 轮询继续，进度条照常推进
+  }
+  if (d.error) {
+    if(scanTimer){ clearInterval(scanTimer); scanTimer = null; }
+    scanProgressHide();
+    pre.textContent = '⚠️ 扫描出错：' + d.error;
+    toast('⚠️ 扫描出错：' + d.error);
+    return;
+  }
+  // 完成：进度条收尾并停留几秒
+  if(scanTimer){ clearInterval(scanTimer); scanTimer = null; }
+  const el = scanEls();
+  if(el.bar){ el.bar.classList.remove('indet'); el.bar.style.width = '100%'; }
+  if(el.pct) el.pct.textContent = '100%';
+  if(el.title) el.title.textContent = '✅ 扫描完成';
+  if(el.meta) el.meta.textContent = `文件总数 ${d.total} · 新增 ${d.added} · 移除 ${d.removed}`;
+  setTimeout(scanProgressHide, 4000);
   pre.textContent = `完成！文件总数：${d.total}  新增：${d.added}  移除：${d.removed}`;
   toast(`扫描完成，共 ${d.total} 首，新增 ${d.added} 首`);
   loadAll();
@@ -1103,8 +1203,9 @@ async function sbStop(){
 }
 
 // ---------- 服务端版本 ----------
-// 镜像 tag 永远是 latest，看不出是哪一次构建。这里显示 commit 短 sha + 构建
-// 时间，可以直接和 GitHub 上的提交比对，确认"部署的到底是不是最新版"。
+// 镜像 tag 永远是 latest，看不出是哪一次构建。这里只显示一个 12 位「提交时间」戳
+// （YYMMDDHHmmss、北京时间，形如 260912221841）——和 GitHub 上那次提交/构建的
+// 时间对齐就能确认"部署的是不是最新版"。点击徽标可看完整详情。
 let SERVER_VER = null;
 
 function fmtDur(sec){
@@ -1119,10 +1220,11 @@ async function loadVersion(){
   try{ SERVER_VER = await fetch('/api/version').then(r=>r.json()); }
   catch(e){ return; }   // 拿不到就不显示，不影响后台功能
   if(!SERVER_VER) return;
-  const txt = SERVER_VER.label || '未知版本';
+  const txt = SERVER_VER.stamp || SERVER_VER.label || '未知';
   const b = document.getElementById('ver-badge');
   if(b){
     b.textContent = txt;
+    b.title = `服务端版本（提交时间）${txt} —— 点击查看详情`;
     if(SERVER_VER.source === 'ci') b.classList.add('is-ci');
   }
   const lv = document.getElementById('login-ver');
@@ -1135,9 +1237,10 @@ function showVersionDetail(){
   const srcTxt = v.source === 'ci' ? 'CI 镜像（构建时注入）'
     : v.source === 'local-git' ? '本地源码（直接读 git）' : '未知';
   const rows = [
+    ['提交时间', v.stamp || '—'],
     ['版本号', v.version || '—'],
     ['提交', (v.sha || '—') + (v.ref ? `　（分支/标签：${v.ref}）` : '')],
-    ['构建时间', v.buildTimeLocal || '—（非 CI 构建，无构建时间）'],
+    ['构建时间', v.buildTimeLocal || v.commitTime || '—（非 CI 构建，无构建时间）'],
     ['构建来源', srcTxt],
     ['Node 版本', v.node || '—'],
     ['容器启动', v.startedAtLocal || '—'],

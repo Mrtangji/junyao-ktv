@@ -63,6 +63,23 @@ const sha = (shaFull || git(['rev-parse', '--short', 'HEAD']) || '').slice(0, 12
 const ref = envRef || git(['rev-parse', '--abbrev-ref', 'HEAD']);
 const buildTime = envTime;
 
+// —— 4) 界面上的"版本号"：提交时间的 12 位数字戳 ——
+// 形如 260912221841（= 2026-09-12 22:18:41）。比 sha 好念、比可读时间串短，
+// 只显示在「曲库管理」页面，用来确认"部署的到底是哪一次构建"。
+// 固定按北京时间(+08:00)格式化：Docker 容器默认 TZ=UTC，直接用本地时间会整整差 8 小时。
+function stampOf(ts) {
+  const d = ts ? new Date(ts) : null;
+  if (!d || Number.isNaN(d.getTime())) return '';
+  const bj = new Date(d.getTime() + 8 * 3600 * 1000);
+  const p = (n) => String(n).padStart(2, '0');
+  return String(bj.getUTCFullYear()).slice(-2) + p(bj.getUTCMonth() + 1) + p(bj.getUTCDate())
+    + p(bj.getUTCHours()) + p(bj.getUTCMinutes()) + p(bj.getUTCSeconds());
+}
+// 优先用 CI 注入的构建时间；本地开发没有构建时间就退回 git 提交时间，
+// 保证界面上始终有一个能和 GitHub 对齐的时间戳。
+const gitCommitTime = envTime ? '' : git(['log', '-1', '--format=%cI']);
+const stamp = stampOf(envTime || gitCommitTime);
+
 // 构建来源：ci=CI 注入 / local-git=本地读到了 git / unknown=都拿不到
 const source = envSha ? 'ci' : (sha ? 'local-git' : 'unknown');
 
@@ -89,10 +106,10 @@ function shortSha() {
 }
 
 /**
- * 一行式版本戳，日志与界面徽标都用它，例如 "latest · b012523"。
- * 没有 sha 时退化成纯版本号，不会出现孤零零的分隔符。
+ * 一行式版本戳：优先用提交时间戳（260912221841），拿不到时退回「版本号 · 短sha」。
  */
 function label() {
+  if (stamp) return stamp;
   const s = shortSha();
   return s ? `${version} · ${s}` : version;
 }
@@ -106,9 +123,13 @@ function getVersion() {
     sha: shortSha(),
     shaFull: shaFull || '',
     ref: ref || '',
+    // 界面显示用的「版本号」＝提交时间戳（YYMMDDHHmmss，北京时间），例如 260912221841
+    stamp,
     // 构建时间（CI 注入，UTC ISO）与本地时区可读串
     buildTime: buildTime || '',
     buildTimeLocal: fmtLocal(buildTime),
+    // 本地开发时从 git 读到的提交时间（CI 构建为空）
+    commitTime: gitCommitTime || '',
     source,
     node: process.version,
     repo,
