@@ -566,6 +566,20 @@ function removeHLS(id) {
   log.info('TRANSCODE', `[歌曲 id=${id}] 已清理 HLS 转码产物`);
 }
 
+// 批量清理用的静默版：大扫之后清理阶段可能一口气删掉几万~几十万首的 HLS 目录，
+// removeHLS 每首都打一条 info 日志（几十万行日志会拖慢扫描收尾、刷爆日志文件）。
+// 行为与 removeHLS 完全一致（停转码 + 删目录 + 清登记），只是不写日志。
+function removeHLSSilent(id) {
+  try {
+    cancelSong(id);
+    fs.rmSync(outDir(id), { recursive: true, force: true });
+    building.delete(id);
+    buildErrors.delete(id);
+  } catch (e) {
+    log.warn('TRANSCODE', `[歌曲 id=${id}] 批量清理 HLS 失败: ${e.message}`);
+  }
+}
+
 // ---------- HLS 缓存每日清理 ----------
 // HLS 转码产物（.ts 分片）只是一份可以随时重新生成的播放缓存，不是原始曲库
 // 数据，但每首歌一旦转码过就会一直占着磁盘空间，曲库越大、播放过的歌越多，
@@ -673,7 +687,7 @@ detectVAAPI().then(ok => {
 }).catch(() => {});
 
 module.exports = {
-  ensureHLS, removeHLS, outDir, HLS_DIR, waitForFile, cleanupExpiredHLS, scheduleHLSCleanup,
+  ensureHLS, removeHLS, removeHLSSilent, outDir, HLS_DIR, waitForFile, cleanupExpiredHLS, scheduleHLSCleanup,
   // 客户端全部离线时用来停止后台播放/转码（见 index.js 的在线检测）
   cancelSong, cancelAllActive, activeTranscodes, isCanceled,
   // 诊断用（/api/diag、孤儿 ffmpeg 巡检）

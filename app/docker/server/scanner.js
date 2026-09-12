@@ -1,11 +1,17 @@
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const db = require('./db');
-const { removeHLS } = require('./hlsgen');
+const { removeHLSSilent } = require('./hlsgen');
 const { toPinyin, toPinyinInitial } = require('./pinyin');
 const { detectLang } = require('./lang');
 const dlcfg = require('./dlconfig');
+
+// scan_stat：上次扫描时每个文件的 mtime/size（模块加载即建表——scanFile 单文件
+// 入库在首次全量扫描之前就可能被调用，同样要登记）。文件内容只会在被写入时损坏
+// （下载中断/拷贝半截），写完不再动的文件 ffprobe 结论不会变，所以"mtime+size
+// 没变"的已入库文件可以安全跳过 ffprobe，大曲库重扫从几十分钟降到一两分钟。
+db.exec('CREATE TABLE IF NOT EXISTS scan_stat (filename TEXT PRIMARY KEY, mtime_ms REAL NOT NULL, size INTEGER NOT NULL)');
 
 // MV_DIR 仍是曲库主目录（MV/存量歌曲）；下载目录可配置后，配置的自定义目录
 // 也纳入扫描（见 scanRoots）。导出别名保持旧引用（maidong.js 等）兼容。
@@ -46,18 +52,31 @@ const HLS_SEGMENT_RE = /^(video|audio\d*)_\d{4}\.ts$/i;
 // 例如「周杰伦 - 晴天.mp3」对应「周杰伦 - 晴天.lrc」。
 // 逐字歌词优先：同名再加 _word 后缀的（如「晴天_word.lrc」）是增强型 LRC
 // （带 <mm:ss.xx> 逐字时间标签），优先于逐行版关联入库。
+// 目录列表带 mtime 缓存：刷新阶段要给每个文件找同名 .lrc，一个歌手目录动辄
+// 几百个文件，原实现每个文件都 readdirSync 一次；现在按目录 mtime 缓存——
+// 目录没变直接复用，目录变了（用户后补了歌词）才重新 readdir。这样既省掉
+// 绝大多数 readdir，又不会漏掉"先放歌、后补歌词"的场景。
+const lrcDirCache = new Map(); // dir -> { mtimeMs, names }
+function readDirCached(dir) {
+  try {
+    const st = fs.statSync(dir);
+    const c = lrcDirCache.get(dir);
+    if (c && Math.abs(c.mtimeMs - st.mtimeMs) < 2) return c.names;
+    const names = fs.readdirSync(dir);
+    lrcDirCache.set(dir, { mtimeMs: st.mtimeMs, names });
+    return names;
+  } catch (e) {
+    return [];
+  }
+}
 function findLyricsPath(filepath) {
   const dir = path.dirname(filepath);
   const stem = path.basename(filepath, path.extname(filepath));
-  try {
-    const names = fs.readdirSync(dir);
-    const word = names.find(name => name.toLowerCase() === `${stem.toLowerCase()}_word.lrc`);
-    const exact = names.find(name => name.toLowerCase() === `${stem.toLowerCase()}.lrc`);
-    if (word) return path.join(dir, word);
-    return exact ? path.join(dir, exact) : null;
-  } catch (e) {
-    return null;
-  }
+  const names = readDirCached(dir);
+  const word = names.find(name => name.toLowerCase() === `${stem.toLowerCase()}_word.lrc`);
+  const exact = names.find(name => name.toLowerCase() === `${stem.toLowerCase()}.lrc`);
+  if (word) return path.join(dir, word);
+  return exact ? path.join(dir, exact) : null;
 }
 
 // Bug修复：原唱/伴唱切换失效的根源——浏览器的 HTMLMediaElement.audioTracks
@@ -83,19 +102,63 @@ function probeMedia(filepath) {
   ];
   try {
     const out = execFileSync('ffprobe', FFPROBE_ARGS, { timeout: 20000 }).toString();
-    const lines = out.split('\n').map(l => l.trim()).filter(l => l && l.includes(','));
-    if (lines.length === 0) return { valid: false, transient: false, audioTracks: 1 };
-    const audio = lines
-      .filter(l => l.startsWith('audio,'))
-      .map(l => l.slice('audio,'.length))
-      .filter(c => c && !/^(unknown|n\/a)?$/i.test(c));
-    return { valid: true, transient: false, audioTracks: Math.max(1, audio.length) };
+    return parseProbeOut(out);
   } catch (e) {
     // 超时被 kill / 其它 IO 错误都按暂时性失败处理（下轮再试）；
     // 只有 ffprobe 正常退出但报 Invalid data 才判定文件本身坏掉
     const invalidData = /invalid data/i.test(String(e.stderr || ''));
     return { valid: false, transient: !invalidData, audioTracks: 1 };
   }
+}
+
+// ffprobe 的 csv 输出 → { valid, transient, audioTracks }。同步版（probeMedia）
+// 与异步版（probeMediaAsync）共用同一套判定逻辑，避免两处维护出分歧。
+function parseProbeOut(out) {
+  const lines = out.split('\n').map(l => l.trim()).filter(l => l && l.includes(','));
+  if (lines.length === 0) return { valid: false, transient: false, audioTracks: 1 };
+  const audio = lines
+    .filter(l => l.startsWith('audio,'))
+    .map(l => l.slice('audio,'.length))
+    .filter(c => c && !/^(unknown|n\/a)?$/i.test(c));
+  return { valid: true, transient: false, audioTracks: Math.max(1, audio.length) };
+}
+
+// 异步版探测：全量扫描用。原来的 execFileSync 是同步的——一次只能跑一个 ffprobe，
+// 大曲库（几万个文件 × ~150ms/个）扫描动辄半小时起步，其中绝大部分时间 CPU 都
+// 在等 ffprobe 的 IO/NV 而不是在干活。改成 spawn + 并发池后，多个探测同时进行，
+// 吞吐按并发数成倍提升（SCAN_CONCURRENCY，默认 4，NAS CPU 弱可以调小）。
+// 判定逻辑与同步版完全一致（parseProbeOut），失败语义也一致：
+// 非 Invalid data 的失败一律按"暂时性失败"处理，下轮重试。
+function probeMediaAsync(filepath) {
+  const FFPROBE_ARGS = [
+    '-v', 'error',
+    '-analyzeduration', '10000000', '-probesize', '10000000',
+    '-show_entries', 'stream=codec_type,codec_name',
+    '-of', 'csv=p=0',
+    filepath,
+  ];
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (r) => { if (!settled) { settled = true; resolve(r); } };
+    let out = '', err = '';
+    let p;
+    try {
+      p = spawn('ffprobe', FFPROBE_ARGS, { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) {
+      done({ valid: false, transient: true, audioTracks: 1 });
+      return;
+    }
+    const timer = setTimeout(() => { try { p.kill('SIGKILL'); } catch (e) {} }, 20000);
+    p.stdout.on('data', d => { out += d; });
+    p.stderr.on('data', d => { err += d; });
+    p.on('error', () => { clearTimeout(timer); done({ valid: false, transient: true, audioTracks: 1 }); });
+    p.on('close', () => {
+      clearTimeout(timer);
+      if (out.trim()) { done(parseProbeOut(out)); return; }
+      const invalidData = /invalid data/i.test(err);
+      done({ valid: false, transient: !invalidData, audioTracks: 1 });
+    });
+  });
 }
 
 function probeAudioTracks(filepath) {
@@ -171,7 +234,9 @@ function listFilesRecursive(dir, visited, depth) {
       results = results.concat(listFilesRecursive(full, visited, depth + 1));
     } else if (MEDIA_EXT.has(path.extname(entry.name).toLowerCase())) {
       if (HLS_SEGMENT_RE.test(entry.name)) continue; // HLS 播放缓存分片，不是曲库
-      results.push(full);
+      // 把 stat 结果（mtime/size）一并带出：主流程用它判断"文件自上次扫描后
+      // 有没有变过"，没变就跳过 ffprobe——反正是同一个文件，结论不会变。
+      results.push({ f: full, mtimeMs: st.mtimeMs, size: st.size });
     }
   }
   return results;
@@ -236,11 +301,12 @@ async function scanLibrary() {
   // 汇总所有根目录下的媒体文件；rel 相对各自根目录并统一成正斜杠（filename
   // 唯一键沿用相对路径，两个根下同名相对路径的极端情况由 ON CONFLICT DO
   // NOTHING 去重）。统一 '/' 是为了让下载入库后的按 filename 查库（见
-  // lxmusic.js/maidong.js）在 Linux/Windows 上行为一致。
+  // lxmusic.js/maidong.js）在 Linux/Windows 上行为一致。listFilesRecursive
+  // 已顺便 stat 过每个文件，mtime/size 一并带出，供"未变化跳过探测"用。
   const files = [];
   for (const root of roots) {
-    for (const f of listFilesRecursive(root)) {
-      files.push({ f, rel: path.relative(root, f).replace(/\\/g, '/') });
+    for (const x of listFilesRecursive(root)) {
+      files.push({ f: x.f, rel: path.relative(root, x.f).replace(/\\/g, '/'), mtimeMs: x.mtimeMs, size: x.size });
     }
   }
   // 枚举完成，登记总数；下面逐个探测时推进 processed（供 /api/diag 区分
@@ -255,72 +321,113 @@ async function scanLibrary() {
   const existing = db.prepare('SELECT filename FROM songs').all().map(r => r.filename);
   const existingSet = new Set(existing);
 
-  // 渐进式扫描：原来是先把所有新文件（含耗时的 ffprobe 音轨探测）都收集进一个
-  // 数组，最后开一个大事务一次性批量 INSERT——这意味着不管曲库有多少首歌，都
-  // 要等"最后一首"探测完，数据库里才会一次性冒出所有新歌，/api/songs 在这之
-  // 前一直只能看到上一次扫描的结果。曲库越大（尤其首次安装、一次性批量导入
-  // 几百上千首）主界面/点歌页面看起来就越像长时间"没有歌"，要等全部扫描完才
-  // 突然出现完整列表。
-  // 现在改成逐个文件探测、探测完立即单独 INSERT 并让出一次事件循环：前面已经
-  // 扫完的歌马上就能被 /api/songs 查到，主界面列表随扫描推进逐步变长，不需要
-  // 等后面的文件也扫完。单条记录探测/入库失败只记日志跳过，不影响其余文件
-  // 继续扫描（沿用原来的"单条失败不影响整体"原则）。
+  // scan_stat 已在模块加载时建表（顶部注释说明"未变化跳过探测"的原理）。
+  // 升级后首次扫描 scan_stat 为空 → 全部文件走一遍探测流程并建档，一次性成本，
+  // 之后每轮重扫都吃满收益。
+  const seenStat = new Map(db.prepare('SELECT filename, mtime_ms, size FROM scan_stat').all().map(r => [r.filename, r]));
+  const upsertStat = db.prepare('INSERT INTO scan_stat (filename, mtime_ms, size) VALUES (?, ?, ?) ON CONFLICT(filename) DO UPDATE SET mtime_ms = excluded.mtime_ms, size = excluded.size');
+  const statUnchanged = (x) => {
+    const s = seenStat.get(x.rel);
+    // mtime 容差 2ms：跨文件系统（SMB/NAS）回读时可能有精度抖动
+    return !!s && s.size === x.size && Math.abs(s.mtime_ms - x.mtimeMs) < 2;
+  };
+
+  // 渐进式扫描 + 并发探测：探测完成的歌立即单独 INSERT，/api/songs 马上能查到，
+  // 主界面列表随扫描推进逐步变长。探测本身改为并发池（SCAN_CONCURRENCY，默认 4）
+  // ——原来串行 execFileSync 一次只能跑一个 ffprobe，几万文件 × ~150ms 扫一轮要
+  // 半小时以上；并发后吞吐按并发数成倍提升。单个文件失败只记日志跳过，不影响
+  // 其余文件（沿用"单条失败不影响整体"原则）。
+  // 分类：
+  //   toProbe    —— 必须探测的：新文件（入库）；已入库但 mtime/size 变了的 .ts
+  //                 （网络下载的 ts 是坏文件重灾区，内容变过就复查一遍）。
+  //   skip       —— mtime/size 没变的已入库文件：直接跳过，不 ffprobe。
   let added = 0;
   // 本轮判定为"文件本身坏掉"的相对路径：不入库；已入库的同名记录也会在
   // 清理阶段被一并移除（连同它的队列/收藏/历史引用）。
   const brokenRel = new Set();
-  for (let fi = 0; fi < files.length; fi++) {
-    const { f, rel } = files[fi];
-    scanState.processed = fi + 1;
-    if (!existingSet.has(rel)) {
-      try {
-        // 新文件先验证可解析性：损坏/下载不完整的文件（ffprobe 报 Invalid
-        // data）直接跳过不入库——播起来也是黑屏。暂时性失败（超时/IO 抖动）
-        // 同样跳过本轮，但保留记录待下轮重试。
-        const { valid, transient, audioTracks } = probeMedia(f);
-        if (!valid) {
-          if (transient) {
+  const toProbe = [];
+  let doneCount = 0;
+  for (const x of files) {
+    if (existingSet.has(x.rel) && statUnchanged(x)) {
+      doneCount++;               // 没变：跳过探测，直接计入已完成
+      scanState.processed = doneCount;
+      continue;
+    }
+    toProbe.push(x);
+  }
+  const CONCURRENCY = Math.max(1, Math.min(16, parseInt(process.env.SCAN_CONCURRENCY || '4', 10) || 4));
+  let cursor = 0;
+  const probeWorker = async () => {
+    while (cursor < toProbe.length) {
+      const x = toProbe[cursor++];
+      const { f, rel, mtimeMs, size } = x;
+      const res = await probeMediaAsync(f);
+      if (!existingSet.has(rel)) {
+        // 新文件：损坏/下载不完整的（ffprobe 报 Invalid data）直接跳过不入库
+        // ——播起来也是黑屏。暂时性失败（超时/IO 抖动）同样跳过本轮，保留待下轮重试。
+        if (!res.valid) {
+          if (res.transient) {
             console.warn('曲库扫描-文件探测暂时失败，本轮跳过待下轮重试:', rel);
           } else {
             brokenRel.add(rel);
             console.warn('曲库扫描-文件无法解析（损坏或下载不完整），已跳过:', rel);
           }
-          await yieldToEventLoop();
-          continue;
+        } else {
+          try {
+            const { artist, title } = parseSongMeta(f);
+            const media_type = AUDIO_EXT.includes(path.extname(f).toLowerCase()) ? 'audio' : 'video';
+            // 音轨数在探测可解析性时顺带拿到，避免二次 ffprobe；纯音频永远单音轨。
+            const audio_tracks = media_type === 'audio' ? 1 : res.audioTracks;
+            const lyrics = findLyricsPath(f);
+            // 歌词路径存绝对路径：下载目录可配置后歌词文件不一定在 MV_DIR 下，相对路径
+            // 表达不了跨目录引用（/lyrics/:id 接口同时兼容旧库存量的相对路径）。
+            const lyrics_path = lyrics ? lyrics : null;
+            const r = insert.run({ title, artist, filename: rel, filepath: f, audio_tracks, media_type, lyrics_path, pinyin: toPinyin(title), pinyin_initial: toPinyinInitial(title), lang: detectLang(title, artist) });
+            if (r.changes > 0) added++;
+            upsertStat.run(rel, mtimeMs, size);   // 探测通过才登记；失败的下轮重试
+          } catch (e) {
+            console.error('曲库扫描-新增文件入库失败(' + rel + '):', e.message);
+          }
         }
-        const { artist, title } = parseSongMeta(f);
-        const media_type = AUDIO_EXT.includes(path.extname(f).toLowerCase()) ? 'audio' : 'video';
-        // 音轨数在探测可解析性时顺带拿到，避免二次 ffprobe；纯 MP3 永远单音轨。
-        const audio_tracks = media_type === 'audio' ? 1 : audioTracks;
-        const lyrics = findLyricsPath(f);
-        // 歌词路径存绝对路径：下载目录可配置后歌词文件不一定在 MV_DIR 下，相对路径
-        // 表达不了跨目录引用（/lyrics/:id 接口同时兼容旧库存量的相对路径）。
-        const lyrics_path = lyrics ? lyrics : null;
-        const r = insert.run({ title, artist, filename: rel, filepath: f, audio_tracks, media_type, lyrics_path, pinyin: toPinyin(title), pinyin_initial: toPinyinInitial(title), lang: detectLang(title, artist) });
-        if (r.changes > 0) added++;
-      } catch (e) {
-        console.error('曲库扫描-新增文件入库失败(' + rel + '):', e.message);
+      } else {
+        // 已入库但内容变过的 .ts 复查：坏文件记入 brokenRel，清理阶段连同其记录
+        // 一起移除。探测通过才刷新 stat 登记（暂时性失败下轮要再试）。
+        if (!res.valid && !res.transient) {
+          brokenRel.add(rel);
+          console.warn('曲库扫描-已入库的 .ts 无法解析（损坏或下载不完整），将移除:', rel);
+        } else if (res.valid) {
+          upsertStat.run(rel, mtimeMs, size);
+        }
       }
-    } else if (path.extname(rel).toLowerCase() === '.ts') {
-      // 已入库的 .ts 也复查可解析性：网络下载的 ts 是坏文件重灾区，且这类
-      // 文件入库时可能还是旧的"失败回落 1 音轨"逻辑。坏文件记入 brokenRel，
-      // 清理阶段连同其记录一起移除。
-      const { valid, transient } = probeMedia(f);
-      if (!valid && !transient) {
-        brokenRel.add(rel);
-        console.warn('曲库扫描-已入库的 .ts 无法解析（损坏或下载不完整），将移除:', rel);
-      }
+      doneCount++;
+      scanState.processed = doneCount;
     }
-    await yieldToEventLoop();
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, toProbe.length) }, probeWorker));
+
+  // 已存在但 mtime/size 变了、又不是 .ts 的文件：不用重新探测（老逻辑对非 ts
+  // 的已入库文件本来就不复查），但 stat 登记要刷新，否则每轮都被当成"变了"。
+  for (const x of files) {
+    if (!existingSet.has(x.rel) || path.extname(x.rel).toLowerCase() === '.ts') continue;
+    if (!statUnchanged(x)) upsertStat.run(x.rel, x.mtimeMs, x.size);
   }
 
-  // 已存在曲目也要补齐/刷新媒体类型和同名 LRC 路径，确保升级后 MP3 与歌词立即可用。
+  // 已存在曲目补齐/刷新媒体类型和同名 LRC 路径（升级后 MP3 与歌词立即可用）。
+  // 只 UPDATE 与预期不一致的行：原来对全部文件无条件 UPDATE，几万个空 UPDATE
+  // 是纯浪费的 WAL 写放大；歌词目录读取走 mtime 缓存（readDirCached），同一
+  // 歌手目录只 readdir 一次，且后补的歌词（目录 mtime 变了）仍会被发现。
   try {
+    const rows = db.prepare('SELECT filename, media_type, lyrics_path FROM songs').all();
+    const rowMap = new Map(rows.map(r => [r.filename, r]));
     const updMeta = db.prepare('UPDATE songs SET media_type = ?, lyrics_path = ? WHERE filename = ?');
-    for (const { f, rel } of files) {
-      const type = AUDIO_EXT.includes(path.extname(f).toLowerCase()) ? 'audio' : 'video';
-      const lrc = findLyricsPath(f);
-      updMeta.run(type, lrc ? lrc : null, rel);
+    for (const x of files) {
+      const type = AUDIO_EXT.includes(path.extname(x.f).toLowerCase()) ? 'audio' : 'video';
+      const lrc = findLyricsPath(x.f);
+      const lrcPath = lrc ? lrc : null;
+      const row = rowMap.get(x.rel);
+      if (row && (row.media_type !== type || row.lyrics_path !== lrcPath)) {
+        updMeta.run(type, lrcPath, x.rel);
+      }
     }
   } catch (e) {
     console.error('歌曲媒体类型/LRC 路径补全失败:', e.message);
@@ -343,44 +450,44 @@ async function scanLibrary() {
     console.error('曲库扫描-音轨补全阶段失败:', e.message);
   }
 
-  // 清理已不存在的文件记录：这一步只有本地数据库增删操作，没有 ffprobe 这类
-  // 耗时 IO，不是本次"渐进式"要解决的瓶颈，保持原有一次性事务写法。
-  // 另外本轮探测出"文件本身坏掉"的记录（brokenRel）也一并清理——文件还在
-  // 磁盘上但无法解析，留着只会让用户点歌时黑屏。
+  // 清理已不存在的文件记录 + 本轮探测出"文件本身坏掉"的记录（brokenRel，文件
+  // 还在磁盘上但无法解析，留着只会让用户点歌时黑屏）。
+  // 全部改成纯 SQL 集合运算：原来是 SELECT 全表后逐行 JS 比对、每行开一个事务
+  // 跑 4 条 DELETE——曲库 20 万行时是 20 万个小事务，光 fsync 就要好几分钟。
+  // 现在建临时表装本轮文件集，"NOT IN + IN"四条批量 DELETE 一个事务搞定，
+  // SQLite 内部完成比对，毫秒级；HLS 缓存目录在事务外逐个删（文件系统操作），
+  // 用静默版（否则几十万行日志会刷爆日志文件、拖慢收尾）。
   let removed = 0;
   try {
-    const currentRelSet = new Set(files.filter(x => !brokenRel.has(x.rel)).map(x => x.rel));
-    const all = db.prepare('SELECT id, filename FROM songs').all();
-    // queue 表对 songs.id 有真实的外键约束，但 /api/queue/next 只会把已播完的
-    // 队列条目标记成 status='done'，从来不会真正从 queue 表删除——这些"done"的
-    // 历史队列记录会一直留着引用 song_id，导致下面删 songs 这一行时被外键约束
-    // 挡住(FOREIGN KEY constraint failed)，曲目实际没删掉，扫描结果里的歌曲数目
-    // 也就跟着不对。删除歌曲前先把 queue/history/favorites 里所有指向这个
-    // song_id 的记录一起清掉（history/favorites 虽然 schema 里没写真正的
-    // FOREIGN KEY，但同样是指向已删除歌曲的悬空引用，一并清理避免后续查询/
-    // 展示出问题），再删 songs 本身。
-    const delQueue = db.prepare('DELETE FROM queue WHERE song_id = ?');
-    const delHistory = db.prepare('DELETE FROM history WHERE song_id = ?');
-    const delFavorites = db.prepare('DELETE FROM favorites WHERE song_id = ?');
-    const del = db.prepare('DELETE FROM songs WHERE id = ?');
-    const delSongAndRefs = db.transaction((id) => {
-      delQueue.run(id);
-      delHistory.run(id);
-      delFavorites.run(id);
-      del.run(id);
-    });
-    for (const row of all) {
-      if (!currentRelSet.has(row.filename)) {
-        try {
-          delSongAndRefs(row.id);
-          removeHLS(row.id);
-          removed++;
-        } catch (e) {
-          // 单条记录删除失败（如HLS缓存目录权限问题）只记日志、跳过，不影响其余记录清理
-          console.error('曲库扫描-删除已缺失曲目失败(id=' + row.id + '):', e.message);
-        }
+    db.exec('CREATE TEMP TABLE IF NOT EXISTS scan_cur (filename TEXT PRIMARY KEY)');
+    db.exec('CREATE TEMP TABLE IF NOT EXISTS scan_missing (id INTEGER PRIMARY KEY)');
+    const insCur = db.prepare('INSERT OR IGNORE INTO scan_cur(filename) VALUES (?)');
+    const fillAndClean = db.transaction(() => {
+      db.prepare('DELETE FROM scan_cur').run();
+      db.prepare('DELETE FROM scan_missing').run();
+      for (const x of files) {
+        if (!brokenRel.has(x.rel)) insCur.run(x.rel);
       }
+      db.prepare('INSERT INTO scan_missing(id) SELECT id FROM songs WHERE filename NOT IN (SELECT filename FROM scan_cur)').run();
+      // queue 表对 songs.id 有真实的外键约束，但 /api/queue/next 只会把已播完的
+      // 队列条目标记成 status='done'，从来不会真正从 queue 表删除——这些"done"的
+      // 历史队列记录会一直留着引用 song_id，导致删 songs 时被外键约束挡住
+      // (FOREIGN KEY constraint failed)。所以先清 queue/history/favorites 里
+      // 指向这些歌的记录（含悬空引用），再删 songs 本身。
+      db.prepare('DELETE FROM queue WHERE song_id IN (SELECT id FROM scan_missing)').run();
+      db.prepare('DELETE FROM history WHERE song_id IN (SELECT id FROM scan_missing)').run();
+      db.prepare('DELETE FROM favorites WHERE song_id IN (SELECT id FROM scan_missing)').run();
+      db.prepare('DELETE FROM songs WHERE id IN (SELECT id FROM scan_missing)').run();
+      // stat 登记同步清掉（已删除文件的行不再有意义）
+      db.prepare('DELETE FROM scan_stat WHERE filename NOT IN (SELECT filename FROM scan_cur)').run();
+    });
+    fillAndClean();
+    removed = db.prepare('SELECT COUNT(*) AS c FROM scan_missing').get().c;
+    for (const row of db.prepare('SELECT id FROM scan_missing').all()) {
+      removeHLSSilent(row.id);
     }
+    db.prepare('DELETE FROM scan_cur').run();
+    db.prepare('DELETE FROM scan_missing').run();
   } catch (e) {
     console.error('曲库扫描-清理缺失文件阶段失败:', e.message);
   }
@@ -423,6 +530,11 @@ function scanFile(f) {
       VALUES (@title, @artist, @filename, @filepath, @audio_tracks, @media_type, @lyrics_path, @pinyin, @pinyin_initial, @lang)
     `);
     insert.run({ title, artist, filename: rel, filepath: f, audio_tracks, media_type, lyrics_path, pinyin: toPinyin(title), pinyin_initial: toPinyinInitial(title), lang: detectLang(title, artist) });
+    // 顺手登记 mtime/size：下一轮全量扫描时这个文件就能走"未变化跳过探测"通道
+    try {
+      const st = fs.statSync(f);
+      db.prepare('INSERT INTO scan_stat (filename, mtime_ms, size) VALUES (?, ?, ?) ON CONFLICT(filename) DO UPDATE SET mtime_ms = excluded.mtime_ms, size = excluded.size').run(rel, st.mtimeMs, st.size);
+    } catch (e) {}
     return db.prepare('SELECT * FROM songs WHERE filename=?').get(rel);
   } catch (e) {
     console.error('单文件入库失败(' + rel + '):', e.message);
