@@ -10,7 +10,7 @@ const { scanLibrary } = require('./scanner');
 const dlcfg = require('./dlconfig');
 const { toPinyin, toPinyinInitial } = require('./pinyin');
 const { detectLang } = require('./lang');
-const { ensureHLS, removeHLS, outDir, waitForFile, scheduleHLSCleanup } = require('./hlsgen');
+const { ensureHLS, removeHLS, outDir, waitForFile, scheduleHLSCleanup, cancelAllActive, activeTranscodes } = require('./hlsgen');
 const maidong = require('./maidong');
 const muse = require('./muse');
 const { getPitchCurve } = require('./pitch');
@@ -214,6 +214,7 @@ app.get('/lyrics/:id', (req, res) => {
 // "有没有查到歌"和"磁盘 IO"，跟这首歌要转多久没有关系，不会再出现点歌后
 // 卡在这一步转圈的情况。
 app.get('/hls/:id/master.m3u8', async (req, res) => {
+  markPlayerActivity();
   const song = db.prepare('SELECT * FROM songs WHERE id = ?').get(req.params.id);
   if (!song || !fs.existsSync(song.filepath)) return res.status(404).end();
   log.info('HLS', `请求播放 master.m3u8: id=${song.id} "${song.title || song.filename}"`);
@@ -237,6 +238,7 @@ app.get('/hls/:id/master.m3u8', async (req, res) => {
 // 首歌的转码任务本身已经失败，或者等待太久都没等到（比如源文件损坏、卡在
 // 极端情况），才会明确地报错而不是无限期挂起请求。
 app.get('/hls/:id/:file', async (req, res) => {
+  markPlayerActivity();
   const { id, file } = req.params;
   if (!/^\d+$/.test(id) || !/^[\w.-]+$/.test(file)) return res.status(400).end();
   const p = path.join(outDir(id), file);
@@ -268,6 +270,7 @@ app.get('/hls/:id/:file', async (req, res) => {
 // 这个分支吐出的流不支持 Range/寻址，只适合"整段从头播完"的用途，不要再用它
 // 做音轨切换后还要拖进度条的场景——那正是旧 bug 的根因，具体解释见 /hls 路由。
 app.get('/stream/:id', (req, res) => {
+  markPlayerActivity();
   const song = db.prepare('SELECT * FROM songs WHERE id = ?').get(req.params.id);
   if (!song || !fs.existsSync(song.filepath)) return res.status(404).end();
 
@@ -913,16 +916,115 @@ function broadcastQueue() {
   wssAll.forEach(w => w.clients.forEach(c => { if (c.readyState === 1) c.send(payload); }));
 }
 
+// ---------- 客户端在线检测 / 无人在线时停止后台播放 ----------
+// 背景：KTV 的"播放"由客户端（电视端 / 安卓端 WebView 加载 web/tv/index.html，
+// 以及手机遥控页 web/mobile）驱动——服务端负责的是把这首歌转成 HLS 分片。
+// 这份转码是"纯为客户端服务"的后台任务，而且一旦开始就会把整首歌转完。于是
+// 会出现：看电视的人早把电视/手机全关掉了，服务端还在后台吭哧吭哧转码，等于
+// 白白占着一个 CPU 核（NAS 上就是常驻 10%~20%）。这里补上"没人看就停"：
+//
+//   1) 在线数：/ws 的 WebSocket 连接数就是"有多少个客户端开着"（电视端、安卓
+//      端、手机遥控页都连它，断线会自动重连）。播放器拉取 m3u8/分片(/hls/*)
+//      与直传流(/stream/*)的 HTTP 请求也算"活跃"，避免误判。
+//   2) 空闲停止：最后一个客户端断开后开始计时，宽限期（默认 60 秒，可用环境
+//      变量 IDLE_STOP_MS 调整）内没有任何客户端重连、也没有播放请求，就：
+//        - 立即 kill 掉所有在途的 ffmpeg 转码进程（hlsgen.cancelAllActive）；
+//        - 把队列里 status='playing' 的那条复位为 'waiting'，即"停止播放"——
+//          客户端下次连上来时不会莫名其妙自动接着播刚才那首，而是停在待播队列；
+//        - 广播一次队列，让可能刚好又在线的客户端刷新界面。
+//      客户端一回来（重连 / 请求播放）就取消这次倒计时，正常的短暂切换页面、
+//      网络抖动（电视端 2 秒重连一次）都不会触发误停。
+const IDLE_STOP_MS = Math.max(5000, Number(process.env.IDLE_STOP_MS) || 60000);
+// 停止时默认把"正在播放"那条复位为"等待播放"（即真的把播放停下来，客户端下次
+// 连上不会突然自己接着播）。若希望保留"刚才是这首歌"，设 IDLE_STOP_KEEP_PLAYING=1。
+const IDLE_STOP_KEEP_PLAYING = process.env.IDLE_STOP_KEEP_PLAYING === '1';
+let idleTimer = null;
+let lastActivityAt = Date.now();
+
+function onlineClientCount() {
+  let n = 0;
+  wssAll.forEach(w => w.clients.forEach(c => { if (c.readyState === 1) n++; }));
+  return n;
+}
+
+function cancelIdleStop() {
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+}
+
+function scheduleIdleStop() {
+  if (idleTimer) return;
+  idleTimer = setTimeout(() => {
+    idleTimer = null;
+    if (onlineClientCount() > 0) return; // 宽限期内又有客户端连上来了
+    if (Date.now() - lastActivityAt < IDLE_STOP_MS) return scheduleIdleStop(); // 期间还有播放请求，再等一轮
+    stopServerPlayback('电视端/安卓端已全部离线');
+  }, IDLE_STOP_MS);
+  if (idleTimer.unref) idleTimer.unref();
+}
+
+// 客户端来了/还在用：刷新活跃时间，并撤销待执行的"空闲停止"。
+function markPlayerActivity() {
+  lastActivityAt = Date.now();
+  if (onlineClientCount() > 0) cancelIdleStop();
+  else scheduleIdleStop();
+}
+
+// "停止服务端播放"：中断在途转码 + 复位队列播放状态。
+function stopServerPlayback(reason) {
+  const canceled = cancelAllActive();
+  let reset = 0;
+  if (!IDLE_STOP_KEEP_PLAYING) {
+    try {
+      const info = db.prepare("UPDATE queue SET status='waiting' WHERE status='playing'").run();
+      reset = info.changes || 0;
+      if (reset) broadcastQueue();
+    } catch (e) {
+      log.warn('PLAYER', '队列播放状态复位失败: ' + e.message);
+    }
+  }
+  log.info('PLAYER', `停止服务端播放（${reason}）：中断在途转码 ${canceled.length} 首、复位队列播放状态 ${reset} 条`);
+  return { canceled, reset };
+}
+
 function onWsConnection(ws) {
+  lastActivityAt = Date.now();
+  cancelIdleStop(); // 有客户端在线，不进入空闲停止
+  log.info('PLAYER', `客户端已连接（当前在线 ${onlineClientCount()}）`);
   ws.send(JSON.stringify({ type: 'queue', data: getQueueWithSongs() }));
   ws.on('message', msg => {
+    lastActivityAt = Date.now();
     try {
       const p = JSON.parse(msg);
       if (p.type === 'control')
         wssAll.forEach(w => w.clients.forEach(c => { if (c.readyState === 1) c.send(JSON.stringify(p)); }));
     } catch(e) {}
   });
+  ws.on('close', () => {
+    const n = onlineClientCount();
+    log.info('PLAYER', `客户端已断开（当前在线 ${n}）`);
+    // 最后一个客户端也走了 → 启动空闲倒计时；宽限期内没人回来就停止后台播放。
+    if (n === 0) scheduleIdleStop();
+  });
+  ws.on('error', () => {});
 }
+
+// 供前端/运维查询：当前在线客户端数、在途转码数、空闲停止阈值
+app.get('/api/player/status', (req, res) => {
+  res.json({
+    clients: onlineClientCount(),
+    transcoding: activeTranscodes(),
+    idleStopMs: IDLE_STOP_MS,
+    idlePending: !!idleTimer,
+    lastActivityAt,
+  });
+});
+
+// 手动"立即停止后台播放/转码"（不影响客户端本身，只是让服务端停止为其转码）
+app.post('/api/player/stop', (req, res) => {
+  cancelIdleStop();
+  const r = stopServerPlayback('手动请求');
+  res.json({ ok: true, ...r });
+});
 wss.on('connection', onWsConnection);
 
 try {
@@ -954,6 +1056,8 @@ try {
 
 server.listen(PORT, () => {
   log.info('SERVER', `KTV 服务已启动: http://0.0.0.0:${PORT}`);
+  log.info('PLAYER', `无人在线自动停止后台播放已启用：最后一台电视端/安卓端断开后 ${Math.round(IDLE_STOP_MS / 1000)} 秒停止后台转码`
+    + (IDLE_STOP_KEEP_PLAYING ? '（保留队列播放状态）' : '，并把队列播放状态复位为待播'));
 });
 
 // Bug修复：原来这行代码写在 server.listen 之前、且同步调用 scanLibrary()，

@@ -96,6 +96,89 @@ async function detectVAAPI() {
 const building = new Map();   // song_id -> Promise（整首歌全部轨道转码完成）
 const buildErrors = new Map(); // song_id -> Error（最近一次转码失败原因）
 
+// ---------- 转码进程跟踪 / 取消 ----------
+// 为什么需要：ensureHLS 是"渐进式"的——它把整首歌（视频轨 + 每条音频轨，最多
+// 三条 ffmpeg 同时跑）丢到后台异步转完，且从不记录 ffmpeg 的 PID。后果是：
+// 即使看电视的人已经把电视端/安卓端全关掉，服务端仍会把这首歌从头转到尾
+// （一首 MV 要几分钟），KTV 场景下等于"总有一个核在转码"，CPU 长期降不下来。
+//
+// 这里做的两件事：
+//   runningProcs —— 按歌曲 id 登记在跑的 ffmpeg 子进程，便于精确 kill；
+//   canceledIds  —— "这首歌已被要求停止转码"的标记。单纯 kill 进程不够：
+//                   被 kill 的 ffmpeg 退出码非 0，会走 Tier 降级逻辑又去起下
+//                   一个 ffmpeg，等于换个姿势继续转。所以每层降级前都先查这个
+//                   标记，一旦被取消就立刻整体抛出，不再尝试后续编码方案。
+// 取消是"粘性"的：标记会一直保留到这首歌下一次被重新请求（ensureHLS 开头清除），
+// 避免在途的旧 build 任务被唤醒后继续写文件。
+const runningProcs = new Map(); // song_id(String) -> Set<ChildProcess>
+const canceledIds = new Set();  // song_id(String)
+
+function procKey(id) {
+  return id === undefined || id === null ? null : String(id);
+}
+function isCanceled(id) {
+  const k = procKey(id);
+  return k !== null && canceledIds.has(k);
+}
+function canceledError() {
+  return Object.assign(new Error('转码已取消（客户端已全部离线，服务端停止后台播放/转码）'), { code: 'CANCELED' });
+}
+function trackProc(id, child) {
+  const k = procKey(id);
+  if (k === null) return () => {};
+  let set = runningProcs.get(k);
+  if (!set) { set = new Set(); runningProcs.set(k, set); }
+  set.add(child);
+  return () => {
+    const s = runningProcs.get(k);
+    if (!s) return;
+    s.delete(child);
+    if (!s.size) runningProcs.delete(k);
+  };
+}
+
+// 取消某一首歌的全部在途转码进程（不删 building 里的 Promise——让它自己走到
+// finally 里清理，避免和"取消后紧接着又来了新请求"之间产生竞态而互相踩踏）。
+function cancelSong(id) {
+  const k = procKey(id);
+  if (k === null) return 0;
+  canceledIds.add(k);
+  // 防御：取消标记会在 ensureHLS 重新请求时被清除，但为了绝对不让它在
+  // "批量删除歌曲"这类场景下无限增长，超过上限就丢弃最早的标记。
+  if (canceledIds.size > 512) canceledIds.delete(canceledIds.values().next().value);
+  const set = runningProcs.get(k);
+  let killed = 0;
+  if (set) {
+    for (const p of set) {
+      try { p.kill('SIGKILL'); killed++; } catch (e) { /* 进程可能已自行退出 */ }
+    }
+    runningProcs.delete(k);
+  }
+  return killed;
+}
+
+// 取消当前所有在途转码。返回被取消的歌曲 id 数组，供调用方打日志/回传。
+function cancelAllActive() {
+  const ids = new Set([...runningProcs.keys()]);
+  // building 里的任务可能刚好卡在"即将起下一个 ffmpeg"的间隙，一起标记取消，
+  // 这样它下一层降级前就会自己退出。
+  for (const k of building.keys()) ids.add(String(k));
+  const list = [...ids];
+  for (const id of list) cancelSong(id);
+  return list;
+}
+
+// 当前还有几首歌在跑 ffmpeg（用于日志/状态接口展示）
+function activeTranscodes() {
+  return runningProcs.size;
+}
+
+// 清掉某首歌的"已取消"标记：客户端重新请求播放时，允许重新开始转码。
+function clearCanceled(id) {
+  const k = procKey(id);
+  if (k !== null) canceledIds.delete(k);
+}
+
 function outDir(id) {
   return path.join(HLS_DIR, String(id));
 }
@@ -156,19 +239,26 @@ function probeCodecName(filepath, selector) {
   }
 }
 
-function runFFmpeg(args) {
+// songId 可选：传入时会把这个 ffmpeg 子进程登记到 runningProcs，便于"客户端
+// 全部离线时"按歌曲精确 kill；被取消后所有 ffmpeg 调用都会以 CANCELED 结束，
+// 上层据此停止 Tier 降级（不再换个编码方案接着转）。
+function runFFmpeg(args, songId) {
   return new Promise((resolve, reject) => {
+    if (isCanceled(songId)) return reject(canceledError());
     const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    const untrack = trackProc(songId, ff);
     let errBuf = '';
     ff.stderr.on('data', d => {
       errBuf += d.toString();
       if (errBuf.length > 4000) errBuf = errBuf.slice(-4000);
     });
     ff.on('close', code => {
+      untrack();
+      if (isCanceled(songId)) return reject(canceledError());
       if (code === 0) resolve();
       else reject(new Error(`ffmpeg exit ${code}: ${errBuf}`));
     });
-    ff.on('error', reject);
+    ff.on('error', err => { untrack(); reject(err); });
   });
 }
 
@@ -200,20 +290,22 @@ function hlsOutArgs(segPattern, playlistPath) {
 //           兼容性更好，依然能吃到硬件编码的加速；
 //   Tier 3：以上都不行（没有 VAAPI/驱动异常/这台机器压根没有核显独显）
 //           时，回退到纯软件的 libx264，保证任何机器最终都能出片。
-async function buildVideoRendition(filepath, dir, songTag) {
+async function buildVideoRendition(filepath, dir, songTag, songId) {
   const common = ['-loglevel', 'error', '-y', '-i', filepath, '-map', '0:v:0', '-an'];
   const out = hlsOutArgs(path.join(dir, 'video_%04d.ts'), path.join(dir, 'video.m3u8'));
   const codec = probeCodecName(filepath, 'v:0');
   const t0 = Date.now();
+  if (isCanceled(songId)) throw canceledError();
 
   log.info('TRANSCODE', `${songTag} 视频轨: 源编码=${codec || '未知'}`);
 
   if (SAFE_VIDEO_CODECS.has(codec)) {
     try {
-      await runFFmpeg([...common, '-c:v', 'copy', ...out]);
+      await runFFmpeg([...common, '-c:v', 'copy', ...out], songId);
       log.info('TRANSCODE', `${songTag} 视频轨: 直接封装拷贝(copy)完成，耗时 ${Date.now() - t0}ms，未使用核显`);
       return;
     } catch (e) {
+      if (isCanceled(songId)) throw canceledError();
       log.warn('TRANSCODE', `${songTag} 视频轨: h264 -c copy 仍失败，改为重新编码: ${e.message.split('\n').pop()}`);
     }
   }
@@ -229,10 +321,11 @@ async function buildVideoRendition(filepath, dir, songTag) {
         '-i', filepath, '-map', '0:v:0', '-an',
         '-c:v', 'h264_vaapi', ...VAAPI_QUALITY,
         ...out,
-      ]);
+      ], songId);
       log.info('TRANSCODE', `${songTag} 视频轨: 核显调用成功(Tier1 硬解+硬编 h264_vaapi)，耗时 ${Date.now() - t1}ms`);
       return;
     } catch (e) {
+      if (isCanceled(songId)) throw canceledError();
       log.warn('TRANSCODE', `${songTag} 视频轨: 核显硬解+硬编失败(Tier1)，尝试软解+硬编(Tier2): ${e.message.split('\n').pop()}`);
     }
 
@@ -245,10 +338,11 @@ async function buildVideoRendition(filepath, dir, songTag) {
         '-vf', 'format=nv12,hwupload',
         '-c:v', 'h264_vaapi', ...VAAPI_QUALITY,
         ...out,
-      ]);
+      ], songId);
       log.info('TRANSCODE', `${songTag} 视频轨: 核显调用成功(Tier2 软解+硬编 h264_vaapi)，耗时 ${Date.now() - t2}ms`);
       return;
     } catch (e) {
+      if (isCanceled(songId)) throw canceledError();
       log.warn('TRANSCODE', `${songTag} 视频轨: 核显调用失败(Tier2 软解+硬编)，回退到纯软件编码(Tier3 libx264): ${e.message.split('\n').pop()}`);
     }
   } else {
@@ -257,14 +351,14 @@ async function buildVideoRendition(filepath, dir, songTag) {
 
   // Tier 3：纯软件编码兜底
   const t3 = Date.now();
-  await runFFmpeg([...common, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', ...out]);
+  await runFFmpeg([...common, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', ...out], songId);
   log.info('TRANSCODE', `${songTag} 视频轨: 软件编码(Tier3 libx264)完成，耗时 ${Date.now() - t3}ms，未使用核显`);
 }
 
 // 音频轨：只有源编码是 aac 时才 -c copy，其余编码（Opus/Vorbis/FLAC/AC3 等）
 // 直接重新编码为 AAC。音频转码本身 CPU 消耗很低，没有必要也没有硬件通道，
 // 继续用软件编码即可。
-async function buildAudioRendition(filepath, dir, track, songTag) {
+async function buildAudioRendition(filepath, dir, track, songTag, songId) {
   // 映射加尾缀 '?'：ffprobe 报告的音轨数可能多于 ffmpeg demux 实际认可的
   // （典型：MPEG-TS 里 codec 未知的流 ffprobe 会算作音频，ffmpeg 则丢弃），
   // 严格映射会直接 "Stream map '0:a:N' matches no streams" 失败；加 '?' 后
@@ -274,18 +368,20 @@ async function buildAudioRendition(filepath, dir, track, songTag) {
   const codec = probeCodecName(filepath, `a:${track}`);
   const trackName = track === 0 ? '原唱' : track === 1 ? '伴唱' : `音轨${track}`;
   const t0 = Date.now();
+  if (isCanceled(songId)) throw canceledError();
   log.info('TRANSCODE', `${songTag} 音轨${track}(${trackName}): 源编码=${codec || '未知'}`);
   if (SAFE_AUDIO_CODECS.has(codec)) {
     try {
-      await runFFmpeg([...common, '-c:a', 'copy', ...out]);
+      await runFFmpeg([...common, '-c:a', 'copy', ...out], songId);
       log.info('TRANSCODE', `${songTag} 音轨${track}(${trackName}): 直接封装拷贝(copy)完成，耗时 ${Date.now() - t0}ms`);
       return;
     } catch (e) {
+      if (isCanceled(songId)) throw canceledError();
       log.warn('TRANSCODE', `${songTag} 音轨${track}(${trackName}): aac -c copy 仍失败，改为重新编码: ${e.message.split('\n').pop()}`);
     }
   }
   const t1 = Date.now();
-  await runFFmpeg([...common, '-c:a', 'aac', '-b:a', AUDIO_BITRATE, ...out]);
+  await runFFmpeg([...common, '-c:a', 'aac', '-b:a', AUDIO_BITRATE, ...out], songId);
   log.info('TRANSCODE', `${songTag} 音轨${track}(${trackName}): 软件编码(aac)完成，耗时 ${Date.now() - t1}ms`);
 }
 
@@ -341,6 +437,7 @@ async function buildHLS(song, dir) {
   const { filepath } = song;
   const songTag = `[歌曲 id=${song.id} "${song.title || song.filename}"]`;
   const t0 = Date.now();
+  if (isCanceled(song.id)) throw canceledError();
 
   // 音轨数以现场探测为准（只认有编码名的流），探测不到再用数据库值兜底
   const trackCount = song.media_type === 'audio'
@@ -353,18 +450,23 @@ async function buildHLS(song, dir) {
   // 只生成音频 HLS。视频歌曲则保持原有的“视频轨 + 音频轨并行”流程。
   const tasks = [];
   if (song.media_type !== 'audio') {
-    tasks.push(buildVideoRendition(filepath, dir, songTag));
+    tasks.push(buildVideoRendition(filepath, dir, songTag, song.id));
   }
   for (let t = 0; t < trackCount; t++) {
-    tasks.push(buildAudioRendition(filepath, dir, t, songTag));
+    tasks.push(buildAudioRendition(filepath, dir, t, songTag, song.id));
   }
   try {
     await Promise.all(tasks);
   } catch (e) {
+    if (isCanceled(song.id)) {
+      log.info('TRANSCODE', `${songTag} 转码已被取消（客户端离线/缓存清理），用时 ${Date.now() - t0}ms，已停止后续编码`);
+      throw canceledError();
+    }
     log.error('TRANSCODE', `${songTag} 转码失败，总耗时 ${Date.now() - t0}ms，原因: ${e.message.split('\n').pop()}`);
     throw e;
   }
 
+  if (isCanceled(song.id)) throw canceledError();
   fs.writeFileSync(completeMarkerPath(song.id), String(Date.now()));
   log.info('TRANSCODE', `${songTag} 全部轨道转码完成，总耗时 ${Date.now() - t0}ms`);
 }
@@ -372,6 +474,9 @@ async function buildHLS(song, dir) {
 async function ensureHLS(song) {
   const { id, filepath } = song;
   const songTag = `[歌曲 id=${id} "${song.title || song.filename}"]`;
+
+  // 客户端（重新）请求播放 → 解除这首歌先前的"已取消"标记，允许重新开始转码。
+  clearCanceled(id);
 
   if (isFresh(id, filepath)) {
     log.info('TRANSCODE', `${songTag} 命中已转码缓存，直接复用，不重新转码`);
@@ -401,7 +506,11 @@ async function ensureHLS(song) {
     // 接住，服务整体退出）。失败原因记进 buildErrors 即可，waitForFile 的
     // 轮询会查这张表把错误还给请求方；这里吞掉 rejection 不再往外抛。
     const p = buildHLS(song, dir)
-      .catch(e => { buildErrors.set(id, e); })
+      .catch(e => {
+        // 因"客户端离线"主动取消的，不算转码失败：不写 buildErrors，否则
+        // waitForFile 会把这次取消当成"转码失败"报给播放器。
+        if (!isCanceled(id)) buildErrors.set(id, e);
+      })
       .finally(() => building.delete(id));
     building.set(id, p);
     // 不 await —— 让转码在后台继续跑，函数立刻返回
@@ -421,6 +530,9 @@ function waitForFile(filepath, songId, { timeoutMs = 60000, intervalMs = 200 } =
       if (buildErrors.has(songId)) {
         return reject(Object.assign(new Error('转码失败'), { cause: buildErrors.get(songId), code: 'BUILD_FAILED' }));
       }
+      if (isCanceled(songId)) {
+        return reject(Object.assign(new Error('转码已取消（客户端已离线，服务端已停止播放）'), { code: 'CANCELED' }));
+      }
       if (Date.now() > deadline) {
         return reject(Object.assign(new Error('等待分片生成超时'), { code: 'TIMEOUT' }));
       }
@@ -430,6 +542,9 @@ function waitForFile(filepath, songId, { timeoutMs = 60000, intervalMs = 200 } =
 }
 
 function removeHLS(id) {
+  // 先停掉这首歌在跑的转码进程，再删目录：否则会出现"ffmpeg 还在往这个目录
+  // 写分片、目录却已经被删掉"的竞态（写失败报错 + 残留半成品）。
+  cancelSong(id);
   fs.rmSync(outDir(id), { recursive: true, force: true });
   building.delete(id);
   buildErrors.delete(id);
@@ -542,4 +657,8 @@ detectVAAPI().then(ok => {
   log.info('VAAPI', `预热完成，核显硬件加速当前${ok ? '可用' : '不可用'}`);
 }).catch(() => {});
 
-module.exports = { ensureHLS, removeHLS, outDir, HLS_DIR, waitForFile, cleanupExpiredHLS, scheduleHLSCleanup };
+module.exports = {
+  ensureHLS, removeHLS, outDir, HLS_DIR, waitForFile, cleanupExpiredHLS, scheduleHLSCleanup,
+  // 客户端全部离线时用来停止后台播放/转码（见 index.js 的在线检测）
+  cancelSong, cancelAllActive, activeTranscodes, isCanceled,
+};
