@@ -379,13 +379,13 @@ main{max-width:960px;margin:0 auto;padding:24px}
           </select></div>
       </div>
       <div class="form-row" style="display:flex;gap:10px">
-        <div style="flex:1"><label>时长下限（分钟，0=不限）</label><input id="sb-mindur" type="number" min="0" step="0.5" value="0"></div>
-        <div style="flex:1"><label>时长上限（分钟，0=不限）</label><input id="sb-maxdur" type="number" min="0" step="0.5" value="0"></div>
+        <div style="flex:1"><label>时长下限（分钟，0=不限）</label><input id="sb-mindur" type="number" min="0" step="0.5" value="1"></div>
+        <div style="flex:1"><label>时长上限（分钟，0=不限）</label><input id="sb-maxdur" type="number" min="0" step="0.5" value="8"></div>
         <div style="flex:1"><label>合唱人数上限（0=不限）</label><input id="sb-maxsingers" type="number" min="0" max="20" step="1" value="2"></div>
       </div>
       <div class="form-row" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:2px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="checkbox" id="sb-sqonly"> 只收无损（平台标注没有 FLAC 的直接跳过，不回落 MP3）
+          <input type="checkbox" id="sb-sqonly" checked> 只收无损（平台标注没有 FLAC 的直接跳过，不回落 MP3）
         </label>
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
           <input type="checkbox" id="sb-onepage"> 只搜首页（快速收集，不翻页）

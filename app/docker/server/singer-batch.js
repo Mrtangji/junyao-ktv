@@ -307,6 +307,9 @@ async function collectFromSource(name, srcId, opts) {
       if (collected.has(m.songmid)) continue;
       // 歌名过滤词
       if (opts.filterRegs.some(reg => reg.test(m.name))) continue;
+      // 逗号/加号拼接的歌名多为串烧、评论合集类杂项。',' 本身是过滤词分隔符、
+      // 进不了词表，这里按标点直接判（'+' 词表里也有，双保险）。
+      if (/[+,，＋]/.test(m.name)) continue;
       // 歌手匹配（搜索结果里不含该歌手的多为相关歌/翻唱/误匹配）
       if (!singerMatch(m.singer, name)) continue;
       // 时长区间（0 = 不限；平台无时长数据的歌不过滤）
@@ -446,6 +449,14 @@ async function runJob(job) {
             state.message = '⏸ 已暂停，当前这首歌会在「继续下载」后重新下载';
             continue;   // 回循环顶部挂起
           }
+          // 中转音源按 IP 限流（报 "block ip"）：它托管全部平台，换源重试也是同一
+          // 个中转、只会白白多花搜索请求。立即自动暂停，等冷却窗口过去后用户点
+          // 「继续下载」即可接上（当前这首歌下轮会重下）。
+          if (/block ip/i.test(String((e && e.message) || e))) {
+            state.lastError = `${song.name}：音源限流（block ip）`;
+            autoPause('音源限流（block ip），等几分钟再点「继续下载」');
+            continue;
+          }
           // 换平台续下（自动换源）
           try {
             const via = await downloadViaOtherSources(song, opts.format, song.src, opts.sqOnly, opts.maxSingers || 0);
@@ -461,6 +472,10 @@ async function runJob(job) {
               // 只收无损模式：四平台都只给到有损 → 不算失败，单独计数
               bump(job, 'noLossless');
               state.lastError = `${song.name}：无无损资源，已跳过`;
+            } else if (/block ip/i.test(String((e2 && e2.message) || e2))) {
+              state.lastError = `${song.name}：音源限流（block ip）`;
+              autoPause('音源限流（block ip），等几分钟再点「继续下载」');
+              continue;
             } else {
               consecutiveFail++;
               bump(job, 'failed');
