@@ -644,8 +644,30 @@ async function doScan(){
   const pre = document.getElementById('scan-pre');
   log.classList.add('show');
   pre.textContent = '扫描中…';
-  const res = await fetch('/api/scan',{method:'POST'});
-  const d = await res.json();
+  // 扫描期间轮询进度：全量扫描要给每个文件起一次 ffprobe，大曲库要跑很久，
+  // 没有进度提示很容易被当成卡死（这是"看起来没反应"最常见的误判）。
+  // 用轻量的 /api/scan/status，不用 /api/diag（后者为了采样 CPU 会阻塞数百毫秒）。
+  const tracker = setInterval(async () => {
+    try {
+      const s = await fetch('/api/scan/status').then(r => r.json());
+      if (!s.scanning) return;
+      pre.textContent = s.files
+        ? `扫描中… 已处理 ${s.processed}/${s.files} 个文件（每个都要探测，大曲库较慢）`
+        : '扫描中… 正在枚举曲库目录';
+    } catch (e) {}
+  }, 1000);
+  let d;
+  try {
+    const res = await fetch('/api/scan',{method:'POST'});
+    d = await res.json();
+  } catch (e) {
+    clearInterval(tracker);
+    pre.textContent = '⚠️ 扫描请求失败：' + e.message;
+    return;
+  }
+  clearInterval(tracker);
+  if (d.error === 'IN_PROGRESS') { pre.textContent = '⚠️ ' + (d.message || '已有扫描正在进行中，请稍候'); return; }
+  if (d.error) { pre.textContent = '⚠️ 扫描出错：' + d.error; return; }
   pre.textContent = `完成！文件总数：${d.total}  新增：${d.added}  移除：${d.removed}`;
   toast(`扫描完成，共 ${d.total} 首，新增 ${d.added} 首`);
   loadAll();

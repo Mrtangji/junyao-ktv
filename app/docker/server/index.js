@@ -818,9 +818,17 @@ app.put('/api/songs/:id', requireAdminAuth, (req, res) => {
 
 // ---------- 扫描 / 统计 ----------
 app.post('/api/scan', async (req, res) => {
+  // 已在扫就别再起一轮：全量扫描是重活，并发只会互相拖慢、CPU 翻倍
+  if (getScanState().scanning) {
+    return res.status(409).json({ ok: false, error: 'IN_PROGRESS', message: '已有扫描正在后台进行中，请等它跑完再试' });
+  }
   try { res.json({ ok: true, ...(await scanLibrary()) }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
+
+// 轻量扫描状态：供前端在扫描期间轮询进度（不要用 /api/diag 轮询——它为了
+// 采样 CPU 会阻塞数百毫秒，代价比这个接口大得多）
+app.get('/api/scan/status', (req, res) => res.json(getScanState()));
 
 app.get('/api/stats', (req, res) => {
   const songCount  = db.prepare('SELECT COUNT(*) c FROM songs').get().c;
@@ -1170,7 +1178,23 @@ server.listen(PORT, () => {
 // 转为后台任务执行；配合 scanner.js 里改成的"逐个文件探测、逐个立即入库"，
 // 这时候查询 /api/songs 看到的列表会随扫描推进逐步变长，不需要等这一整轮
 // 扫描全部跑完才第一次看到歌曲。
-scanLibrary().catch(e => log.error('SCAN', `初始扫描失败: ${e.message}`));
+// 启动是否自动全量扫描曲库：默认**关闭**，改由用户在「设置 → 重新扫描曲库」
+// （电视端 / admin）或 POST /api/scan 手动触发。
+// 为什么默认关：全量扫描要递归遍历 /mv + /mp3，并对每个文件起一次 ffprobe，
+// 大曲库要跑很久且期间一直吃 CPU——这正是"容器刚创建、什么都没做 CPU 就上去了"
+// 的来源之一。而曲库里已有的歌本来就躺在 songs 表里（镜像还内置 muse.db），
+// 不扫描也照常显示、点唱；只有"手工往 mv/、mp3/ 里丢进新文件却没入库"时
+// 才需要扫一次。
+// 注意：下载入库走的是单文件 scanFile（lxmusic/maidong），与此无关——下载
+// 完成的歌会立即出现在曲库，不依赖启动扫描。
+// 想恢复开机自动扫描：设环境变量 SCAN_ON_START=1。
+const SCAN_ON_START = process.env.SCAN_ON_START === '1';
+if (SCAN_ON_START) {
+  scanLibrary().catch(e => log.error('SCAN', `初始扫描失败: ${e.message}`));
+} else {
+  log.info('SCAN', '启动自动扫描已关闭——需要时请在设置页点「重新扫描曲库」（或 POST /api/scan）；'
+    + '如需开机自动扫描，设环境变量 SCAN_ON_START=1');
+}
 
 // HLS 缓存每日清理：传入一个"当前曲库里有效歌曲 id 列表"的取值函数，供
 // hlsgen.js 判断哪些 HLS 缓存目录是孤儿（对应歌曲已被删除/曲库文件已缺失）。

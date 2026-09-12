@@ -456,8 +456,16 @@ function getScanState() {
 // 扫描都会走它，从而被 /api/diag 看见）；scanner 内部各函数仍调用原始
 // scanLibrary，不额外包一层。
 async function scanLibraryTracked(...args) {
+  // 并发保护：扫描是重活（递归遍历目录 + 每个文件一次 ffprobe），同时跑两轮
+  // 只会互相拖慢、把 CPU 翻倍，还可能出现两次扫描同时判定"文件缺失"的竞态。
+  // 已在扫时直接返回"进行中"，由调用方决定怎么提示（/api/scan 会回 409）。
+  if (scanState.scanning) {
+    return { total: 0, added: 0, removed: 0, busy: true, error: 'IN_PROGRESS' };
+  }
   scanState.scanning = true;
   scanState.startedAt = Date.now();
+  scanState.files = 0;
+  scanState.processed = 0;
   try {
     const r = await scanLibrary(...args);
     scanState.last = r;
