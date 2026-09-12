@@ -74,6 +74,9 @@ const PAGE_LIMIT = 30;
 const MAX_PAGES = 15;             // 每个歌手最多翻页数（防异常 total 卡死）
 const SINGER_GAP_MS = 1000;       // 歌手之间间隔（对齐 lx 的 1000ms）
 const SONG_GAP_MS = 300;          // 每首下载之间间隔（对平台友好）
+// 中转音源限流（"block ip"）退避序列：撞限流后等待冷却再自动重试同一首，
+// 三轮退完仍被限才走 autoPause。等待期间暂停/停止可随时打断（每秒检查）。
+const BLOCK_BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000];
 const SOURCE_GAP_MS = 300;        // 多平台模式下，换平台搜索前的缓冲
 const SOURCE_MIN_GAP_MS = 350;    // 同一音源两次请求的最小间隔（音源级节流）
 
@@ -253,6 +256,33 @@ const typesSayNoLossless = (m) => Array.isArray(m.types) && m.types.length > 0 &
 // 跨源去重键：歌名 + 首位歌手（同一首歌在多家平台的 id 完全不互通，只能按名字判重）
 const dupKey = (m) => normTitle(m.name) + '|' + firstSinger(m.singer).toLowerCase();
 
+// 可打断的等待：限流冷却期间用户点暂停/停止要能立即响应（轮询标志位）
+async function backoffDelay(ms) {
+  const step = 1000;
+  for (let left = ms; left > 0; left -= step) {
+    if (stopFlag || pauseFlag) throw stopError();
+    await delay(Math.min(step, left));
+  }
+}
+
+// 带限流退避的下载：block ip 不计入失败，按 1min→5min→15min 冷却后自动重试
+// 同一首；三轮仍被限则抛给上层走 autoPause（见主循环 catch）。
+async function downloadWithBlockBackoff(song, opts) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await downloadOne(song, opts.format, opts.sqOnly);
+    } catch (e) {
+      if (e && e.__stopped) throw e;
+      if (attempt < BLOCK_BACKOFF_MS.length && /block ip/i.test(String((e && e.message) || e))) {
+        state.message = `⏳ 音源限流（block ip），${Math.round(BLOCK_BACKOFF_MS[attempt] / 60000)} 分钟后自动重试：${song.name}`;
+        await backoffDelay(BLOCK_BACKOFF_MS[attempt]);
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
 async function downloadOne(song, format, sqOnly) {
   if (stopFlag || pauseFlag) throw stopError();
   // 取歌词（附属信息，失败不挡下载）
@@ -284,7 +314,7 @@ async function downloadViaOtherSources(song, format, excludeSrc, sqOnly, maxSing
         !(maxSingers > 0 && singerCount(m.singer) > maxSingers));
       if (!cand) continue;
       if (stopFlag || pauseFlag) return null;
-      await downloadOne(cand, format, sqOnly);
+      await downloadWithBlockBackoff(cand, { format, sqOnly });
       return s;
     } catch (e) { if (e && e.__stopped) throw e; /* 下一个平台 */ }
   }
@@ -440,7 +470,7 @@ async function runJob(job) {
         }
         state.message = `「${name}」${k + 1}/${songs.length} 下载中：${song.name} - ${song.singer}`;
         try {
-          await downloadOne(song, opts.format, opts.sqOnly);
+          await downloadWithBlockBackoff(song, opts);
           bump(job, 'done');
           consecutiveFail = 0;
         } catch (e) {
