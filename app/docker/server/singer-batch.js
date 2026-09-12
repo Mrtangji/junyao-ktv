@@ -18,6 +18,9 @@ const DEFAULT_FILTER_WORDS = [
   '官方', 'Official', '官方MV', '官方版', '官方视频', '官方音频', 'Lyric Video', 'Audio',
   // 音质标注类
   'HD', 'HQ', 'SQ', '无损', '母带', 'Hi-Res', 'FLAC', 'APE', 'WAV', '320kbps',
+  // 多曲拼接（歌名里用 + 把几首歌串起来的，多为串烧/合集，不是单曲。
+  // 注意别加 & / ＆：那是合唱标记（如"周杰伦＆袁咏琳"），会误杀正常对唱）
+  '+',
   // 清晰度类
   '4K', '1080P', '720P', '2K', '超清', '高清', '标清', '原画',
   // 试听/片段类
@@ -70,6 +73,7 @@ const state = {
   fallback: 0,          // 换平台成功数
   lastError: '',
   failedList: [],       // [{name, singer, src, reason}] 上限 500
+  stopping: false,      // 已请求停止、尚在收尾（前端可显示"正在停止…"）
 };
 let stopFlag = false;
 let sbAbort = null;   // 当前批量任务的 AbortController，stop 时 abort 以中断在途 http 请求
@@ -79,7 +83,11 @@ function status() { return { ...state }; }
 function stopSingerBatch() {
   if (state.running) {
     stopFlag = true;
-    if (sbAbort) sbAbort.abort();   // 中断正在进行的取链/下载 http 请求，做到"点了就停"
+    state.stopping = true;
+    state.message = '⏹ 正在停止：正在中断在途的取链/下载请求…';
+    // 交给 lxmusic 的取消令牌：连音源脚本内部、内置源内部发起的 http 请求都会被就地断开，
+    // 而不是等各自超时（脚本请求 30s、下载流 25s、歌词 15s…）才停下来。
+    if (sbAbort) sbAbort.abort();
   }
 }
 
@@ -184,15 +192,18 @@ async function start(opts = {}) {
   const useFilter = opts.useFilter !== false;
   const filterWords = useFilter ? (opts.filterWords || DEFAULT_FILTER_WORDS) : '';
   const filterRegs = buildFilterRegs(filterWords);
-  const minDur = Math.max(0, parseInt(opts.minDur) || 0);
-  const maxDur = Math.max(0, parseInt(opts.maxDur) || 0);
+  // 时长区间单位是「分钟」（界面也按分钟填；0 = 不限），支持小数（如 0.5 = 30 秒）。
+  // 平台返回的 duration 是秒，这里换算成秒后再比较。
+  const minDur = Math.max(0, Math.round((parseFloat(opts.minDur) || 0) * 60));
+  const maxDur = Math.max(0, Math.round((parseFloat(opts.maxDur) || 0) * 60));
 
   stopFlag = false;
   sbAbort = new AbortController();   // 本任务的中断令牌，stop 时 abort
+  lxmusic.setCancelSignal(sbAbort.signal);   // 让脚本内/内置源内的请求也能被掐断
   Object.assign(state, {
     running: true, phase: 'running', message: '', singersTotal: names.length, singersDone: 0,
     current: '', collected: 0, done: 0, failed: 0, skipped: 0, fallback: 0, lastError: '',
-    failedList: [],
+    failedList: [], stopping: false,
   });
 
   void (async () => {
@@ -204,6 +215,7 @@ async function start(opts = {}) {
         let songs = [];
         try { songs = await collectSinger(name, src, { filterRegs, minDur, maxDur }); }
         catch (e) {
+          if (e && e.__stopped) break;   // 收集过程中被停止：不算搜索失败，直接收工
           state.lastError = `「${name}」搜索失败: ${e.message}`;
           state.singersDone++;
           continue;
@@ -213,7 +225,7 @@ async function start(opts = {}) {
         let doneThis = 0;
         for (const song of songs) {
           if (stopFlag) break;
-          state.message = `「${name}」${doneThis + 1}/${songs.length} 下载中：${song.name} - ${song.singer}`;
+          state.message = `${stopFlag ? '⏹ 正在停止… ' : ''}「${name}」${doneThis + 1}/${songs.length} 下载中：${song.name} - ${song.singer}`;
           // 本地已有 → 跳过
           if (lxmusic.findLocalSong(song.name, song.singer)) { state.skipped++; continue; }
           try {
@@ -241,14 +253,21 @@ async function start(opts = {}) {
       }
       state.phase = 'done';
       state.running = false;
+      state.stopping = false;
       state.message = stopFlag
         ? `已停止：完成 ${state.singersDone}/${state.singersTotal} 个歌手，下载 ${state.done}、换源 ${state.fallback}、跳过 ${state.skipped}、失败 ${state.failed}`
         : `完成：${state.singersTotal} 个歌手，下载 ${state.done}（换源成功 ${state.fallback}）、跳过 ${state.skipped}、失败 ${state.failed}`;
     } catch (e) {
       state.phase = 'done';
       state.running = false;
+      state.stopping = false;
       state.lastError = String((e && e.message) || e);
       state.message = '批量任务异常终止: ' + state.lastError;
+    } finally {
+      // 必须解除取消令牌：它是模块级的，留着会让之后所有请求（含电视端搜索）
+      // 只要一创建就被判定为"已停止"而立刻失败。
+      lxmusic.setCancelSignal(null);
+      sbAbort = null;
     }
   })();
 

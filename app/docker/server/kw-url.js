@@ -10,8 +10,10 @@
 const https = require('https');
 const http = require('http');
 
-function fetchText(url, timeoutMs = 10000) {
+function fetchText(url, timeoutMs = 10000, signal) {
   return new Promise((resolve, reject) => {
+    const stopErr = () => Object.assign(new Error('__SB_STOPPED__'), { __stopped: true });
+    if (signal && signal.aborted) return reject(stopErr());
     let u;
     try { u = new URL(url); } catch (e) { return reject(new Error('invalid url')); }
     const lib = u.protocol === 'https:' ? https : http;
@@ -32,6 +34,12 @@ function fetchText(url, timeoutMs = 10000) {
       res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8').trim()));
       res.on('error', reject);
     });
+    // 挂取消：点「停止」时立刻断开，不必等这 10s 超时（兜底链上会连着试多档音质）
+    if (signal) {
+      const onAbort = () => req.destroy(stopErr());
+      signal.addEventListener('abort', onAbort);
+      req.on('close', () => { try { signal.removeEventListener('abort', onAbort); } catch (e) {} });
+    }
     req.on('timeout', () => req.destroy(new Error('timeout')));
     req.on('error', reject);
     req.end();
@@ -45,9 +53,10 @@ function looksLikeAudioUrl(value) {
 /**
  * @param {string} songId  酷我歌曲 id（允许带 MUSIC_ 前缀）
  * @param {string} quality 期望音质（320k/flac 先试高码率参数，失败自动回落 128k）
+ * @param {AbortSignal} [signal] 取消令牌（批量下载点「停止」时立刻断开）
  * @returns {Promise<string|null>}
  */
-async function resolveKwUrl(songId, quality = '128k') {
+async function resolveKwUrl(songId, quality = '128k', signal) {
   const id = String(songId || '').replace(/^MUSIC_/i, '').trim();
   if (!/^\d+$/.test(id)) return null;
   const attempts = [];
@@ -56,10 +65,13 @@ async function resolveKwUrl(songId, quality = '128k') {
   }
   attempts.push(`https://antiserver.kuwo.cn/anti.s?type=convert_url&format=mp3&response=url&rid=MUSIC_${id}`);
   for (const url of attempts) {
+    if (signal && signal.aborted) throw Object.assign(new Error('__SB_STOPPED__'), { __stopped: true });
     try {
-      const out = await fetchText(url);
+      const out = await fetchText(url, 10000, signal);
       if (out && looksLikeAudioUrl(out)) return out;
-    } catch (_) { /* 尝试下一档 */ }
+    } catch (e) {
+      if (e && e.__stopped) throw e;   // 被停止：不要吞掉后再去试下一档
+    }
   }
   return null;
 }

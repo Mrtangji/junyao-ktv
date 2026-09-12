@@ -35,9 +35,34 @@ if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
 // 根目录自动入库，LRC 与 MP3 同名放一起、扫描时自动关联。
 const dlcfg = require('./dlconfig');
 
+// ---------- 取消（"停止"）支持 ----------
+// 批量下载点「停止」时，除了让主循环不再开新任务，还必须**就地掐断正在进行的网络 I/O**，
+// 否则要等当前请求自己超时才停得下来（脚本请求超时 30s、下载流 25s，一篇歌词也有 15s，
+// 累加起来就是"按了停止很久没停"）。
+// 难点：音源脚本内部的请求（lx.request）拿不到调用方传下来的 signal；内置源（boardsdk）
+// 也在很深的层次各自调用 httpReq。所以这里维护一个模块级"当前取消令牌"：长流程
+// （歌手批量下载）开始时注册，httpReq 在未显式传入 signal 时自动采用它 —— 于是脚本内、
+// 内置源内发起的请求也能被一并中断。流程结束务必 setCancelSignal(null) 复位。
+let currentCancelSignal = null;
+function setCancelSignal(sig) { currentCancelSignal = sig || null; }
+
+const stopError = () => Object.assign(new Error('__SB_STOPPED__'), { __stopped: true });
+
+// 任一取消令牌已触发即抛出"已停止"。用于每个 await 之前 —— 因为音源脚本常把网络错误
+// 吞掉后抛出自己的错误，靠错误对象上的 __stopped 会丢标记，这里用令牌状态兜住。
+function throwIfAborted(signal) {
+  if ((signal && signal.aborted) || (currentCancelSignal && currentCancelSignal.aborted)) throw stopError();
+}
+function isAborted(signal) {
+  return !!((signal && signal.aborted) || (currentCancelSignal && currentCancelSignal.aborted));
+}
+
 // ---------- 通用 HTTP（跟随重定向 + gzip，供 lx.request 与内置源共用） ----------
 function httpReq(url, options = {}, redirectCount = 0) {
   return new Promise((resolve, reject) => {
+    // 取消令牌：显式传入优先，否则用当前流程注册的令牌（覆盖脚本内部/内置源内部请求）
+    const signal = options.signal || currentCancelSignal;
+    if (signal && signal.aborted) return reject(stopError());
     const u = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
     const headers = Object.assign({ 'User-Agent': 'lx-music-request/2.0.0', 'Accept-Encoding': 'gzip, deflate' }, options.headers || {});
@@ -57,12 +82,6 @@ function httpReq(url, options = {}, redirectCount = 0) {
     }
     if (body) headers['Content-Length'] = Buffer.byteLength(body);
     const req = mod.request(u, { method: (options.method || (body ? 'POST' : 'GET')).toUpperCase(), headers, timeout: options.timeout || 15000 }, (res) => {
-    const signal = options.signal;
-    if (signal) {
-      const onAbort = () => { const ae = Object.assign(new Error('request aborted'), { __stopped: true }); req.destroy(ae); };
-      if (signal.aborted) { onAbort(); return; }
-      signal.addEventListener('abort', onAbort);
-    }
       if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirectCount < 5) {
         res.resume();
         const next = new URL(res.headers.location, u).toString();
@@ -83,6 +102,16 @@ function httpReq(url, options = {}, redirectCount = 0) {
       });
       stream.on('error', reject);
     });
+    // 取消监听必须在 req.end() 之前就挂上。原实现把它写在响应回调里，导致
+    // "已发出请求、响应头还没回来"这段（连接建立 + 首字节等待，脚本请求最长 30s）
+    // 完全无法中断 —— 点了停止仍要等对方超时，这正是"按了停止很久没停"的主因。
+    let onAbort = null;
+    if (signal) {
+      onAbort = () => req.destroy(stopError());
+      signal.addEventListener('abort', onAbort);
+    }
+    const detachAbort = () => { if (onAbort) { try { signal.removeEventListener('abort', onAbort); } catch (e) {} onAbort = null; } };
+    req.on('close', detachAbort);
     req.on('timeout', () => req.destroy(new Error('request timeout')));
     req.on('error', reject);
     if (body) req.write(body);
@@ -284,24 +313,21 @@ async function resolveViaInstance(inst, sourceKey, musicInfo, preferQuality, sig
   const qualitys = inst.sources[key].qualitys || ['128k', '320k'];
   const order = [preferQuality, ...qualitys.filter(q => q !== preferQuality)];
   let lastErr;
-  if (signal && signal.aborted) throw stopError();
   for (const q of order) {
-    if (signal && signal.aborted) throw stopError();
+    throwIfAborted(signal);   // 音源脚本会把网络错误吞掉换成自己的错误，靠令牌状态兜住
     try {
       const url = await inst.requestHandler({ source: key, action: 'musicUrl', info: { type: q, musicInfo } });
       if (url && typeof url === 'string' && /^https?:/.test(url)) return url;
       lastErr = new Error('脚本返回无效 url');
-    } catch (e) { lastErr = e; }
+    } catch (e) { if (e && e.__stopped) throw e; lastErr = e; }
   }
   throw lastErr || new Error('解析失败');
 }
 
 // 带自动换源的 musicUrl 解析。platform：歌曲来源平台（kw/wy/tx/kg）。
-const stopError = () => Object.assign(new Error('__SB_STOPPED__'), { __stopped: true });
-
 async function resolveMusicUrlWithFallback(platform, musicInfo, preferQuality = '320k', signal) {
   const errors = [];
-  if (signal && signal.aborted) throw stopError();
+  throwIfAborted(signal);
   // 1) 当前激活源
   if (activeSource) {
     try { return await resolveViaInstance(activeSource, platform, musicInfo, preferQuality, signal); }
@@ -314,7 +340,7 @@ async function resolveMusicUrlWithFallback(platform, musicInfo, preferQuality = 
     ? db.prepare('SELECT id, name FROM lx_sources WHERE id != ? ORDER BY id').all(activeSource.id)
     : db.prepare('SELECT id, name FROM lx_sources ORDER BY id').all();
   for (const row of rows) {
-    if (signal && signal.aborted) throw stopError();
+    throwIfAborted(signal);
     const inst = await getAltSourceInstance(row.id);
     if (!inst) { errors.push(`源#${row.id} 拉起失败`); continue; }
     try { return await resolveViaInstance(inst, platform, musicInfo, preferQuality, signal); }
@@ -323,11 +349,12 @@ async function resolveMusicUrlWithFallback(platform, musicInfo, preferQuality = 
   // 3) kw 平台最后用内置酷我直链兜底
   if (platform === 'kw') {
     try {
+      throwIfAborted(signal);
       const { resolveKwUrl } = require('./kw-url');
-      const url = await resolveKwUrl(musicInfo.songmid || musicInfo.songId || musicInfo.musicId, preferQuality);
+      const url = await resolveKwUrl(musicInfo.songmid || musicInfo.songId || musicInfo.musicId, preferQuality, signal);
       if (url) return url;
       errors.push('内置酷我直链也失败');
-    } catch (e) { errors.push(`内置酷我直链: ${e.message}`); }
+    } catch (e) { if (e && e.__stopped) throw e; errors.push(`内置酷我直链: ${e.message}`); }
   }
   throw new Error(`所有音源解析失败（${errors.join('；')}）`);
 }
@@ -406,12 +433,12 @@ async function kwBoardSongs(bangid, page = 1, limit = 100) {
 //   请求参数串与 'yeelion' 逐字节 XOR 后 base64 → GET newlyric.lrc →
 //   响应为 "tp=content\r\n...\r\n\r\n" + zlib deflate 数据 → inflate 后是
 //   GB18030 编码的标准 LRC 文本（含 [ti:]/[ar:] 等标签）。
-async function kwLyric(songmid) {
+async function kwLyric(songmid, signal) {
   const params = `user=12345,web,web,web&requester=localhost&req=1&rid=MUSIC_${songmid}`;
   const key = Buffer.from('yeelion');
   const out = Buffer.alloc(params.length);
   for (let i = 0, j = 0; i < params.length; i++, j = (j + 1) % key.length) out[i] = params.charCodeAt(i) ^ key[j];
-  const resp = await httpReq(`http://newlyric.kuwo.cn/newlyric.lrc?${out.toString('base64')}`, { responseType: 'buffer', timeout: 15000 });
+  const resp = await httpReq(`http://newlyric.kuwo.cn/newlyric.lrc?${out.toString('base64')}`, { responseType: 'buffer', timeout: 15000, signal });
   const buf = resp.body;
   if (resp.statusCode !== 200 || buf.toString('utf8', 0, 10) !== 'tp=content') throw new Error('歌词接口响应异常');
   const payload = buf.slice(buf.indexOf('\r\n\r\n') + 4);
@@ -421,11 +448,27 @@ async function kwLyric(songmid) {
 }
 
 // ---------- 下载入库 ----------
-function ffmpegToMp3(src, dst) {
+// 给 ffmpeg 子进程挂上取消：点「停止」时立刻 SIGKILL，不必等它把整首歌转完
+// （一首 4 分钟的 FLAC 转 MP3 或合成 MP4，在 NAS 上要几十秒，这就是"按了停止
+//  还卡很久"的另一个来源）。
+function rejectOnAbort(child, signal, reject) {
+  const sig = signal || currentCancelSignal;
+  if (!sig) return;
+  const onAbort = () => {
+    try { child.kill('SIGKILL'); } catch (e) {}
+    reject(stopError());
+  };
+  if (sig.aborted) return onAbort();
+  sig.addEventListener('abort', onAbort);
+  child.on('close', () => { try { sig.removeEventListener('abort', onAbort); } catch (e) {} });
+}
+
+function ffmpegToMp3(src, dst, signal) {
   return new Promise((resolve, reject) => {
     // -q:a 0 = LAME 最高质量 VBR（约 245kbps）。原来用 2（约 190kbps），
     // 把无损源压成 MP3 时白白丢掉一截；源本身是 mp3 的走 copy 不会进这里。
     const p = spawn('ffmpeg', ['-y', '-i', src, '-codec:a', 'libmp3lame', '-q:a', '0', dst], { windowsHide: true });
+    rejectOnAbort(p, signal, reject);
     let err = '';
     p.stderr.on('data', d => { if (err.length < 2000) err += d.toString(); });
     p.on('close', code => code === 0 ? resolve() : reject(new Error('ffmpeg 转码失败: ' + err.slice(-300))));
@@ -434,7 +477,7 @@ function ffmpegToMp3(src, dst) {
 }
 
 // mp3 + 封面图 → MV 风格 mp4（静态封面视频，走 MV 播放路径）。coverBuf 为空时用纯色背景
-function ffmpegMp3ToMv(mp3Path, coverBuf, mp4Path) {
+function ffmpegMp3ToMv(mp3Path, coverBuf, mp4Path, signal) {
   return new Promise((resolve, reject) => {
     const coverTmp = coverBuf ? mp4Path + '.cover' : null;
     try {
@@ -446,6 +489,7 @@ function ffmpegMp3ToMv(mp3Path, coverBuf, mp4Path) {
         '-tune', 'stillimage', '-preset', 'ultrafast', '-shortest',
         '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', mp4Path);
       const p = spawn('ffmpeg', args, { windowsHide: true });
+      rejectOnAbort(p, signal, reject);
       let err = '';
       p.stderr.on('data', d => { if (err.length < 2000) err += d.toString(); });
       p.on('close', code => { try { if (coverTmp) fs.unlinkSync(coverTmp); } catch (e) {} code === 0 ? resolve() : reject(new Error('ffmpeg 合成 MV 失败: ' + err.slice(-300))); });
@@ -455,10 +499,10 @@ function ffmpegMp3ToMv(mp3Path, coverBuf, mp4Path) {
 }
 
 // 下载封面图（仅接受 jpeg/png/webp），失败返回 null
-async function downloadCover(picUrl) {
+async function downloadCover(picUrl, signal) {
   if (!picUrl || !/^https?:/.test(picUrl)) return null;
   try {
-    const resp = await httpReq(picUrl, { responseType: 'buffer', timeout: 15000 });
+    const resp = await httpReq(picUrl, { responseType: 'buffer', timeout: 15000, signal });
     if (resp.statusCode !== 200) return null;
     const b = resp.body;
     const isJpeg = b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF;
@@ -514,6 +558,7 @@ function sniffAudio(buf) {
 //       | 'mv'（320K 音频 + 封面合成为 .mp4 存 MV_DIR；同时保留同名 .mp3 与 .lrc
 //               到 MP3_DIR——曲库里 MV/MP3 双版本可用，LRC 跟音频走）
 async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, format = 'mp3', lrcText = null, info = null, signal = null }) {
+  throwIfAborted(signal);   // 已被停止（含脚本内部请求被掐断的情形）→ 直接干净退出
   const mp3Root = dlcfg.getMp3Dir();
   const mvRoot = path.resolve(dlcfg.MV_DIR);
   const isMv = format === 'mv';
@@ -558,8 +603,10 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   // 由下面的落盘分支自动按 MP3 处理。
   if (signal && signal.aborted) throw stopError();
   const url = await resolveMusicUrlWithFallback(platform, musicInfo, lossless ? 'flac' : '320k', signal);
+  throwIfAborted(signal);
   const tmpPath = path.join(TMP_DIR, `dl_${Date.now()}_${process.pid}`);
   const resp = await httpReq(url, { responseType: 'buffer', timeout: 25000, signal });
+  throwIfAborted(signal);
   if (resp.statusCode !== 200) throw new Error(`下载失败 HTTP ${resp.statusCode}`);
   // 内容校验：不是有效音频就直接给出可读原因，不再让 ffmpeg 报晦涩错误，
   // 也避免坏内容被 content-type 误判直接改名为 .mp3 入库
@@ -577,10 +624,11 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   const finalPath = path.join(dlRoot, rel);
   const key = rel.replace(/\\/g, '/');
   fs.writeFileSync(tmpPath, resp.body);
+  // 转码/合成阶段可被"停止"立刻掐断（kill 掉 ffmpeg 子进程），不必等整首转完
   try {
     if (!isMv) {
       if (isMp3Src || keepFlac) moveFile(tmpPath, finalPath);
-      else { await ffmpegToMp3(tmpPath, finalPath); try { fs.unlinkSync(tmpPath); } catch (e) {} }
+      else { await ffmpegToMp3(tmpPath, finalPath, signal); try { fs.unlinkSync(tmpPath); } catch (e) {} }
     } else {
       // MV 模式：先统一为 mp3，再与封面合成 mp4；mp3 与 LRC 一并保留到 MP3_DIR
       // （需求：下载 MV 时同时得到对应 MP3 与 LRC——曲库里 MV/MP3 双版本可用，
@@ -589,10 +637,10 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
       // 保留的 mp3 落 MP3_DIR（与 MV 分库）；可能跨文件系统，用 moveFile 而非 rename
       mp3Path = path.join(mp3Root, artist, `${artist} - ${title}.mp3`);
       if (isMp3Src) moveFile(tmpPath, tmpMp3);
-      else await ffmpegToMp3(tmpPath, tmpMp3);
+      else await ffmpegToMp3(tmpPath, tmpMp3, signal);
       try {
-        const cover = await downloadCover(pic);
-        await ffmpegMp3ToMv(tmpMp3, cover, finalPath);
+        const cover = await downloadCover(pic, signal);
+        await ffmpegMp3ToMv(tmpMp3, cover, finalPath, signal);
         moveFile(tmpMp3, mp3Path);
       } finally { try { fs.unlinkSync(tmpMp3); } catch (e) {} }
       try { fs.unlinkSync(tmpPath); } catch (e) {}
@@ -601,15 +649,20 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   // 同步下载 LRC 歌词（同名 .lrc 放一起，扫描器自动关联 lyrics_path）；
   // 歌词属附属信息，失败不影响歌曲入库。外部传入 lrcText（wy/tx/kg 由 boardsdk 取）
   // 优先使用；kw 平台用内置酷我歌词接口兜底。
+  // 已被停止：跳过附属的歌词抓取（音频已经落盘，没必要再等一次网络请求才收工）
   try {
-    let lrc = lrcText;
-    if (!lrc && platform === 'kw') { try { lrc = await kwLyric(songmid); } catch (e) { lrc = null; } }
-    if (lrc) {
-      fs.writeFileSync(path.join(mp3Root, rel.replace(/\.(mp3|mp4|flac|m4a|aac|ogg|opus|wav)$/i, '.lrc')), lrc, 'utf8');
-    } else { console.error('LRC 下载失败(忽略):', name); }
+    if (!isAborted(signal)) {
+      let lrc = lrcText;
+      if (!lrc && platform === 'kw') { try { lrc = await kwLyric(songmid, signal); } catch (e) { lrc = null; } }
+      if (lrc) {
+        fs.writeFileSync(path.join(mp3Root, rel.replace(/\.(mp3|mp4|flac|m4a|aac|ogg|opus|wav)$/i, '.lrc')), lrc, 'utf8');
+      } else { console.error('LRC 下载失败(忽略):', name); }
+    }
   } catch (e) { console.error('LRC 下载失败(忽略):', name, e.message); }
   // 4) 入库并返回新行：只登记本首（含 MV 模式保留的同名 mp3），不再触发整库全量重扫，
   //    避免批量下载时每首歌都把整棵目录树 + 全库清理重跑一遍导致 CPU 持续拉满。
+  //    注意：这里即使已被"停止"也照样入库——文件确实下好了，不入库反而会留下
+  //    一个要等下次手动扫描才被发现的孤儿文件；入库后再由主循环的 stopFlag 收尾。
   const { scanFile } = require('./scanner');
   await scanFile(finalPath);
   if (isMv && mp3Path) await scanFile(mp3Path);
@@ -637,6 +690,11 @@ module.exports = {
   initActiveSource, activateSourceById, deactivateSource, activateScript, activeSource: () => activeSource,
   resolveMusicUrl, resolveMusicUrlWithFallback, kwSearch, kwBoardSongs, KW_BOARDS, kwLyric,
   downloadSong, findLocalSong, parseScriptMeta,
+  // 长流程（歌手批量下载）注册/解除"取消令牌"，让脚本内、内置源内发起的请求也能被掐断
+  setCancelSignal,
   // 内部工具：供 maidong.js 等模块复用下载入库链路
-  internals: { httpReq, sniffAudio, moveFile, ffmpegToMp3, ffmpegMp3ToMv, downloadCover, sanitize, TMP_DIR },
+  internals: {
+    httpReq, sniffAudio, moveFile, ffmpegToMp3, ffmpegMp3ToMv, downloadCover, sanitize, TMP_DIR,
+    stopError, isAborted, throwIfAborted, currentCancelSignal: () => currentCancelSignal,
+  },
 };

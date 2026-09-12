@@ -351,8 +351,8 @@ main{max-width:960px;margin:0 auto;padding:24px}
           </select></div>
       </div>
       <div class="form-row" style="display:flex;gap:10px">
-        <div style="flex:1"><label>时长下限（秒，0=不限）</label><input id="sb-mindur" type="number" min="0" value="0"></div>
-        <div style="flex:1"><label>时长上限（秒，0=不限）</label><input id="sb-maxdur" type="number" min="0" value="0"></div>
+        <div style="flex:1"><label>时长下限（分钟，0=不限）</label><input id="sb-mindur" type="number" min="0" step="0.5" value="0"></div>
+        <div style="flex:1"><label>时长上限（分钟，0=不限）</label><input id="sb-maxdur" type="number" min="0" step="0.5" value="0"></div>
       </div>
       <div class="form-row">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
@@ -969,6 +969,7 @@ async function sbRefresh(){
   const pct = st.singersTotal ? Math.round(st.singersDone / st.singersTotal * 100) : 0;
   document.getElementById('sb-bar').style.width = pct + '%';
   document.getElementById('sb-status').innerHTML =
+    (st.stopping ? `<span style="color:var(--cyan)">⏹ 正在停止…已断开在途请求，当前这首收尾后立即结束</span><br>` : '') +
     `${st.message || '运行中…'}<br>` +
     `歌手进度：${st.singersDone}/${st.singersTotal} · 当前：${st.current || '—'}<br>` +
     `<span style="color:var(--accent)">已下载 ${st.done}</span>` +
@@ -1006,7 +1007,7 @@ async function sbStart(){
   }catch(e){ err.textContent = '启动失败：'+e.message; }
 }
 async function sbStop(){
-  try{ await fetch('/api/singer-batch/stop',{method:'POST'}); toast('已请求停止（正在下载的一首会完成）'); sbRefresh(); }
+  try{ await fetch('/api/singer-batch/stop',{method:'POST'}); toast('已请求停止：正在断开在途请求，通常 1~2 秒内停下'); sbRefresh(); }
   catch(e){ toast('⚠️ 停止失败：'+e.message); }
 }
 
