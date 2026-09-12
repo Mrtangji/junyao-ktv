@@ -64,8 +64,9 @@ const ref = envRef || git(['rev-parse', '--abbrev-ref', 'HEAD']);
 const buildTime = envTime;
 
 // —— 4) 界面上的"版本号"：提交时间的 12 位数字戳 ——
-// 形如 260912221841（= 2026-09-12 22:18:41）。比 sha 好念、比可读时间串短，
-// 只显示在「曲库管理」页面，用来确认"部署的到底是哪一次构建"。
+// 形如 260912/225139（= 2026-09-12 22:51:39，日期/时刻之间用 / 分隔）。
+// 比 sha 好念、比可读时间串短，只显示在「曲库管理」页面，用来确认
+// "部署的到底是哪一次构建"。
 // 固定按北京时间(+08:00)格式化：Docker 容器默认 TZ=UTC，直接用本地时间会整整差 8 小时。
 function stampOf(ts) {
   const d = ts ? new Date(ts) : null;
@@ -73,7 +74,7 @@ function stampOf(ts) {
   const bj = new Date(d.getTime() + 8 * 3600 * 1000);
   const p = (n) => String(n).padStart(2, '0');
   return String(bj.getUTCFullYear()).slice(-2) + p(bj.getUTCMonth() + 1) + p(bj.getUTCDate())
-    + p(bj.getUTCHours()) + p(bj.getUTCMinutes()) + p(bj.getUTCSeconds());
+    + '/' + p(bj.getUTCHours()) + p(bj.getUTCMinutes()) + p(bj.getUTCSeconds());
 }
 // 优先用 CI 注入的构建时间；本地开发没有构建时间就退回 git 提交时间，
 // 保证界面上始终有一个能和 GitHub 对齐的时间戳。
