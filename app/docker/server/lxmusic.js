@@ -125,7 +125,9 @@ function lxUtils() {
   return {
     buffer: {
       from: (data, encoding) => Buffer.from(data, encoding),
-      bufToString: (buf, format) => Buffer.from(buf).toString(format),
+      // 对齐桌面版：Buffer.from(buf, 'binary') —— 二进制内容按 latin1 读入再转，
+      // 用 utf8 直读会篡改字节序列
+      bufToString: (buf, format) => Buffer.from(buf, 'binary').toString(format),
     },
     crypto: {
       aesEncrypt: (buffer, mode, key, iv) => {
@@ -133,7 +135,9 @@ function lxUtils() {
         return Buffer.concat([cipher.update(Buffer.from(buffer)), cipher.final()]);
       },
       md5: (str) => crypto.createHash('md5').update(str).digest('hex'),
-      randomBytes: (size) => crypto.randomBytes(size).toString('hex').slice(0, size),
+      // 对齐桌面版：必须返回原始 Buffer。之前返回 hex 字符串——脚本拿它生成
+      // 随机 nonce/签名参与加密时类型和长度全错，上游校验失败统一回 "block ip"。
+      randomBytes: (size) => crypto.randomBytes(size),
       // 对齐 lx-music-desktop preload 的实现：RSA_NO_PADDING 且先补零到 128 字节。
       // 之前用默认 PKCS#1 填充且不补位——靠 RSA 签名/加密换链的源脚本在桌面版能
       // 解出高音质直链、在服务端沙箱里签名却对不上，只能降级拿 320K。
