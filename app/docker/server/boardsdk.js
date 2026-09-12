@@ -305,6 +305,26 @@ async function kwLyricText(song) {
 }
 
 // ---------- wy ----------
+// 网易云的音质标注走 privilege.maxbr（999000+=无损SQ，1900000=hires）；
+// 老接口/歌曲详情则直接给 h(320k)/m/l/sq/hr 这些质量对象。两者都没有 → 空数组（未标注）。
+const wyQualityTypes = (item) => {
+  const p = item.privilege;
+  const t = [];
+  if (p) {
+    const br = Math.max(+(p.maxbr || 0), +(p.downloadMaxbr || 0), +(p.playMaxbr || 0));
+    if (br >= 1900000) t.push('flac24bit');
+    if (br >= 900000) t.push('flac');
+    if (br >= 320000) t.push('320k');
+    if (br >= 128000) t.push('128k');
+    return t;
+  }
+  const has = (q) => !!(q && (+q.size > 0 || +q.br > 0));
+  if (has(item.hr)) t.push('flac24bit');
+  if (has(item.sq)) t.push('flac');
+  if (has(item.h)) t.push('320k');
+  if (has(item.l)) t.push('128k');
+  return t;
+};
 const wyFormatSong = (item) => ({
   songmid: String(item.id),
   name: item.name || '',
@@ -312,6 +332,7 @@ const wyFormatSong = (item) => ({
   album: (item.al && item.al.name) || '',
   pic: (item.al && item.al.picUrl) || '',
   duration: item.dt ? Math.round(item.dt / 1000) : 0,
+  types: wyQualityTypes(item),
   src: 'wy',
 });
 async function wySearch(q, page, limit) {
@@ -366,6 +387,16 @@ async function wyLyricText(song) {
 }
 
 // ---------- tx ----------
+// QQ 搜索响应 file 里各音质的体积字段（>0 表示该音质可下载），据此还原 types。
+const txQualityTypes = (file) => {
+  if (!file) return [];
+  const t = [];
+  if (+file.size_hires > 0 || +file.size_360ra > 0) t.push('flac24bit');
+  if (+file.size_flac > 0 || +file.size_ape > 0 || +file.size_wav > 0) t.push('flac');
+  if (+file.size_320mp3 > 0) t.push('320k');
+  if (+file.size_128mp3 > 0) t.push('128k');
+  return t;
+};
 const txFormatSong = (item) => ({
   songmid: item.mid,
   songId: item.id,
@@ -377,6 +408,7 @@ const txFormatSong = (item) => ({
     : (item.singer && item.singer.length ? `https://y.gtimg.cn/music/photo_new/T001R500x500M000${item.singer[0].mid}.jpg` : ''),
   duration: item.interval || 0,
   strMediaMid: item.file && item.file.media_mid,
+  types: txQualityTypes(item.file),
   src: 'tx',
 });
 async function txSearch(q, page, limit) {
@@ -486,6 +518,17 @@ async function txLyricText(song) {
 }
 
 // ---------- kg ----------
+// 酷狗搜索响应里的音质字段：File=128k / HQ=320k / SQ=无损 / Res、Super=高解析母带。
+// 统一解析成 types（与酷我 N_MINFO 的产物同名同义），供「只收无损」筛选使用。
+// 字段全为空时返回空数组，表示"平台未标注音质"——调用方不能据此判定为无无损。
+const kgQualityTypes = (item) => {
+  const t = [];
+  if (+item.SuperFileSize > 0 || +item.ResFileSize > 0) t.push('flac24bit');
+  if (+item.SQFileSize > 0) t.push('flac');
+  if (+item.HQFileSize > 0) t.push('320k');
+  if (+item.FileSize > 0) t.push('128k');
+  return t;
+};
 const kgFormatSong = (item) => ({
   songmid: String(item.Audioid != null ? item.Audioid : item.audio_id),
   name: decodeName((item.OriSongName || item.songname || '') + (item.Suffix ? ` ${item.Suffix}` : '')),
@@ -495,6 +538,7 @@ const kgFormatSong = (item) => ({
   duration: item.Duration || item.duration || 0,
   hash: item.FileHash || item.hash,
   albumAudioId: String(item.MixSongID != null ? item.MixSongID : item.album_audio_id),
+  types: kgQualityTypes(item),
   src: 'kg',
 });
 async function kgSearch(q, page, limit) {
@@ -593,4 +637,7 @@ async function lyricText(src, song) {
   return kgLyricText(song);
 }
 
-module.exports = { SOURCES, isValidSource, search, boards, boardSongs, lyricText, decodeQrc };
+module.exports = { SOURCES, isValidSource, search, boards, boardSongs, lyricText, decodeQrc,
+  // 测试用：各平台"音质字段 → types"的解析函数
+  _qualityTypes: { kw: null, wy: wyQualityTypes, tx: txQualityTypes, kg: kgQualityTypes },
+};

@@ -344,6 +344,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
         <div style="flex:1"><label>搜索/下载平台</label>
           <select id="sb-src" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--text);padding:8px">
             <option value="kw">酷我</option><option value="wy">网易云</option><option value="tx">QQ音乐</option><option value="kg">酷狗</option>
+            <option value="all">全部平台（四家合并去重，最全但约 4 倍耗时）</option>
           </select></div>
         <div style="flex:1"><label>下载格式</label>
           <select id="sb-format" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--text);padding:8px">
@@ -354,6 +355,14 @@ main{max-width:960px;margin:0 auto;padding:24px}
         <div style="flex:1"><label>时长下限（分钟，0=不限）</label><input id="sb-mindur" type="number" min="0" step="0.5" value="0"></div>
         <div style="flex:1"><label>时长上限（分钟，0=不限）</label><input id="sb-maxdur" type="number" min="0" step="0.5" value="0"></div>
       </div>
+      <div class="form-row" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:2px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="sb-sqonly"> 只收无损（平台标注没有 FLAC 的直接跳过，不回落 MP3）
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="sb-onepage"> 只搜首页（快速收集，不翻页）
+        </label>
+      </div>
       <div class="form-row">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
           <input type="checkbox" id="sb-usefilter" checked> 启用歌名过滤词（现场/伴奏/翻唱/DJ 等噪声清洗）
@@ -361,11 +370,12 @@ main{max-width:960px;margin:0 auto;padding:24px}
         <textarea id="sb-filterwords" rows="3" style="width:100%;margin-top:6px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--text);padding:8px;font-size:11px;font-family:monospace;resize:vertical" placeholder="加载默认过滤词…"></textarea>
       </div>
       <div style="font-size:12px;color:var(--sub);line-height:1.7;margin:8px 0 12px">
-        逐个歌手搜索收集（自动翻页），过滤噪声歌名与时长后逐首下载入库；本地已有的自动跳过。
-        单首下载失败会<b>自动换平台</b>（酷我/网易云/QQ/酷狗 轮换）找同名歌续下；下载保存到
-        MP3_DIR / MV_DIR（与点歌下载一致，按歌手分目录）。
-        默认「无损 FLAC」：会先向音源要 flac 音质，拿到无损就原样存为 .flac（不转码），
-        源没有无损时自动回落到 320K MP3——四种格式都能入库播放。
+        逐个歌手搜索收集（自动翻页，可关），过滤噪声歌名、时长与音质后逐首下载入库；本地已有的自动跳过。
+        平台选「全部平台」时四家（酷我/网易云/QQ/酷狗）都会搜一遍再按歌名+歌手合并去重，收录最全。
+        单首下载失败会<b>自动换平台</b>找同名歌续下；下载保存到 MP3_DIR / MV_DIR（与点歌下载一致，按歌手分目录）。
+        默认「无损 FLAC」：先向音源要 flac 音质，拿到无损就原样存为 .flac（不转码），源没有无损时回落 320K MP3；
+        勾选「只收无损」则反过来——宁可不下也不落有损文件（先按平台音质标注预筛，再用实际下载内容兜底）。
+        请求已按音源做了节流（同平台最小间隔 350ms），降低被平台限流/封 IP 的风险。
       </div>
       <div id="sb-src-status" style="font-size:12px;min-height:16px;margin:2px 0 8px;line-height:1.6"></div>
       <div id="sb-err" style="color:var(--pink);font-size:12px;min-height:14px;margin-bottom:8px"></div>
@@ -970,11 +980,14 @@ async function sbRefresh(){
   document.getElementById('sb-bar').style.width = pct + '%';
   document.getElementById('sb-status').innerHTML =
     (st.stopping ? `<span style="color:var(--cyan)">⏹ 正在停止…已断开在途请求，当前这首收尾后立即结束</span><br>` : '') +
+    (st.sources && st.sources.length > 1 ? `搜索平台：全部（${st.sources.join('/')}）${st.sqOnly ? ' · <span style="color:var(--cyan)">只收无损</span>' : ''}<br>` : (st.sqOnly ? '<span style="color:var(--cyan)">只收无损</span><br>' : '')) +
     `${st.message || '运行中…'}<br>` +
     `歌手进度：${st.singersDone}/${st.singersTotal} · 当前：${st.current || '—'}<br>` +
     `<span style="color:var(--accent)">已下载 ${st.done}</span>` +
     (st.fallback ? `（其中换源成功 ${st.fallback}）` : '') +
-    ` · 本地已有跳过 ${st.skipped} · <span style="color:${st.failed ? 'var(--pink)' : 'inherit'}">失败 ${st.failed}</span>` +
+    ` · 本地已有跳过 ${st.skipped}` +
+    (st.noLossless ? ` · <span style="color:var(--cyan)">无无损跳过 ${st.noLossless}</span>` : '') +
+    ` · <span style="color:${st.failed ? 'var(--pink)' : 'inherit'}">失败 ${st.failed}</span>` +
     (st.lastError ? `<br><span style="color:var(--pink)">${st.lastError}</span>` : '');
   const fwEl = document.getElementById('sb-failed-wrap');
   const flEl = document.getElementById('sb-failed');
@@ -994,8 +1007,10 @@ async function sbStart(){
     text: names.join('\n'),
     src: document.getElementById('sb-src').value,
     format: document.getElementById('sb-format').value,
-    minDur: parseInt(document.getElementById('sb-mindur').value) || 0,
-    maxDur: parseInt(document.getElementById('sb-maxdur').value) || 0,
+    minDur: parseFloat(document.getElementById('sb-mindur').value) || 0,
+    maxDur: parseFloat(document.getElementById('sb-maxdur').value) || 0,
+    sqOnly: document.getElementById('sb-sqonly').checked,
+    autoPage: !document.getElementById('sb-onepage').checked,
     useFilter: document.getElementById('sb-usefilter').checked,
     filterWords: document.getElementById('sb-filterwords').value.trim(),
   };

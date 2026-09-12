@@ -557,7 +557,10 @@ function sniffAudio(buf) {
 //                源确实没有无损时自动回落 320K MP3，落盘为 .mp3）
 //       | 'mv'（320K 音频 + 封面合成为 .mp4 存 MV_DIR；同时保留同名 .mp3 与 .lrc
 //               到 MP3_DIR——曲库里 MV/MP3 双版本可用，LRC 跟音频走）
-async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, format = 'mp3', lrcText = null, info = null, signal = null }) {
+// sqOnly: 仅 format='flac' 时有意义。置 true 时"只要真无损"——音源实际只给到
+//         有损内容（嗅探出的不是 FLAC）就放弃这一首（不落盘、不入库），
+//         抛 __noLossless 让调用方换平台再找，避免库里混进 MP3 冒充无损。
+async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, format = 'mp3', lrcText = null, info = null, signal = null, sqOnly = false }) {
   throwIfAborted(signal);   // 已被停止（含脚本内部请求被掐断的情形）→ 直接干净退出
   const mp3Root = dlcfg.getMp3Dir();
   const mvRoot = path.resolve(dlcfg.MV_DIR);
@@ -616,6 +619,12 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   const isMp3Src = sniff.kind === 'mp3';
   const rawAudio = isMp3Src || ['flac', 'ogg', 'm4a', 'wav', 'aac'].includes(sniff.kind);
   if (!rawAudio) throw new Error('音源返回的内容不是有效音频（可能已加密或链接已失效），请换音源或稍后重试');
+  // 「只收无损」：搜索阶段靠平台音质标注过滤过一道，这里是最终兜底——
+  // 音源实际返回的不是 FLAC（虚标无损/只有 320K MP3）就整首放弃。
+  // 此时临时文件还没写盘（writeFileSync 在下面），直接抛错即可，不留垃圾。
+  if (lossless && !isMv && sqOnly && sniff.kind !== 'flac') {
+    throw Object.assign(new Error('该曲目无可用的无损资源（音源只返回了有损音质）'), { __noLossless: true });
+  }
   // 无损模式且源确实给了 FLAC → 原样落盘 .flac（不转码，保住无损）；
   // 否则（源只有 MP3 / 其它有损容器）统一转成 MP3 落盘，
   // 后缀必须跟着实际内容走，不能出现"内容是 mp3 名字是 .flac"的假无损文件。
