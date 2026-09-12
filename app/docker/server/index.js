@@ -20,8 +20,14 @@ const log = require('./logger');
 const { firstSinger } = require('./singers');
 
 const PORT = process.env.PORT || 8080;
+// 请求体上限：主要是给「歌手批量下载」的歌手名单留余量——名单是整段文本 POST 上来的，
+// 一万三千行就有 150KB 左右，远超 express 默认的 100KB，会被直接 413 挡掉；而 Express
+// 默认的 413 响应是一个 HTML 错误页，前端 fetch(...).json() 只会报
+//   Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+// 完全看不出是"名单太大"（见文件末尾的统一错误中间件，那条路已改成返回 JSON）。
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || '8mb';
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 // ---------- 「曲库管理」管理员登录 ----------
 // 管理员密码不再通过安装/升级向导收集、也不写进 docker-compose.yml：改成
@@ -1229,6 +1235,30 @@ try {
 } catch (e) {
   log.error('SERVER', 'HTTPS 启动失败（网页评分功能将不可用，HTTP 不受影响）: ' + e.message);
 }
+
+// ---------- 统一错误响应（必须注册在所有路由之后） ----------
+// 兜底把中间件/路由抛出的错误转成 JSON。Express 默认的错误页是 HTML，前端
+// fetch(...).json() 拿到 "<!DOCTYPE html>" 会抛
+//   Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+// 让人完全看不懂。最典型的就是"导入一份大歌手名单 → 启动失败"：其实是请求体
+// 超过 JSON_BODY_LIMIT 触发了 413，但报错信息完全指错方向。
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const type = err && err.type;
+  if (type === 'entity.too.large') {
+    log.warn('HTTP', `${req.method} ${req.originalUrl} 请求体超过 ${JSON_BODY_LIMIT}，已拒绝`);
+    return res.status(413).json({
+      error: `请求体过大（上限 ${JSON_BODY_LIMIT}）：名单太长了一次提交不下，请拆成几批分别导入`,
+    });
+  }
+  if (type === 'entity.parse.failed' || (err instanceof SyntaxError && err.body !== undefined)) {
+    return res.status(400).json({ error: '请求体不是合法 JSON：' + String((err && err.message) || '').slice(0, 120) });
+  }
+  log.error('HTTP', `${req.method} ${req.originalUrl} 处理出错：${(err && err.stack) || err}`);
+  res.status((err && err.status) || 500).json({
+    error: String((err && err.message) || '服务端内部错误').slice(0, 200),
+  });
+});
 
 server.listen(PORT, () => {
   log.info('SERVER', `KTV 服务已启动: http://0.0.0.0:${PORT}`);

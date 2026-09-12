@@ -448,6 +448,31 @@ main{max-width:960px;margin:0 auto;padding:24px}
 </div>
 
 <script>
+// ---------- 请求健壮性：把"服务端没返回 JSON"变成能看懂的原因 ----------
+// 典型场景：页面不是从 KTV 服务打开的（本地文件 / 静态预览 / 反向代理指错了后端），
+// 或服务端版本过旧没有该接口、后端异常被网关拦成了错误页——这时 fetch 拿回来的是
+// 一个 HTML 页面，直接 r.json() 只会抛
+//   Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+// 完全看不出哪里错了。这里把 Response.json 包一层，换成明确的中文提示。
+(function(){
+  const origText = Response.prototype.text;
+  Response.prototype.json = function(){
+    const res = this;
+    const url = res.url || '';
+    return origText.call(res).then(txt => {
+      try { return txt ? JSON.parse(txt) : null; }
+      catch(e){
+        const body = String(txt || '');
+        const isHtml = /^\s*<(?:!doctype|html)/i.test(body);
+        const peek = body.replace(/\s+/g, ' ').slice(0, 100);
+        const why = isHtml
+          ? '拿到的是网页而不是数据 —— ① 这个页面可能不是从 KTV 服务打开的（本地/静态预览，或反向代理指错了后端）② 服务端版本过旧、没有这个接口 ③ 后端异常被网关拦成了错误页'
+          : `响应内容：${peek}`;
+        throw new Error(`服务端没返回 JSON（HTTP ${res.status}${url ? ' · ' + url.replace(location.origin, '') : ''}）：${why}`);
+      }
+    });
+  };
+})();
 let allSongs = [];
 let songPage = 0;
 let songQuery = '';
@@ -973,13 +998,23 @@ function sbFileChosen(input){
   reader.onload = () => {
     document.getElementById('sb-names').value = String(reader.result || '');
     sbCountNames();
+    const n = sbNames().length;
+    // 上万位歌手的批量任务会跑很久（每位歌手都要搜平台 + 逐首下载），
+    // 提前说清楚：中途可以「暂停」，之后（含服务重启后）再「继续下载」。
+    if(n > 300) toast(`已导入 ${n} 位歌手：任务会跑很久，可随时「⏸ 暂停」，之后再「▶ 继续下载」接着下`);
   };
   reader.readAsText(file, 'utf-8');
   input.value = '';
 }
 async function sbRefresh(){
   let st;
-  try{ st = await fetch('/api/singer-batch/status').then(r=>r.json()); }catch(e){ return; }
+  try{ st = await fetch('/api/singer-batch/status').then(r=>r.json()); }
+  catch(e){
+    // 轮询失败别静默（否则面板看起来像"没反应"）：把原因写到配置区的错误行
+    const el = document.getElementById('sb-err');
+    if(el && !el.textContent) el.textContent = '⚠️ 读取任务状态失败：' + e.message;
+    return;
+  }
   const active = st.phase === 'running' || st.phase === 'paused';
   const showRun = active || (st.phase === 'done' && !!st.message);
   document.getElementById('sb-config').style.display = showRun ? 'none' : '';

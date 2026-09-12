@@ -81,7 +81,12 @@ const SOURCE_MIN_GAP_MS = 350;    // 同一音源两次请求的最小间隔（�
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const JOB_FILE = path.join(DATA_DIR, 'singer-batch-job.json');
 const JOB_VERSION = 1;
-const SAVE_THROTTLE_MS = 3000;    // 进度落盘节流：每首歌都写太费 IO，合并 3s 一次
+// 进度落盘节流。快照是"整份名单 + 进度"一起写（名单可能上万行、150KB+），
+// 每首歌都写等于一天几百 MB 的磁盘写入，对 NAS 不友好，所以放宽到 20 秒一次。
+// 断点精度变粗不会造成重复下载：续传时从"当前歌手"重新开始，已经下过的那几首
+// 会被 findLocalSong（本地已有）直接跳过，只是多几次本地查库。
+// 暂停 / 停止 / 歌手切换 / 任务异常这些关键点仍然立即落盘，不受节流影响。
+const SAVE_THROTTLE_MS = 20000;
 const AUTO_PAUSE_AFTER_FAILS = 5; // 连续失败多少首后自动暂停（多半是断网/被平台限流）
 
 /** 全部平台（多音源模式）——顺序即优先级：先命中先入库，后到的同名歌由本地查重跳过 */
