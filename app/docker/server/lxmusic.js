@@ -318,6 +318,27 @@ async function getAltSourceInstance(id) {
   return inst;
 }
 
+// ---------- 自定义音源请求节流（对齐 lx-music-desktop 的 sourceRateLimiter） ----------
+// 桌面版对自定义音源默认：并发 1、相邻请求至少隔 1500ms + 0~800ms 随机抖动
+// （抖动让请求节奏不那么规律，降低被上游识别为爬虫的概率）。中转接口按 IP
+// 限流（"block ip"），批量以 300ms/首连发必然触发；把服务端请求节奏降到与
+// 桌面版一致。基准间隔可用环境变量 LX_SOURCE_INTERVAL_MS 覆盖。
+const SOURCE_INTERVAL = Math.max(0, parseInt(process.env.LX_SOURCE_INTERVAL_MS, 10) || 1500);
+const SOURCE_JITTER = Math.min(800, SOURCE_INTERVAL);
+let srcLastAt = 0;
+let srcChain = Promise.resolve();
+function acquireSourceSlot() {
+  const task = srcChain.then(async () => {
+    const wait = srcLastAt
+      ? srcLastAt + SOURCE_INTERVAL + Math.random() * SOURCE_JITTER - Date.now()
+      : 0;
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    srcLastAt = Date.now();
+  });
+  srcChain = task.catch(() => {});   // 排队链不因单次失败卡死（错误由调用方抛出）
+  return task;
+}
+
 async function resolveViaInstance(inst, sourceKey, musicInfo, preferQuality, signal) {
   const keys = Object.keys(inst.sources);
   const key = keys.includes(sourceKey) ? sourceKey : null;
@@ -328,6 +349,8 @@ async function resolveViaInstance(inst, sourceKey, musicInfo, preferQuality, sig
   for (const q of order) {
     throwIfAborted(signal);   // 音源脚本会把网络错误吞掉换成自己的错误，靠令牌状态兜住
     try {
+      await acquireSourceSlot();   // 节流：与桌面版同参数（并发 1 + 1.5s+抖动）
+      throwIfAborted(signal);
       const url = await inst.requestHandler({ source: key, action: 'musicUrl', info: { type: q, musicInfo } });
       if (url && typeof url === 'string' && /^https?:/.test(url)) return url;
       lastErr = new Error('脚本返回无效 url');
