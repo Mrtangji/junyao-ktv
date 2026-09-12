@@ -243,6 +243,10 @@ async function scanLibrary() {
       files.push({ f, rel: path.relative(root, f).replace(/\\/g, '/') });
     }
   }
+  // 枚举完成，登记总数；下面逐个探测时推进 processed（供 /api/diag 区分
+  // "扫描在正常推进"与"扫描卡住不动"——这两个现象的处理方式完全不同）。
+  scanState.files = files.length;
+  scanState.processed = 0;
   const insert = db.prepare(`
     INSERT INTO songs (title, artist, filename, filepath, audio_tracks, media_type, lyrics_path, pinyin, pinyin_initial, lang)
     VALUES (@title, @artist, @filename, @filepath, @audio_tracks, @media_type, @lyrics_path, @pinyin, @pinyin_initial, @lang)
@@ -265,7 +269,9 @@ async function scanLibrary() {
   // 本轮判定为"文件本身坏掉"的相对路径：不入库；已入库的同名记录也会在
   // 清理阶段被一并移除（连同它的队列/收藏/历史引用）。
   const brokenRel = new Set();
-  for (const { f, rel } of files) {
+  for (let fi = 0; fi < files.length; fi++) {
+    const { f, rel } = files[fi];
+    scanState.processed = fi + 1;
     if (!existingSet.has(rel)) {
       try {
         // 新文件先验证可解析性：损坏/下载不完整的文件（ffprobe 报 Invalid
@@ -429,7 +435,7 @@ function scanFile(f) {
 // 文件都要起一次 ffprobe），而且每次重启/重建容器都会重来一遍。把"是否正在
 // 扫描 + 上次结果 + 已跑多久"暴露出去，运维接口就能一眼区分"正在扫描"和
 // "有东西在空转"——这两种情况处理方式完全不同。
-const scanState = { scanning: false, startedAt: 0, finishedAt: 0, last: null };
+const scanState = { scanning: false, startedAt: 0, finishedAt: 0, last: null, files: 0, processed: 0 };
 
 function getScanState() {
   return {
@@ -437,6 +443,11 @@ function getScanState() {
     startedAt: scanState.startedAt,
     finishedAt: scanState.finishedAt,
     runningSec: scanState.scanning ? Math.round((Date.now() - scanState.startedAt) / 1000) : 0,
+    // 进度：files=本轮枚举到的媒体文件总数（枚举阶段先把目录走完，此时只涨 files），
+    // processed=已逐个探测处理的数量。两者一直不动 = 卡住；processed 在涨 = 正常推进
+    // （这一步每首歌要起一次 ffprobe，慢是正常的，尤其首次扫描大曲库）。
+    files: scanState.files,
+    processed: scanState.processed,
     last: scanState.last,
   };
 }

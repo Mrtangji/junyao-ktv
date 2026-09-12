@@ -1054,6 +1054,32 @@ app.get('/api/diag', async (req, res) => {
   const mediaProcs = procmon.listMediaProcs().map(p => ({ ...p, registered: registered.has(p.pid) }));
   let queue = [];
   try { queue = db.prepare('SELECT status, COUNT(*) AS c FROM queue GROUP BY status').all(); } catch (e) {}
+
+  // 一句话结论：省得用户对着 JSON 猜"到底是不是 KTV 在占 CPU"。
+  // 关键在于把"本容器用了几个核"和"宿主机整体负载"摆在一起比：宿主机的
+  // /proc/loadavg 不受 PID 命名空间隔离，容器里读到的就是 NAS 整机的负载。
+  const scan = getScanState();
+  const hints = [];
+  if (scan.scanning) {
+    hints.push(`正在全量扫描曲库（已 ${scan.runningSec}s，进度 ${scan.processed}/${scan.files}）：每个文件都要起一次 ffprobe，属于容器启动/重建后的一次性开销，跑完会自行回落；进度数字在涨说明没有卡死。`);
+  }
+  if (mediaProcs.length) {
+    const orphan = mediaProcs.filter(p => !p.registered);
+    hints.push(orphan.length
+      ? `发现 ${orphan.length} 个未登记的转码进程（疑似失控 ffmpeg），孤儿巡检会自动清理。`
+      : `有 ${mediaProcs.length} 个已登记的转码进程在跑（正在播放/直传），属正常现象。`);
+  }
+  if (cpu && cpu.available) {
+    const cc = cpu.containerCores || 0;
+    const l1 = cpu.host ? cpu.host.load1 : 0;
+    if (l1 >= 0.2 && cc < 0.1) {
+      hints.push(`宿主机近 1 分钟负载约 ${l1} 个核，而本容器仅占 ${cc} 个核 —— 占用来自本容器之外（NAS 自身服务/媒体索引/缩略图，或其它容器）。`);
+    } else if (cc >= 0.5) {
+      hints.push(`本容器自身占用约 ${cc} 个核${scan.scanning ? '，与"正在扫描曲库"相符' : ''}。`);
+    } else {
+      hints.push(`本容器近似空闲（约 ${cc} 个核，口径 ${cpu.method}）。`);
+    }
+  }
   res.json({
     uptimeSec: Math.round(process.uptime()),
     rssMB: Math.round(process.memoryUsage().rss / 1048576),
@@ -1062,7 +1088,8 @@ app.get('/api/diag', async (req, res) => {
     transcoding: activeTranscodes(),
     pendingWaits: pendingWaitCount(),
     idleStop: { ms: IDLE_STOP_MS, pending: !!idleTimer, keepPlaying: IDLE_STOP_KEEP_PLAYING },
-    scan: getScanState(),
+    scan,
+    hint: hints,
     procMonitor: procmon.available ? 'linux(/proc)' : 'unavailable(非 Linux)',
     cpu,
     mediaProcs,
