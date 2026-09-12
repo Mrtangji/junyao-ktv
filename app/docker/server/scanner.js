@@ -226,18 +226,36 @@ function listFilesRecursive(dir, visited, depth) {
   }
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
-    // statSync 会跟随符号链接：目标不存在（断链/已删除）或 stat 失败时抛错，直接跳过；
-    // 挂载点抖动导致的临时失败同样在此被忽略，不中断整体扫描。
+    // 几十万文件的曲库里逐项 statSync（SMB 上每次 1-5ms）仅枚举就要十几分钟，
+    // 而 readdir({withFileTypes}) 已经给了类型：目录/普通文件直接用 Dirent 判断，
+    // 只有符号链接（必须 stat 验证目标是否存在，死链跳过）和通过了后缀过滤的
+    // 媒体文件（需要 mtime/size 做"未变化跳过探测"）才真正 stat。
+    // 非媒体的普通文件（lrc/封面/文本…）不 stat 直接略过。
+    if (entry.isDirectory()) {
+      results = results.concat(listFilesRecursive(full, visited, depth + 1));
+      continue;
+    }
+    if (entry.isSymbolicLink()) {
+      // statSync 跟随符号链接：目标不存在（断链/已删除）或 stat 失败时抛错，
+      // 直接跳过；挂载点抖动导致的临时失败同样在此被忽略，不中断整体扫描。
+      let st;
+      try { st = fs.statSync(full); } catch (e) { continue; }
+      if (st.isDirectory()) {
+        results = results.concat(listFilesRecursive(full, visited, depth + 1));
+      } else if (MEDIA_EXT.has(path.extname(entry.name).toLowerCase())
+          && !HLS_SEGMENT_RE.test(entry.name)) {
+        results.push({ f: full, mtimeMs: st.mtimeMs, size: st.size });
+      }
+      continue;
+    }
+    if (!entry.isFile()) continue;   // fifo/socket 等特殊文件忽略
+    if (!MEDIA_EXT.has(path.extname(entry.name).toLowerCase())) continue;
+    if (HLS_SEGMENT_RE.test(entry.name)) continue; // HLS 播放缓存分片，不是曲库
     let st;
     try { st = fs.statSync(full); } catch (e) { continue; }
-    if (st.isDirectory()) {
-      results = results.concat(listFilesRecursive(full, visited, depth + 1));
-    } else if (MEDIA_EXT.has(path.extname(entry.name).toLowerCase())) {
-      if (HLS_SEGMENT_RE.test(entry.name)) continue; // HLS 播放缓存分片，不是曲库
-      // 把 stat 结果（mtime/size）一并带出：主流程用它判断"文件自上次扫描后
-      // 有没有变过"，没变就跳过 ffprobe——反正是同一个文件，结论不会变。
-      results.push({ f: full, mtimeMs: st.mtimeMs, size: st.size });
-    }
+    // 把 stat 结果（mtime/size）一并带出：主流程用它判断"文件自上次扫描后
+    // 有没有变过"，没变就跳过 ffprobe——反正是同一个文件，结论不会变。
+    results.push({ f: full, mtimeMs: st.mtimeMs, size: st.size });
   }
   return results;
 }
@@ -322,8 +340,10 @@ async function scanLibrary() {
   const existingSet = new Set(existing);
 
   // scan_stat 已在模块加载时建表（顶部注释说明"未变化跳过探测"的原理）。
-  // 升级后首次扫描 scan_stat 为空 → 全部文件走一遍探测流程并建档，一次性成本，
-  // 之后每轮重扫都吃满收益。
+  // 库里已有但没有建档的文件（升级后首扫 / 旧版本下载入库的歌）：**信任库记录、
+  // 直接登记不探测** —— 它们当初入库时都通过了 ffprobe 验证，几十万首的曲库
+  // 如果首扫还要全量探测要跑好几个小时，毫无必要。代价是"入库时没发现的坏文件
+  // 少了一次复查机会"，而这类文件内容一变（mtime 变）就会照常复查，风险可控。
   const seenStat = new Map(db.prepare('SELECT filename, mtime_ms, size FROM scan_stat').all().map(r => [r.filename, r]));
   const upsertStat = db.prepare('INSERT INTO scan_stat (filename, mtime_ms, size) VALUES (?, ?, ?) ON CONFLICT(filename) DO UPDATE SET mtime_ms = excluded.mtime_ms, size = excluded.size');
   const statUnchanged = (x) => {
@@ -348,12 +368,23 @@ async function scanLibrary() {
   const toProbe = [];
   let doneCount = 0;
   for (const x of files) {
-    if (existingSet.has(x.rel) && statUnchanged(x)) {
-      doneCount++;               // 没变：跳过探测，直接计入已完成
+    if (!existingSet.has(x.rel)) { toProbe.push(x); continue; }   // 新文件：必须探测入库
+    const s = seenStat.get(x.rel);
+    if (s && statUnchanged(x)) {                                  // 库里有 + 没变：完全跳过
+      doneCount++;
       scanState.processed = doneCount;
       continue;
     }
-    toProbe.push(x);
+    if (s && path.extname(x.rel).toLowerCase() === '.ts') {       // 内容变过的 ts：复查一遍
+      toProbe.push(x);
+      continue;
+    }
+    // 剩下两种都不用探测（老逻辑对非 ts 的已入库文件本来就不复查）：
+    //   · 库里有但没建档（升级首扫）→ 信任库记录，直接登记
+    //   · 库里有、内容变了的非 ts → 刷新登记，下轮起走"没变跳过"通道
+    upsertStat.run(x.rel, x.mtimeMs, x.size);
+    doneCount++;
+    scanState.processed = doneCount;
   }
   const CONCURRENCY = Math.max(1, Math.min(16, parseInt(process.env.SCAN_CONCURRENCY || '4', 10) || 4));
   let cursor = 0;
@@ -404,13 +435,6 @@ async function scanLibrary() {
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, toProbe.length) }, probeWorker));
-
-  // 已存在但 mtime/size 变了、又不是 .ts 的文件：不用重新探测（老逻辑对非 ts
-  // 的已入库文件本来就不复查），但 stat 登记要刷新，否则每轮都被当成"变了"。
-  for (const x of files) {
-    if (!existingSet.has(x.rel) || path.extname(x.rel).toLowerCase() === '.ts') continue;
-    if (!statUnchanged(x)) upsertStat.run(x.rel, x.mtimeMs, x.size);
-  }
 
   // 已存在曲目补齐/刷新媒体类型和同名 LRC 路径（升级后 MP3 与歌词立即可用）。
   // 只 UPDATE 与预期不一致的行：原来对全部文件无条件 UPDATE，几万个空 UPDATE
