@@ -160,6 +160,37 @@ const hangSrv = http.createServer(() => { /* 故意不响应 */ });
     ok('默认过滤词已包含 +', sb.DEFAULT_FILTER_WORDS.split(',').includes('+'));
   }
 
+  console.log('=== G. 收集阶段（搜索请求在途）点停止也要快 ===');
+  {
+    // 模拟"平台接口慢/被风控"：搜索请求挂着，只有取消令牌能让它 reject。
+    // 这是跑上万位歌手名单时最常碰到停止的时刻（大部分时间都在收集，而不是下载）。
+    const stoppedErr = () => Object.assign(new Error('__SB_STOPPED__'), { __stopped: true });
+    boardsdk.search = async () => {
+      const sig = lxmusic.internals.currentCancelSignal();
+      await new Promise((res, rej) => {
+        if (!sig) return;                                  // 没有令牌（不该发生）就一直挂着
+        if (sig.aborted) return rej(stoppedErr());
+        sig.addEventListener('abort', () => rej(stoppedErr()));
+        setTimeout(res, 30000);                            // 兜底：正常不该走到这里
+      });
+      return { list: [], total: 0 };
+    };
+    lxmusic.downloadSong = async () => ({ id: 1 });
+
+    await sb.start({ text: '郑融', src: 'kw', format: 'mp3', minDur: 0, maxDur: 0, useFilter: true, filterWords: '' });
+    await sleep(250);
+    ok('已进入收集阶段', sb.status().running === true && /收集/.test(sb.status().message), sb.status().message);
+
+    const t0 = Date.now();
+    sb.stop();
+    let ms = 0;
+    while (sb.status().running && Date.now() - t0 < 5000) { await sleep(20); ms = Date.now() - t0; }
+    ok('收集阶段点停止 → 快速结束（不等 30s 超时）', !sb.status().running && ms < 1500, `${ms}ms`);
+    ok('未被记成搜索失败', sb.status().failed === 0, `failed=${sb.status().failed}`);
+    ok('提示为"已停止"', /已停止/.test(sb.status().message), sb.status().message);
+    ok('令牌已复位', lxmusic.internals.currentCancelSignal() === null);
+  }
+
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
   hangSrv.close();
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {}
