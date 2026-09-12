@@ -7,6 +7,9 @@
 <style>
 :root{--bg:#07071a;--card:#10102a;--accent:#c736f7;--cyan:#36d9f7;--pink:#ff4f9b;--text:#f4f4ff;--sub:#8888aa}
 *{box-sizing:border-box;margin:0;padding:0}
+/* 下拉框：原生 popup 默认白底会吞掉浅色文字，强制深色底+浅色字 */
+select{color:var(--text)}
+select option{background:var(--card);color:var(--text)}
 body{background:var(--bg);color:var(--text);font-family:"PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh}
 header{
   position:sticky;top:0;z-index:10;padding:16px 24px;
@@ -313,7 +316,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
     <div id="sb-config">
       <div class="form-row">
         <label>歌手名单（每行一个，可从 .txt 导入）</label>
-        <textarea id="sb-names" rows="6" oninput="sbCountNames()" placeholder="周杰伦&#10;林俊杰&#10;邓丽君" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--fg);padding:8px;font-size:13px;resize:vertical"></textarea>
+        <textarea id="sb-names" rows="6" oninput="sbCountNames()" placeholder="周杰伦&#10;林俊杰&#10;邓丽君" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--text);padding:8px;font-size:13px;resize:vertical"></textarea>
         <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
           <button class="hbtn" onclick="document.getElementById('sb-file').click()">📂 导入名单</button>
           <input type="file" id="sb-file" accept=".txt,.csv,text/plain" style="display:none" onchange="sbFileChosen(this)">
@@ -322,11 +325,11 @@ main{max-width:960px;margin:0 auto;padding:24px}
       </div>
       <div class="form-row" style="display:flex;gap:10px">
         <div style="flex:1"><label>搜索/下载平台</label>
-          <select id="sb-src" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--fg);padding:8px">
+          <select id="sb-src" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--text);padding:8px">
             <option value="kw">酷我</option><option value="wy">网易云</option><option value="tx">QQ音乐</option><option value="kg">酷狗</option>
           </select></div>
         <div style="flex:1"><label>下载格式</label>
-          <select id="sb-format" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--fg);padding:8px">
+          <select id="sb-format" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--text);padding:8px">
             <option value="mp3">MP3（320K 音频+歌词）</option><option value="flac">无损 FLAC（优先无损，源无则回落 MP3）</option><option value="mv">MV（封面合成视频）</option>
           </select></div>
       </div>
@@ -338,7 +341,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
           <input type="checkbox" id="sb-usefilter" checked> 启用歌名过滤词（现场/伴奏/翻唱/DJ 等噪声清洗）
         </label>
-        <textarea id="sb-filterwords" rows="3" style="width:100%;margin-top:6px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--fg);padding:8px;font-size:11px;font-family:monospace;resize:vertical" placeholder="加载默认过滤词…"></textarea>
+        <textarea id="sb-filterwords" rows="3" style="width:100%;margin-top:6px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--text);padding:8px;font-size:11px;font-family:monospace;resize:vertical" placeholder="加载默认过滤词…"></textarea>
       </div>
       <div style="font-size:12px;color:var(--sub);line-height:1.7;margin:8px 0 12px">
         逐个歌手搜索收集（自动翻页），过滤噪声歌名与时长后逐首下载入库；本地已有的自动跳过。
@@ -381,7 +384,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
     </div>
     <div class="form-row" style="margin-top:8px">
       <label>按清单下载（每行一个：编号或「歌手 - 歌名.ts」；留空自动读取 /data/bulk-skipped.txt）</label>
-      <textarea id="bulk-nos" rows="3" placeholder="7665908&#10;林子祥、胡夏 - 数字人生-我们的歌第三季.ts" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--fg);padding:8px;font-size:12px;font-family:monospace"></textarea>
+      <textarea id="bulk-nos" rows="3" placeholder="7665908&#10;林子祥、胡夏 - 数字人生-我们的歌第三季.ts" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--text);padding:8px;font-size:12px;font-family:monospace"></textarea>
     </div>
     <div style="font-size:12px;color:var(--sub);line-height:1.7;margin-bottom:12px">
       曲库目录自动从内置 muse.db 解析（按「最常唱」排序），无需导入。已下载过的自动跳过，
