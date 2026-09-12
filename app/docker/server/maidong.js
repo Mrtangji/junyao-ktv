@@ -23,6 +23,7 @@ const muse = require('./muse');
 const tsdec = require('./tsdecrypt');
 const log = require('./logger');
 const lx = require('./lxmusic');
+const { firstSinger } = require('./singers');
 const { httpReq, sniffAudio, moveFile, ffmpegToMp3, ffmpegMp3ToMv, downloadCover, sanitize, TMP_DIR } = lx.internals;
 
 // ---------- 配置（存 settings 表，TV 页/下载共用） ----------
@@ -172,7 +173,10 @@ async function downloadMd({ songmid, name, singer, url = null, pic = null, forma
   const isVideoTarget = format === 'mv';
   const dlRoot = isVideoTarget ? mvRoot : mp3Root;
   if (!fs.existsSync(dlRoot) || !fs.existsSync(isVideoTarget ? mp3Root : mvRoot)) throw new Error('MV_DIR_UNAVAILABLE');
-  const artist = sanitize(singer) || '未知歌手';
+  // 目录名取第一位歌手（合作曲统一进第一位歌手文件夹，口径同 lxmusic.downloadSong）；
+  // 文件名保留完整歌手串，扫描器从文件名解析 artist，多歌手信息不丢。
+  const artistFull = sanitize(singer) || '未知歌手';
+  const artist = sanitize(firstSinger(singer)) || artistFull;
   const title = sanitize(name) || '未知歌名';
   const artistDir = path.join(dlRoot, artist);
   if (!fs.existsSync(artistDir)) fs.mkdirSync(artistDir, { recursive: true });
@@ -193,7 +197,7 @@ async function downloadMd({ songmid, name, singer, url = null, pic = null, forma
   const isVideo = isVideoTarget && !lsAudioOnly && !/\.(mp3|flac|ogg|m4a|wav|aac)(\?|$)/i.test(srcUrl);
   const ext = isVideo ? 'mp4' : 'mp3';
   const targetRoot = isVideo ? mvRoot : mp3Root;
-  const rel = path.join(artist, `${artist} - ${title}.${ext}`);
+  const rel = path.join(artist, `${artistFull} - ${title}.${ext}`);
   const finalPath = path.join(targetRoot, rel);
   // 按 filename（相对路径唯一键）查重——filepath 存的是绝对路径，用它查永远查不到
   const key = rel.replace(/\\/g, '/');

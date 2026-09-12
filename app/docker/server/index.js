@@ -17,6 +17,7 @@ const maidong = require('./maidong');
 const muse = require('./muse');
 const { getPitchCurve } = require('./pitch');
 const log = require('./logger');
+const { firstSinger } = require('./singers');
 
 const PORT = process.env.PORT || 8080;
 const app = express();
@@ -584,7 +585,7 @@ function localFlags(name, singer) {
   const s = String(singer || '').toLowerCase();
   let matched = rows;
   if (s) {
-    const first = s.split('、')[0].trim();
+    const first = firstSinger(s).trim();
     const m = rows.filter(r => (r.artist && (s.includes(r.artist) || r.artist.includes(first))) || !r.artist || r.artist === '未知歌手');
     // 歌手过滤无命中时不强行过滤（榜名歌手写法差异大），退回全部标题匹配
     if (m.length) matched = m;

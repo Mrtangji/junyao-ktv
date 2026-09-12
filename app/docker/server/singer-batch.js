@@ -13,6 +13,7 @@
 
 const lxmusic = require('./lxmusic');
 const boardsdk = require('./boardsdk');
+const { firstSinger, singerCount } = require('./singers');
 
 /** 默认歌名过滤词（同 LX singerBatch，逗号分隔） */
 const DEFAULT_FILTER_WORDS = [
@@ -99,6 +100,7 @@ const state = {
   stopping: false,      // 已请求停止、尚在收尾（前端可显示"正在停止…"）
   sources: [],          // 本次任务的搜索平台
   sqOnly: false,        // 本次任务是否「只收无损」
+  maxSingers: 2,        // 本次任务的合唱人数上限（0=不限）
 };
 let stopFlag = false;
 let sbAbort = null;   // 当前批量任务的 AbortController，stop 时 abort 以中断在途 http 请求
@@ -140,7 +142,7 @@ function singerMatch(songSinger, wanted) {
   if (!wanted) return true;
   const s = String(songSinger || '');
   if (!s) return false;
-  return s.includes(wanted) || wanted.includes(s.split('、')[0]);
+  return s.includes(wanted) || wanted.includes(firstSinger(s));
 }
 
 // 平台音质标注里是否含无损。types 为空数组表示"平台没标注"（不能据此判定无无损）
@@ -148,7 +150,7 @@ const hasLossless = (types) =>
   Array.isArray(types) && types.some(t => LOSSLESS_TYPES.includes(String(t).toLowerCase()));
 const typesSayNoLossless = (m) => Array.isArray(m.types) && m.types.length > 0 && !hasLossless(m.types);
 // 跨源去重键：歌名 + 首位歌手（同一首歌在多家平台的 id 完全不互通，只能按名字判重）
-const dupKey = (m) => normTitle(m.name) + '|' + String(m.singer || '').split('、')[0].toLowerCase();
+const dupKey = (m) => normTitle(m.name) + '|' + firstSinger(m.singer).toLowerCase();
 
 async function downloadOne(song, format, sqOnly) {
   if (stopFlag) throw stopError();
@@ -166,7 +168,8 @@ async function downloadOne(song, format, sqOnly) {
 
 // 换平台找同名歌续下：按 [其它三个平台] 顺序，搜索歌名过滤歌手+歌名匹配，取第一个下载成功。
 // 只收无损模式下，媒体库明确标注无无损的候选直接跳过（省一次下载）。
-async function downloadViaOtherSources(song, format, excludeSrc, sqOnly) {
+async function downloadViaOtherSources(song, format, excludeSrc, sqOnly, maxSingers) {
+  const lead = firstSinger(song.singer);
   for (const s of ALL_SOURCES) {
     if (s === excludeSrc) continue;
     if (stopFlag) return null;
@@ -174,8 +177,9 @@ async function downloadViaOtherSources(song, format, excludeSrc, sqOnly) {
       const r = await boardsdk.search(s, song.name, 1, 30);
       if (stopFlag) return null;
       const cand = (r.list || []).find(m =>
-        titleMatch(m.name, song.name) && singerMatch(m.singer, song.singer.split('、')[0]) &&
-        !(sqOnly && typesSayNoLossless(m)));
+        titleMatch(m.name, song.name) && singerMatch(m.singer, lead) &&
+        !(sqOnly && typesSayNoLossless(m)) &&
+        !(maxSingers > 0 && singerCount(m.singer) > maxSingers));
       if (!cand) continue;
       if (stopFlag) return null;
       await downloadOne(cand, format, sqOnly);
@@ -208,6 +212,8 @@ async function collectFromSource(name, srcId, opts) {
         if (opts.minDur > 0 && m.duration < opts.minDur) continue;
         if (opts.maxDur > 0 && m.duration > opts.maxDur) continue;
       }
+      // 合唱人数限制（同 lx 的 download.maxSingerCount）：超过上限视为大合唱，跳过
+      if (opts.maxSingers > 0 && singerCount(m.singer) > opts.maxSingers) continue;
       // 只收无损：平台明确标注了音质、且其中没有无损 → 跳过。
       // 未标注（types 为空）的不在这里跳过，改为下载时兜底判定，避免误杀。
       if (opts.sqOnly && typesSayNoLossless(m)) continue;
@@ -271,6 +277,9 @@ async function start(opts = {}) {
   const sqOnly = opts.sqOnly === true && format === 'flac';
   // 翻页开关：默认翻页收集，显式传 false 时只搜首页（快速模式）
   const autoPage = opts.autoPage !== false;
+  // 合唱人数上限（同 lx 的 download.maxSingerCount，界面默认 2）：超过上限的歌视为大合唱，
+  // 收集阶段直接跳过；0 = 不限。只作用于歌手批量下载，用户主动点播的单曲不受限制。
+  const maxSingers = opts.maxSingers == null ? 2 : Math.max(0, parseInt(opts.maxSingers, 10) || 0);
   const useFilter = opts.useFilter !== false;
   const filterWords = useFilter ? (opts.filterWords || DEFAULT_FILTER_WORDS) : '';
   const filterRegs = buildFilterRegs(filterWords);
@@ -286,7 +295,7 @@ async function start(opts = {}) {
   Object.assign(state, {
     running: true, phase: 'running', message: '', singersTotal: names.length, singersDone: 0,
     current: '', collected: 0, done: 0, failed: 0, skipped: 0, noLossless: 0, fallback: 0, lastError: '',
-    failedList: [], stopping: false, sources: src === 'all' ? [...ALL_SOURCES] : [src], sqOnly,
+    failedList: [], stopping: false, sources: src === 'all' ? [...ALL_SOURCES] : [src], sqOnly, maxSingers,
   });
 
   void (async () => {
@@ -296,7 +305,7 @@ async function start(opts = {}) {
         state.current = name;
         state.message = `正在收集「${name}」（${state.singersDone + 1}/${names.length}）`;
         let songs = [];
-        try { songs = await collectSinger(name, src, { filterRegs, minDur, maxDur, sqOnly, autoPage, preferLossless }); }
+        try { songs = await collectSinger(name, src, { filterRegs, minDur, maxDur, sqOnly, autoPage, preferLossless, maxSingers }); }
         catch (e) {
           if (e && e.__stopped) break;   // 收集过程中被停止：不算搜索失败，直接收工
           state.lastError = `「${name}」搜索失败: ${e.message}`;
@@ -318,7 +327,7 @@ async function start(opts = {}) {
             if (e && e.__stopped) break;   // 用户点了停止，干净中断整批
             // 换平台续下（自动换源）
             try {
-              const via = await downloadViaOtherSources(song, format, song.src, sqOnly);
+              const via = await downloadViaOtherSources(song, format, song.src, sqOnly, maxSingers);
               if (via) { state.done++; state.fallback++; }
               else throw e;
             } catch (e2) {

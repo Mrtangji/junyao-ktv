@@ -29,7 +29,7 @@ const song = (over = {}) => ({
   songmid: 'm1', name: '晴天', singer: '周杰伦', duration: 269, types: ['flac'], src: 'kw', ...over,
 });
 // 收集选项：默认不限时长、不过滤词、翻页开启
-const OPTS = (over = {}) => ({ filterRegs: [], minDur: 0, maxDur: 0, sqOnly: false, autoPage: true, preferLossless: true, ...over });
+const OPTS = (over = {}) => ({ filterRegs: [], minDur: 0, maxDur: 0, sqOnly: false, autoPage: true, preferLossless: true, maxSingers: 0, ...over });
 
 (async () => {
   console.log('=== A. 音质标注解析（boardsdk 统一成 types）===');
@@ -123,6 +123,33 @@ const OPTS = (over = {}) => ({ filterRegs: [], minDur: 0, maxDur: 0, sqOnly: fal
     });
     const r = await collectFromSource('周杰伦', 'kw', OPTS({ autoPage: false, minDur: 60 }));  // 1 分钟下限
     ok('时长下限按「分钟→秒」换算生效（30 秒的被滤掉）', r.length === 1 && r[0].name === '正常歌', r.map(x => x.name).join('/'));
+  }
+
+  console.log('=== F. 合唱人数上限 + 合作曲目录取第一位歌手 ===');
+  {
+    const { firstSinger, singerCount, splitSingers } = require(path.join(SERVER_DIR, 'singers'));
+    const { sanitize } = require(path.join(SERVER_DIR, 'lxmusic')).internals;
+    ok('拆分：「周杰伦、费玉清」→ 2 人', singerCount('周杰伦、费玉清') === 2);
+    ok('取第一位歌手：「周杰伦、温岚」→ 周杰伦', firstSinger('周杰伦、温岚') === '周杰伦');
+    ok('「/」「;」「|」都按分隔符拆', splitSingers('A/B').length === 2 && splitSingers('A;B').length === 2 && splitSingers('A|B').length === 2);
+    ok('单歌手原样返回', firstSinger('周杰伦') === '周杰伦');
+    ok('空值 → 空数组/空串', splitSingers('').length === 0 && firstSinger(null) === '');
+    // 故意不把 & 和 , 当分隔符：Simon & Garfunkel / Tyler, The Creator 是单个艺人名
+    ok('Simon & Garfunkel 不被切开', singerCount('Simon & Garfunkel') === 1 && firstSinger('Simon & Garfunkel') === 'Simon & Garfunkel');
+    ok('Tyler, The Creator 不被切开', singerCount('Tyler, The Creator') === 1);
+    ok('目录名 = 第一位歌手（sanitize 后）', sanitize(firstSinger('周杰伦、温岚')) === '周杰伦');
+
+    boardsdk.search = async (src, q, page, limit) => ({
+      list: [
+        song({ songmid: 's1', name: '独唱', singer: '周杰伦' }),
+        song({ songmid: 's2', name: '对唱', singer: '周杰伦、温岚' }),
+        song({ songmid: 's3', name: '大合唱', singer: '周杰伦、温岚、费玉清、那英' }),
+      ], total: 3, page, limit,
+    });
+    const lim = await collectFromSource('周杰伦', 'kw', OPTS({ autoPage: false, maxSingers: 2 }));
+    ok('上限 2：独唱/对唱留下，4 人大合唱跳过', lim.length === 2 && !lim.find(s => s.name === '大合唱'), lim.map(s => s.name).join('/'));
+    const noLim = await collectFromSource('周杰伦', 'kw', OPTS({ autoPage: false, maxSingers: 0 }));
+    ok('上限 0 = 不限 → 三首全收', noLim.length === 3, String(noLim.length));
   }
 
   console.log(`\n${fail === 0 ? '✅ 全部通过' : '❌ 有失败'}：${pass} 通过 / ${fail} 失败`);

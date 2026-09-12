@@ -23,6 +23,7 @@ const crypto = require('crypto');
 const vm = require('vm');
 const { spawn } = require('child_process');
 const db = require('./db');
+const { firstSinger } = require('./singers');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const TMP_DIR = path.join(DATA_DIR, 'lx_tmp');
@@ -569,7 +570,11 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   const dlRoot = isMv ? mvRoot : mp3Root; // 本次下载主文件的目标根目录
   if (!fs.existsSync(dlRoot)) throw new Error('MV_DIR_UNAVAILABLE');
   if (!fs.existsSync(isMv ? mp3Root : mvRoot)) throw new Error('MV_DIR_UNAVAILABLE');
-  const artist = sanitize(singer) || '未知歌手';
+  // 目录名取「第一位歌手」：合作曲（周杰伦、温岚）统一落到 周杰伦/ 目录下，
+  // 不会建出「周杰伦、温岚」这种拼起来的目录（口径同 lx-music-desktop 的 getFirstSinger）。
+  // 文件名/元数据仍保留完整歌手串 —— 扫描器是从文件名解析 artist 的，多歌手信息不丢。
+  const artistFull = sanitize(singer) || '未知歌手';
+  const artist = sanitize(firstSinger(singer)) || artistFull;
   const title = sanitize(name) || '未知歌名';
   // 主文件（mp3/flac/mp4）落 dlRoot；MV 模式下同时保留的 mp3/lrc 落 mp3Root
   const mainDir = path.join(dlRoot, artist);
@@ -578,7 +583,7 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
     const mp3Dir = path.join(mp3Root, artist);
     if (!fs.existsSync(mp3Dir)) fs.mkdirSync(mp3Dir, { recursive: true });
   }
-  const baseName = `${artist} - ${title}`;
+  const baseName = `${artistFull} - ${title}`;
   const relOf = (e) => path.join(artist, `${baseName}.${e}`);
   let mp3Path = null;          // MV 模式下保留到 MP3_DIR 的同名 mp3 路径（函数作用域，供末尾入库用）
   // 已存在同名歌曲 → 直接返回库里的记录（可能上次已下过）。
@@ -644,7 +649,7 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
       //   LRC 为两者共用同名文件。扫描器会把 mp4 记为 MV、mp3 记为 audio）
       const tmpMp3 = finalPath + '.tmp.mp3';
       // 保留的 mp3 落 MP3_DIR（与 MV 分库）；可能跨文件系统，用 moveFile 而非 rename
-      mp3Path = path.join(mp3Root, artist, `${artist} - ${title}.mp3`);
+      mp3Path = path.join(mp3Root, artist, `${baseName}.mp3`);
       if (isMp3Src) moveFile(tmpPath, tmpMp3);
       else await ffmpegToMp3(tmpPath, tmpMp3, signal);
       try {
@@ -692,7 +697,7 @@ function findLocalSong(name, singer) {
   if (!rows.length) return null;
   if (!singer) return rows[0];
   const s = String(singer);
-  return rows.find(r => s.includes(r.artist || '\u0000') || (r.artist || '').includes(s.split('、')[0])) || null;
+  return rows.find(r => s.includes(r.artist || '\u0000') || (r.artist || '').includes(firstSinger(s))) || null;
 }
 
 module.exports = {

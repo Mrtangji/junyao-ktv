@@ -354,6 +354,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
       <div class="form-row" style="display:flex;gap:10px">
         <div style="flex:1"><label>时长下限（分钟，0=不限）</label><input id="sb-mindur" type="number" min="0" step="0.5" value="0"></div>
         <div style="flex:1"><label>时长上限（分钟，0=不限）</label><input id="sb-maxdur" type="number" min="0" step="0.5" value="0"></div>
+        <div style="flex:1"><label>合唱人数上限（0=不限）</label><input id="sb-maxsingers" type="number" min="0" max="20" step="1" value="2"></div>
       </div>
       <div class="form-row" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:2px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
@@ -375,6 +376,8 @@ main{max-width:960px;margin:0 auto;padding:24px}
         单首下载失败会<b>自动换平台</b>找同名歌续下；下载保存到 MP3_DIR / MV_DIR（与点歌下载一致，按歌手分目录）。
         默认「无损 FLAC」：先向音源要 flac 音质，拿到无损就原样存为 .flac（不转码），源没有无损时回落 320K MP3；
         勾选「只收无损」则反过来——宁可不下也不落有损文件（先按平台音质标注预筛，再用实际下载内容兜底）。
+        合唱人数超过「合唱人数上限」的歌视为大合唱、直接跳过（0=不限）；合作曲统一保存到<b>第一位歌手</b>的目录
+        （「周杰伦、温岚」→ 周杰伦/，文件名仍保留完整歌手）。
         请求已按音源做了节流（同平台最小间隔 350ms），降低被平台限流/封 IP 的风险。
       </div>
       <div id="sb-src-status" style="font-size:12px;min-height:16px;margin:2px 0 8px;line-height:1.6"></div>
@@ -1011,6 +1014,7 @@ async function sbStart(){
     maxDur: parseFloat(document.getElementById('sb-maxdur').value) || 0,
     sqOnly: document.getElementById('sb-sqonly').checked,
     autoPage: !document.getElementById('sb-onepage').checked,
+    maxSingers: parseInt(document.getElementById('sb-maxsingers').value) || 0,
     useFilter: document.getElementById('sb-usefilter').checked,
     filterWords: document.getElementById('sb-filterwords').value.trim(),
   };
