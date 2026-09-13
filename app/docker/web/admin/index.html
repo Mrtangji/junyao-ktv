@@ -205,7 +205,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
 .mt-v{color:#ffd479;background:rgba(255,183,77,.18);border:1px solid rgba(255,183,77,.35)}
 .mt-lossless{color:#c9a7ff;background:rgba(160,120,255,.16);border:1px solid rgba(160,120,255,.38)}
 .mt-lrc{color:#6fe0d2;background:rgba(80,220,200,.14);border:1px solid rgba(80,220,200,.35)}
-/* 全曲库批量下载弹窗（复用 lx-modal 样式） */
+/* 麦动曲库下载弹窗（复用 lx-modal 样式） */
 #bulk-modal-overlay{
   position:fixed;top:0;left:0;right:0;bottom:0;z-index:50;display:none;align-items:center;justify-content:center;
   background:rgba(0,0,0,.6);backdrop-filter:blur(6px)
@@ -216,7 +216,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
   border-radius:18px;padding:26px
 }
 #bulk-modal h3{font-size:17px;margin-bottom:18px}
-/* 歌手批量下载弹窗（复用 bulk-modal 样式） */
+/* 洛雪曲库下载弹窗（复用 bulk-modal 样式） */
 #sb-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;z-index:50;display:none;align-items:center;justify-content:center;
   background:rgba(0,0,0,.6);backdrop-filter:blur(6px)}
 #sb-modal-overlay.open{display:flex}
@@ -305,8 +305,8 @@ main{max-width:960px;margin:0 auto;padding:24px}
   <button class="hbtn" onclick="window.open('/m','_blank')">📱 手机端</button>
   <button class="hbtn primary" onclick="doScan()">🔄 扫描曲库</button>
   <button class="hbtn" id="lrcbf-btn" onclick="lrcBackfillStart()">📝 补全歌词</button>
-  <button class="hbtn" onclick="openBulkModal()">📦 全曲库下载</button>
-  <button class="hbtn" onclick="openSingerModal()">🎤 歌手批量下载</button>
+  <button class="hbtn" onclick="openBulkModal()">📦 麦动曲库</button>
+  <button class="hbtn" onclick="openSingerModal()">🎤 洛雪曲库</button>
   <button class="hbtn" onclick="openLxModal()">🎼 LX 音源</button>
   <button class="hbtn" onclick="openPwModal()">🔑 修改密码</button>
   <button class="hbtn" onclick="doLogout()">🚪 退出登录</button>
@@ -411,10 +411,10 @@ main{max-width:960px;margin:0 auto;padding:24px}
 
 <div id="toast"></div>
 
-<!-- 歌手批量下载弹窗（学习 LX Music 歌手批量下载，四平台搜索收集 → 下载入库） -->
+<!-- 洛雪曲库下载弹窗（学习 LX Music 歌手批量下载，四平台搜索收集 → 下载入库） -->
 <div id="sb-modal-overlay" onclick="closeSingerModal()">
   <div id="sb-modal" onclick="event.stopPropagation()">
-    <h3>🎤 歌手批量下载</h3>
+    <h3>🎤 洛雪曲库</h3>
     <div id="sb-last" style="display:none;color:var(--sub);font-size:12px;margin:-4px 0 10px"></div>
     <div id="sb-config">
       <div class="form-row">
@@ -497,10 +497,10 @@ main{max-width:960px;margin:0 auto;padding:24px}
   </div>
 </div>
 
-<!-- 全曲库批量下载弹窗（麦动 muse.db 源，最常唱优先，下载到 MV 目录的 ts/ 子目录） -->
+<!-- 麦动曲库下载弹窗（麦动 muse.db 源，最常唱优先，下载到 MV 目录的 ts/ 子目录） -->
 <div id="bulk-modal-overlay" onclick="closeBulkModal()">
   <div id="bulk-modal" onclick="event.stopPropagation()">
-    <h3>📦 全曲库批量下载</h3>
+    <h3>📦 麦动曲库</h3>
     <div id="bulk-status" style="font-size:13px;color:var(--sub);line-height:1.9">加载中…</div>
     <div id="bulk-bar-wrap" style="display:none;height:8px;background:rgba(255,255,255,.08);border-radius:4px;overflow:hidden;margin:10px 0">
       <div id="bulk-bar" style="height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--cyan));transition:width .4s"></div>
@@ -1078,7 +1078,7 @@ async function lxDelete(id){
   }catch(e){toast('⚠️ 删除失败：'+e.message);}
 }
 
-// ===== 全曲库批量下载 =====
+// ===== 麦动曲库下载 =====
 let bulkTimer = null;
 async function openBulkModal(){
   document.getElementById('bulk-modal-overlay').classList.add('open');
@@ -1213,7 +1213,7 @@ async function bulkResume(){
   }catch(e){ toast('⚠️ 继续失败：'+e.message); }
 }
 
-// ===== 歌手批量下载（学习 LX Music 歌手批量下载） =====
+// ===== 洛雪曲库下载（学习 LX Music 歌手批量下载） =====
 let sbTimer = null;
 async function openSingerModal(){
   document.getElementById('sb-modal-overlay').classList.add('open');
@@ -1358,7 +1358,7 @@ async function sbStart(){
   try{
     const r = await fetch('/api/singer-batch/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
     if(r.error){ err.textContent = r.error; return; }
-    toast('歌手批量下载已启动');
+    toast('洛雪曲库下载已启动');
     sbRefresh();
   }catch(e){ err.textContent = '启动失败：'+e.message; }
 }
