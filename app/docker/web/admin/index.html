@@ -388,9 +388,6 @@ main{max-width:960px;margin:0 auto;padding:24px}
         <div style="flex:1"><label>合唱人数上限（0=不限）</label><input id="sb-maxsingers" type="number" min="0" max="20" step="1" value="2"></div>
       </div>
       <div class="form-row" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:2px">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="checkbox" id="sb-onepage"> 只搜首页（快速收集，不翻页）
-        </label>
       </div>
       <div class="form-row">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
@@ -471,7 +468,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
     </div>
     <div id="bulk-err" style="color:var(--pink);font-size:12px;min-height:14px;margin-bottom:8px"></div>
     <div class="modal-btns" style="justify-content:flex-start;flex-wrap:wrap;gap:8px">
-      <button class="hbtn primary" onclick="bulkStart()">⬇️ 开始下载</button>
+      <button class="hbtn primary" id="bulk-start-btn" onclick="bulkStart()">⬇️ 开始下载</button>
       <button class="hbtn" onclick="bulkLoadSkipped()">📋 填入跳过清单</button>
       <button class="hbtn" onclick="bulkStartNos()">🔢 按清单下载</button>
       <button class="hbtn" onclick="bulkStartScan()">🩺 扫库补缺</button>
@@ -1060,6 +1057,12 @@ async function bulkRefresh(){
       runLine = d.done ? `空闲 · 上次：完成 ${d.done}，失败 ${d.failed}` : '空闲';
       document.getElementById('bulk-bar-wrap').style.display = 'none';
     }
+    // 切换「开始下载 / 暂停下载」按钮
+    const btn = document.getElementById('bulk-start-btn');
+    if(d.running){
+      if(d.paused){ btn.textContent = '▶ 继续下载'; btn.onclick = bulkResume; }
+      else{ btn.textContent = '⏸ 暂停下载'; btn.onclick = bulkPause; }
+    }else{ btn.textContent = '⬇️ 开始下载'; btn.onclick = bulkStart; }
     const failN = d.failedCount || 0;
     document.getElementById('bulk-retry-btn').style.display = failN ? '' : 'none';
     document.getElementById('bulk-retry-btn').textContent = `🔁 重试失败(${failN})`;
@@ -1133,6 +1136,21 @@ async function bulkStop(){
     toast(r.ok ? '已请求停止（当前正在下载的一首会完成）' : (r.error || '无需停止'));
     bulkRefresh();
   }catch(e){ toast('⚠️ 停止失败：'+e.message); }
+}
+async function bulkPause(){
+  try{
+    const r = await fetch('/api/bulk/pause',{method:'POST'}).then(r=>r.json());
+    toast(r.ok ? '⏸ 已暂停，点「▶ 继续下载」可接着下' : (r.error || '暂停失败'));
+    bulkRefresh();
+  }catch(e){ toast('⚠️ 暂停失败：'+e.message); }
+}
+async function bulkResume(){
+  try{
+    const r = await fetch('/api/bulk/resume',{method:'POST'}).then(r=>r.json());
+    if(!r.ok){ toast(r.error || '继续失败'); bulkRefresh(); return; }
+    toast('▶ 已继续下载');
+    bulkRefresh();
+  }catch(e){ toast('⚠️ 继续失败：'+e.message); }
 }
 
 // ===== 歌手批量下载（学习 LX Music 歌手批量下载） =====
@@ -1272,7 +1290,7 @@ async function sbStart(){
     src: document.getElementById('sb-src').value,
     format: document.getElementById('sb-format').value,
     minDur: parseFloat(document.getElementById('sb-mindur').value) || 0,
-    maxDur: parseFloat(document.getElementById('sb-maxdur').value) || 0,    autoPage: !document.getElementById('sb-onepage').checked,
+    maxDur: parseFloat(document.getElementById('sb-maxdur').value) || 0,
     maxSingers: parseInt(document.getElementById('sb-maxsingers').value) || 0,
     useFilter: document.getElementById('sb-usefilter').checked,
     filterWords: document.getElementById('sb-filterwords').value.trim(),
@@ -1299,7 +1317,7 @@ async function sbStartSingle(){
     text: singer,
     onlyTitle: title,
     src: document.getElementById('sb-src').value,
-    format: document.getElementById('sb-format').value,    autoPage: true,
+    format: document.getElementById('sb-format').value,
     useFilter: false,
     filterWords: '',
   };

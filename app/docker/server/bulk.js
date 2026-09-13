@@ -59,6 +59,8 @@ class BulkDownloader {
       startedAt: null,
       catalog: 0,           // 已导入目录的曲目数
       stopRequested: false,
+      pauseRequested: false,
+      paused: false,
       mode: 'range',        // range=按区间下载 | scan=扫库补缺 | retry=重试失败清单 | nos=按编号下载
       from: 1, to: 0,
       scanned: 0, have: 0, invalid: 0,   // 扫库补缺进度
@@ -225,6 +227,8 @@ class BulkDownloader {
     if (!Number.isFinite(to) || to < from) to = 0;
     this.state.running = true;
     this.state.stopRequested = false;
+    this.state.pauseRequested = false;
+    this.state.paused = false;
     this.state.mode = scan ? 'scan' : (retry ? 'retry' : (tokens ? 'nos' : 'range'));
     this.state.total = 0;
     this.state.done = 0;
@@ -253,11 +257,28 @@ class BulkDownloader {
     return { ok: true };
   }
 
+  pause() {
+    if (!this.state.running) return { ok: false, error: '没有进行中的批量下载' };
+    if (this.state.paused) return { ok: false, error: '已暂停' };
+    this.state.pauseRequested = true;
+    return { ok: true };
+  }
+
+  resume() {
+    if (!this.state.running) return { ok: false, error: '没有进行中的批量下载' };
+    if (!this.state.paused) return { ok: false, error: '未暂停' };
+    this.state.paused = false;
+    this._resumeResolve && this._resumeResolve();
+    this._resumeResolve = null;
+    return { ok: true };
+  }
+
   status() {
     return {
       muse: muse.available(),
       catalog: this.state.catalog || 0,
       running: this.state.running,
+      paused: this.state.paused,
       mode: this.state.mode || 'range',
       total: this.state.total || 0,
       done: this.state.done || 0,
@@ -522,6 +543,14 @@ class BulkDownloader {
     const worker = async (idx) => {
       while (queue.length > 0) {
         if (this.state.stopRequested) return;
+        // 暂停：阻塞直到恢复或停止
+        if (this.state.pauseRequested) {
+          this.state.paused = true;
+          this.state.pauseRequested = false;
+          await new Promise(resolve => { this._resumeResolve = resolve; });
+          // 恢复后重新检查 stop（resume 期间可能已请求停止）
+          if (this.state.stopRequested) return;
+        }
         const item = queue.shift();
         if (!item) return;
         // 已存在直接跳过；扫库模式下完整性通过也跳过（目录里有重复曲目项，
