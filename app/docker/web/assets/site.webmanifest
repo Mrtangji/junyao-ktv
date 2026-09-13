@@ -1,0 +1,27 @@
+{
+  "name": "骏耀K歌",
+  "short_name": "骏耀K歌",
+  "start_url": "/tv/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#07071a",
+  "theme_color": "#c736f7",
+  "icons": [
+    {
+      "src": "/assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

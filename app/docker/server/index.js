@@ -172,6 +172,11 @@ app.get('/', (req, res) => res.redirect('/tv/'));
 app.use('/tv',    express.static(path.join(__dirname, '../web/tv')));
 app.use('/m',     express.static(path.join(__dirname, '../web/mobile')));
 app.use('/admin', express.static(path.join(__dirname, '../web/admin')));
+// 品牌图标（favicon / PWA 图标 / manifest）。三个端页面共用一份，
+// 由 app/brand/gen-icons.js 统一生成，别手改这里的产物。
+app.use('/assets', express.static(path.join(__dirname, '../web/assets')));
+// 浏览器对没写 rel=icon 的页面、以及直接访问根域时，都会去根路径要 /favicon.ico
+app.get('/favicon.ico', (req, res) => res.sendFile(path.join(__dirname, '../web/assets/favicon.ico')));
 app.use('/cover', express.static('/data/covers'));
 
 // 同名旁车歌词：例如 /mv/周杰伦 - 晴天.lrc。

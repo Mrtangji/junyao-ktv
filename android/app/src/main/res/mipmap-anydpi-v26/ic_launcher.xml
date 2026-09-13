@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标：背景=品牌渐变（满幅），前景=居中的 K（限制在中心 66dp 安全区内）。
+     API<26 的机器不走这里，用的是 mipmap-*dpi/ic_launcher.png。
+     monochrome 是 Android 13+ 的"主题图标"单色层，取前景的 alpha 由系统着色。 -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background"/>
+    <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+    <monochrome android:drawable="@drawable/ic_launcher_foreground"/>
+</adaptive-icon>
