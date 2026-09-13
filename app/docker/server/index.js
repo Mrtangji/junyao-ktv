@@ -1163,6 +1163,23 @@ app.get('/api/version', (req, res) => {
 //   - 在线客户端数、在途转码数、等分片的请求数。
 // 这样"有东西一直占 CPU"就能直接看出是 node 在建路径、是 ffmpeg 在转码、
 // 还是有个失控的 ffmpeg（未登记 → 下面的巡检会收拾掉）。
+// 出口诊断：排查"音源中转按 IP/指纹风控"时一句话回答——服务器的真实公网出口
+// 是什么（局域网设备以为的出口和外部实际看到的不一定一致：多网卡、级联路由、
+// IPv6 优先都可能造成两台机器"同一个局域网"却"不同公网出口"）、DNS 把中转
+// 域名解析成了什么地址族。ipify4=纯 IPv4 回显，ipify64=双栈优先 IPv6 回显。
+app.get('/api/diag/egress', async (req, res) => {
+  const out = { node: process.version };
+  try { out.ipify4 = await fetch('https://api.ipify.org').then(r => r.text()); }
+  catch (e) { out.ipify4 = '失败: ' + e.message; }
+  try { out.ipify64 = await fetch('https://api64.ipify.org').then(r => r.text()); }
+  catch (e) { out.ipify64 = '失败: ' + e.message; }
+  try {
+    const dns = require('dns').promises;
+    out.relayDNS = await dns.lookup('88.lxmusic.xn--fiqs8s', { all: true, verbatim: true });
+  } catch (e) { out.relayDNS = '失败: ' + e.message; }
+  res.json(out);
+});
+
 app.get('/api/diag', async (req, res) => {
   let cpu;
   try { cpu = await procmon.sampleCpu({ sampleMs: Math.min(3000, Number(req.query.ms) || 500), top: 15 }); }
