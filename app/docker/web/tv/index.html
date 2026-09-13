@@ -505,6 +505,7 @@ html[data-layout="mobile"] #lyrics-panel.ktv .lyrics-line.knxt{font-size:3.9vw}
 .mt-loc{color:#ffb27e;background:rgba(255,150,90,.15);border:1px solid rgba(255,150,90,.35)}
 .mt-both{color:#7ee0ff;background:rgba(54,217,247,.14);border:1px solid rgba(54,217,247,.38)}
 .mt-lossless{color:#c9a7ff;background:rgba(160,120,255,.16);border:1px solid rgba(160,120,255,.38)}
+.mt-lrc{color:#6fe0d2;background:rgba(80,220,200,.14);border:1px solid rgba(80,220,200,.35)}
 /* 点唱榜面板：榜单横条 + 歌曲列表 */
 .lx-main{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:16px 26px}
 #lx-boardbar{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px}
@@ -2707,10 +2708,11 @@ function lxRenderList(el,songs){
   songs.forEach((s,i)=>{
     const d=document.createElement('div');d.className='lx-row';
     const hi=i<3?`color:${i===0?'#ffd479':i===1?'#cfd8e3':'#e8a06b'}`:'';
-    // 本地曲库拥有情况角标（服务端附加 localMp3/localMv）：MP3 / MV / 同时拥有=MP3+MV
-    const tag=s.localMp3&&s.localMv?'<span class="mt-b mt-both">MP3+MV</span>'
+    // 本地曲库拥有情况角标（服务端附加 localMp3/localMv）：MP3 / MV / 同时拥有=MP3+MV；
+    // localLrc=本地有歌词文件时追加「歌词」角标
+    const tag=(s.localMp3&&s.localMv?'<span class="mt-b mt-both">MP3+MV</span>'
       :s.localMp3?'<span class="mt-b mt-a">MP3</span>'
-      :s.localMv?'<span class="mt-b mt-v">MV</span>':'';
+      :s.localMv?'<span class="mt-b mt-v">MV</span>':'')+(s.localLrc?'<span class="mt-b mt-lrc">歌词</span>':'');
     d.innerHTML=`<div class="n" style="${hi}">${i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}</div>
       <div class="t">${s.name||''}${tag}</div><div class="a">${s.singer||''}</div>
       <button class="btn-add" data-f onclick="lxOrder(${i})">点歌</button>`;
@@ -3408,18 +3410,20 @@ document.addEventListener('keydown',e=>{if(isFS)showOverlay();switch(e.key){case
 function esc(s){return String(s||'').replace(/'/g,"&#39;");}
 // 歌名后媒体类型角标：无损（flac/wav/ape…）/ MV / 音频扩展名。
 // 优先按 filename 后缀判断（老数据 media_type 可能缺失），media_type 兜底。
+// 有歌词（lyrics_path）时追加「歌词」角标（本机歌曲无该字段则不显示）。
 function mediaBadge(s){
   if(!s) return '';
   const fn=String(s.filename||'').toLowerCase();
   let ext=fn.slice(fn.lastIndexOf('.'));
   if(!/^\.[a-z0-9]+$/.test(ext)){const e=String(s.ext||'').toLowerCase().replace(/^\./,'');ext=e?'.'+e:'';}
+  const lrc=s.lyrics_path?'<span class="mt-b mt-lrc">歌词</span>':'';
   if(s.media_type==='video'||['.ts','.mp4','.mkv','.avi','.flv','.mov','.webm','.mpg'].includes(ext))
-    return '<span class="mt-b mt-v">MV</span>';
+    return '<span class="mt-b mt-v">MV</span>'+lrc;
   if(['.flac','.wav','.ape','.alac','.aiff'].includes(ext))
-    return '<span class="mt-b mt-lossless">无损</span>';
+    return '<span class="mt-b mt-lossless">无损</span>'+lrc;
   if(['.m4a','.aac','.ogg','.opus'].includes(ext))
-    return '<span class="mt-b mt-a">'+ext.slice(1).toUpperCase()+'</span>';
-  return '<span class="mt-b mt-a">MP3</span>';
+    return '<span class="mt-b mt-a">'+ext.slice(1).toUpperCase()+'</span>'+lrc;
+  return '<span class="mt-b mt-a">MP3</span>'+lrc;
 }
 function showToast(m,persist){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._hideTimer);if(!persist)t._hideTimer=setTimeout(()=>t.classList.remove('show'),1800);}
 function hideToast(){const t=document.getElementById('toast');clearTimeout(t._hideTimer);t.classList.remove('show');}

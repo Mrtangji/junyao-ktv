@@ -571,11 +571,11 @@ function normTitle(t) {
 function localSongMap() {
   if (_locMap && Date.now() - _locMapAt < 60000) return _locMap;
   const map = new Map();
-  for (const r of db.prepare('SELECT title, artist, media_type FROM songs').all()) {
+  for (const r of db.prepare('SELECT title, artist, media_type, lyrics_path FROM songs').all()) {
     const k = normTitle(r.title);
     if (!k) continue;
     if (!map.has(k)) map.set(k, []);
-    map.get(k).push({ artist: String(r.artist || '').toLowerCase(), mt: r.media_type });
+    map.get(k).push({ artist: String(r.artist || '').toLowerCase(), mt: r.media_type, lrc: !!r.lyrics_path });
   }
   _locMap = map; _locMapAt = Date.now();
   return map;
@@ -607,14 +607,14 @@ function localFlags(name, singer) {
     // 歌手过滤无命中时不强行过滤（榜名歌手写法差异大），退回全部标题匹配
     if (m.length) matched = m;
   }
-  return { mp3: matched.some(r => r.mt === 'audio'), mv: matched.some(r => r.mt === 'video') };
+  return { mp3: matched.some(r => r.mt === 'audio'), mv: matched.some(r => r.mt === 'video'), lrc: matched.some(r => r.lrc) };
 }
 function attachLocalFlags(list) {
   if (!Array.isArray(list) || !list.length) return list;
   return list.map(s => {
     try {
       const f = localFlags(s.name, s.singer);
-      return { ...s, localMp3: !!f.mp3, localMv: !!f.mv };
+      return { ...s, localMp3: !!f.mp3, localMv: !!f.mv, localLrc: !!f.lrc };
     } catch (e) { return s; }
   });
 }

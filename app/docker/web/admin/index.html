@@ -201,6 +201,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
 .mt-a{color:#7ee0a3;background:rgba(94,220,140,.14);border:1px solid rgba(94,220,140,.3)}
 .mt-v{color:#ffd479;background:rgba(255,183,77,.18);border:1px solid rgba(255,183,77,.35)}
 .mt-lossless{color:#c9a7ff;background:rgba(160,120,255,.16);border:1px solid rgba(160,120,255,.38)}
+.mt-lrc{color:#6fe0d2;background:rgba(80,220,200,.14);border:1px solid rgba(80,220,200,.35)}
 /* 全曲库批量下载弹窗（复用 lx-modal 样式） */
 #bulk-modal-overlay{
   position:fixed;top:0;left:0;right:0;bottom:0;z-index:50;display:none;align-items:center;justify-content:center;
@@ -853,18 +854,20 @@ function toast(msg){
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,'&#39;'); }
 // 歌名后媒体类型角标：无损（flac/wav/ape…）/ MV / 音频扩展名。
 // 优先按 filename 后缀判断（老数据 media_type 可能缺失），media_type 兜底。
+// 有歌词（lyrics_path）时追加「歌词」角标。
 function mediaBadge(s){
   if(!s) return '';
   const fn = String(s.filename||'').toLowerCase();
   let ext = fn.slice(fn.lastIndexOf('.'));
   if(!/^\.[a-z0-9]+$/.test(ext)){ const e = String(s.ext||'').toLowerCase().replace(/^\./,''); ext = e ? '.'+e : ''; }
+  const lrc = s.lyrics_path ? '<span class="mt-b mt-lrc">歌词</span>' : '';
   if(s.media_type === 'video' || ['.ts','.mp4','.mkv','.avi','.flv','.mov','.webm','.mpg'].includes(ext))
-    return '<span class="mt-b mt-v">MV</span>';
+    return '<span class="mt-b mt-v">MV</span>'+lrc;
   if(['.flac','.wav','.ape','.alac','.aiff'].includes(ext))
-    return '<span class="mt-b mt-lossless">无损</span>';
+    return '<span class="mt-b mt-lossless">无损</span>'+lrc;
   if(['.m4a','.aac','.ogg','.opus'].includes(ext))
-    return '<span class="mt-b mt-a">'+ext.slice(1).toUpperCase()+'</span>';
-  return '<span class="mt-b mt-a">MP3</span>';
+    return '<span class="mt-b mt-a">'+ext.slice(1).toUpperCase()+'</span>'+lrc;
+  return '<span class="mt-b mt-a">MP3</span>'+lrc;
 }
 
 // 本地脚本文件 → 读入粘贴框
