@@ -848,7 +848,13 @@ function sniffAudio(buf) {
   if (buf.toString('latin1', 0, 4) === 'OggS') return { kind: 'ogg' };
   if (buf.length > 12 && buf.toString('latin1', 4, 8) === 'ftyp') return { kind: 'm4a' };
   if (buf.toString('latin1', 0, 4) === 'RIFF') return { kind: 'wav' };
-  return { kind: 'unknown' };
+  // 加密无损容器识别（QQ音乐 mflac/mgg、QMC 等）：文件头不是标准音频魔数，
+  // 而是 'mflac'/'mgg'/'QMC' 等标记或纯加密字节。落到这里就明确提示"加密"，
+  // 不再笼统报"无效音频"，让用户一眼看出真实下载内容。
+  const head256 = buf.toString('latin1', 0, 256);
+  if (/mflac|mgg|qmc|xmfile|tencent/i.test(head256)) return { kind: 'encrypted', detail: `疑似加密无损容器(${buf.length}字节，含 mflac/mgg 标记，需解密才能播放)` };
+  if (buf[0] === 0x1f && buf[1] === 0x8b) return { kind: 'encrypted', detail: `gzip 压缩响应(${buf.length}字节，可能是未解压的 HTML 错误页)` };
+  return { kind: 'unknown', detail: `未知二进制(${buf.length}字节) 头hex:${buf.slice(0, 16).toString('hex')}` };
 }
 
 // 下载一首网络歌曲到曲库，返回 songs 表行
@@ -926,9 +932,10 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   });
   if (sniff.kind === 'text') throw new Error(`音源返回的不是音频（接口可能已失效或被风控）：${sniff.detail}`);
   if (sniff.kind === 'm3u8') throw new Error('音源返回的是 HLS 播放列表(m3u8)，该链接不支持直接下载，请换音源');
+  if (sniff.kind === 'encrypted') throw new Error(`音源返回的是加密文件，无法直存：${sniff.detail}（请换普通无损音源或稍后重试）`);
   const isMp3Src = sniff.kind === 'mp3';
   const rawAudio = isMp3Src || ['flac', 'ogg', 'm4a', 'wav', 'aac'].includes(sniff.kind);
-  if (!rawAudio) throw new Error('音源返回的内容不是有效音频（可能已加密或链接已失效），请换音源或稍后重试');
+  if (!rawAudio) throw new Error('音源返回的内容不是有效音频（可能已加密或链接已失效）' + (sniff.detail ? ` 实际：${sniff.detail}` : '') + '，请换音源或稍后重试');
   // 「只收无损」：搜索阶段靠平台音质标注过滤过一道，这里是最终兜底——
   // 音源实际返回的不是 FLAC（虚标无损/只有 320K MP3）就整首放弃。
   // 此时临时文件还没写盘（writeFileSync 在下面），直接抛错即可，不留垃圾。
