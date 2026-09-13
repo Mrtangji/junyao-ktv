@@ -340,8 +340,9 @@ main{max-width:960px;margin:0 auto;padding:24px}
       <textarea id="lx-url" rows="3" placeholder="https://example.com/sixyin.js&#10;https://example.com/another.js" style="font-size:13px"></textarea></div>
     <div class="form-row"><label>或直接粘贴脚本内容（与链接二选一）</label>
       <textarea id="lx-script" placeholder="/**&#10; * @name 六音音源&#10; * ...&#10; */&#10;const { EVENT_NAMES, on, send } = globalThis.lx ..."></textarea></div>
-    <div class="form-row"><label>或从本地电脑选择脚本文件（.js / .txt）</label>
-      <input type="file" id="lx-file" accept=".js,.txt,text/javascript,text/plain" style="font-size:13px;color:var(--sub)" onchange="lxFileChosen(this)"></div>
+    <div class="form-row"><label>或从本地电脑选择脚本文件（.js / .txt，可多选）</label>
+      <input type="file" id="lx-file" accept=".js,.txt,text/javascript,text/plain" multiple style="font-size:13px;color:var(--sub)" onchange="lxFileChosen(this)">
+      <div id="lx-files" style="margin-top:6px;font-size:12px;color:var(--sub)"></div></div>
     <div id="lx-err" style="color:var(--pink);font-size:12px;min-height:14px;margin-bottom:8px"></div>
     <div class="modal-btns" style="justify-content:flex-start">
       <button class="hbtn primary" onclick="lxImport()">📥 导入并启用</button>
@@ -911,19 +912,38 @@ function mediaBadge(s){
   return '<span class="mt-b mt-a">MP3</span>'+lrc;
 }
 
-// 本地脚本文件 → 读入粘贴框
+// 本地脚本文件 → 读入待导入列表（支持多选）
+let lxPendingFiles = []; // [{name, content}]
 function lxFileChosen(inp){
-  const f = inp.files && inp.files[0];
-  if(!f) return;
-  const rd = new FileReader();
-  rd.onload = () => {
-    document.getElementById('lx-script').value = rd.result;
-    document.getElementById('lx-url').value = '';
-    toast(`已读取 ${f.name}，点击「导入并启用」完成导入`);
-  };
-  rd.readAsText(f, 'utf-8');
-  inp.value = ''; // 允许重复选择同一文件
+  const files = inp.files ? Array.from(inp.files) : [];
+  if(!files.length) return;
+  const reads = files.map(f => new Promise(resolve => {
+    const rd = new FileReader();
+    rd.onload  = () => resolve({ name:f.name, content:rd.result, err:false });
+    rd.onerror = () => resolve({ name:f.name, content:null, err:true });
+    rd.readAsText(f, 'utf-8');
+  }));
+  Promise.all(reads).then(results => {
+    let added = 0, bad = 0;
+    results.forEach(r => {
+      if(r.err || r.content == null){ bad++; return; }
+      if(!lxPendingFiles.some(p => p.name === r.name)){ lxPendingFiles.push(r); added++; }
+    });
+    renderLxFiles();
+    if(added) toast(`已加入 ${added} 个文件${bad?`，${bad} 个读取失败`:''}，点击「导入并启用」完成导入`);
+    if(bad) document.getElementById('lx-err').textContent = `${bad} 个文件读取失败`;
+    inp.value = ''; // 允许重复选择同一文件
+  });
 }
+function renderLxFiles(){
+  const el = document.getElementById('lx-files');
+  if(!lxPendingFiles.length){ el.innerHTML = ''; return; }
+  el.innerHTML = lxPendingFiles.map((f,i)=>
+    `<span style="display:inline-block;background:var(--card);border:1px solid var(--sub);border-radius:6px;padding:2px 8px;margin:3px 4px 0 0">${f.name} <a href="javascript:void(0)" onclick="lxRemoveFile(${i})" style="color:var(--pink)">✕</a></span>`
+  ).join('') + ` <a href="javascript:void(0)" onclick="lxClearFiles()" style="color:var(--sub);font-size:11px">清空</a>`;
+}
+function lxRemoveFile(i){ lxPendingFiles.splice(i,1); renderLxFiles(); }
+function lxClearFiles(){ lxPendingFiles = []; renderLxFiles(); }
 
 // ===== LX 音源管理 =====
 async function openLxModal(){
@@ -954,10 +974,11 @@ async function lxImport(activate = true){
   err.textContent = '';
   const urlBox = document.getElementById('lx-url').value.trim();
   const script = document.getElementById('lx-script').value.trim();
+  const fileScripts = lxPendingFiles.map(f => f.content).filter(Boolean);
   // 批量：链接框按行/逗号/空格拆分，逐个导入（任意一个成功即算成功，失败行单独报）
   const urls = urlBox ? urlBox.split(/[\s,，;；]+/).filter(u => /^https?:\/\//i.test(u)) : [];
-  if(!urls.length && !script){err.textContent = '请填写脚本链接（可每行一个批量）或粘贴脚本内容';return;}
-  toast(`音源导入中…（${urls.length || 1} 个）`);
+  if(!urls.length && !script && !fileScripts.length){err.textContent = '请填写脚本链接（可每行一个批量）、粘贴脚本内容，或选择本地脚本文件';return;}
+  toast(`音源导入中…（${urls.length + (script?1:0) + fileScripts.length} 个）`);
   let okNames = [], failMsgs = [], firstName = '';
   const importOne = async (body) => {
     const b = {...body};
@@ -970,10 +991,14 @@ async function lxImport(activate = true){
   };
   try{
     for(const u of urls){ try{ await importOne({url:u}); }catch(e){ failMsgs.push(`${u.slice(-40)}：${e.message}`); } }
-    if(script){ try{ await importOne({script}); }catch(e){ failMsgs.push('粘贴脚本：'+e.message); } }
+    const allScripts = [];
+    if(script) allScripts.push(script);
+    allScripts.push(...fileScripts);
+    for(const s of allScripts){ try{ await importOne({script:s}); }catch(e){ failMsgs.push('脚本：'+e.message); } }
     if(!okNames.length){ err.textContent = '全部导入失败：' + failMsgs.join('；'); toast('⚠️ 导入失败'); return; }
     document.getElementById('lx-url').value = '';
     document.getElementById('lx-script').value = '';
+    lxPendingFiles = []; renderLxFiles();
     const actTxt = activate ? '已导入并启用' : '已导入（未启用）';
     toast(`✅ ${actTxt} ${okNames.length} 个：${okNames.slice(0,3).join('、')}${okNames.length>3?' 等':''}${failMsgs.length?`（失败 ${failMsgs.length} 个）`:''}`);
     if(failMsgs.length) err.textContent = '失败明细：' + failMsgs.join('；');
