@@ -348,6 +348,9 @@ async function collectFromSource(name, srcId, opts) {
       // 逗号/加号拼接的歌名多为串烧、评论合集类杂项。',' 本身是过滤词分隔符、
       // 进不了词表，这里按标点直接判（'+' 词表里也有，双保险）。
       if (/[+,，＋]/.test(m.name)) continue;
+      // 歌名带括号（中英文）的整类跳过：Demo/电台版/Live/剧情版/网友改编/3D环绕
+      // 全都长这样，正式发行歌名几乎不含括号，宁可错放也不收杂版。
+      if (/[()（）]/.test(m.name)) continue;
       // 歌手匹配（搜索结果里不含该歌手的多为相关歌/翻唱/误匹配）
       if (!singerMatch(m.singer, name)) continue;
       // 时长区间（0 = 不限；平台无时长数据的歌不过滤）
