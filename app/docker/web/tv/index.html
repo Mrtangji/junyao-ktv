@@ -1474,7 +1474,8 @@ function destroyHls(){if(hlsInstance){try{hlsInstance.destroy();}catch(e){}hlsIn
 
 // LRC 解析：兼容 [mm:ss.xx]、[mm:ss:xx]、一行多个时间标签，以及 [ar]/[ti]
 // 等元数据标签。没有时间标签的元数据不参与播放显示。
-// 逐字歌词（增强型 LRC，来自 *_word.lrc）：行内 <mm:ss.xx> 标签标记每个字的
+// 逐字歌词（增强型 LRC，.lrcx 文件或 kw lrcx 下载的内嵌标签版）：行内
+// <mm:ss.xx> 标签标记每个字的
 // 起始时间，解析成 words 数组 [{t,w}...]；纯文本 text 去掉逐字标签作回退。
 // 分数部分统一转毫秒：'5'→500ms(.5s)，'45'→450ms(.45s)，'345'→345ms(.345s)
 // （旧实现把两位百分秒当毫秒，歌词整体提前约 0.3~0.4 秒的隐性偏差一并修正）
@@ -2532,12 +2533,12 @@ function renderSongs(el,songs){
     const d=document.createElement('div');d.className='so-row';
     if(s.local){ // 本机歌曲：不走服务器点歌/收藏，直接本机插播播放
       d.innerHTML=`<div class="so-num">${i+1}</div>
-        <div class="so-info"><div class="so-t">${esc(s.title)}${mediaBadge(s)}<span class="mt-b mt-loc">本地</span></div><div class="so-a">${esc(s.artist||'')}</div></div>
+        <div class="so-info"><div class="so-t">${esc(s.title)}${mediaBadge(s)}<span class="mt-b mt-loc">本地</span>${lrcBadge(s)}</div><div class="so-a">${esc(s.artist||'')}</div></div>
         <div class="so-acts"><button class="btn-add" data-f onclick="playLocalSong(${s.id})">播放</button></div>`;
     }else{
     const fk='fav_'+s.id,isFaved=localStorage.getItem(fk)==='1';
     d.innerHTML=`<div class="so-num">${i+1}</div>
-      <div class="so-info"><div class="so-t">${s.title}${mediaBadge(s)}<span class="mt-b mt-srv">服务器</span></div><div class="so-a">${s.artist||''}</div></div>
+      <div class="so-info"><div class="so-t">${s.title}${mediaBadge(s)}<span class="mt-b mt-srv">服务器</span>${lrcBadge(s)}</div><div class="so-a">${s.artist||''}</div></div>
       <div class="so-acts">
         <button class="btn-fav${isFaved?' faved':''}" data-f onclick="toggleFav(${s.id},this)">❤</button>
         <button class="btn-add" data-f onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button>
@@ -2553,7 +2554,7 @@ async function addSong(id,title){await fetch('/api/queue',{method:'POST',headers
 function loadQueue(){const el=document.getElementById('pl-queue');el.innerHTML='';if(!queueData.length){el.innerHTML='<div style="color:#555;text-align:center;padding:30px">暂无点歌</div>';return;}queueData.forEach((q,i)=>{const d=document.createElement('div');d.className='qr-row'+(q.status==='playing'?' qrp':'');d.innerHTML=`<div class="qr-num">${q.status==='playing'?'♪':i+1}</div><div class="qr-info"><div class="qr-t">${q.title}</div><div class="qr-m">${q.artist||''} · ${q.nickname}${q.status==='playing'?' <span style="color:var(--ac)">播放中</span>':''}</div></div><div class="qr-acts">${q.status!=='playing'?`<button class="ma ma-top" data-f onclick="topQ(${q.queue_id})">置顶</button>`:''}<button class="ma ma-del" data-f onclick="delQ(${q.queue_id})">✕</button></div>`;el.appendChild(d);});}
 async function topQ(id){await fetch(`/api/queue/${id}/top`,{method:'POST'});}
 async function delQ(id){await fetch(`/api/queue/${id}`,{method:'DELETE'});}
-async function loadCharts(){const el=document.getElementById('pl-charts');el.innerHTML='';const songs=(await fetch('/api/charts').then(r=>r.json())).slice(0,10);if(!songs.length){el.innerHTML='<div style="color:#555;text-align:center;padding:30px">还没有人唱过歌</div>';return;}songs.forEach((s,i)=>{const d=document.createElement('div');d.className='chart-row';const rk=i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}`;d.innerHTML=`<div class="ck ${i<3?'r'+(i+1):''}"> ${rk}</div><div class="chart-info"><div class="ct">${s.title}${mediaBadge(s)}<span class="mt-b mt-srv">服务器</span></div><div class="cm">${s.artist||'未知歌手'}</div></div><span class="cp">${s.play_count}次</span><button class="btn-add" onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button>`;el.appendChild(d);});}
+async function loadCharts(){const el=document.getElementById('pl-charts');el.innerHTML='';const songs=(await fetch('/api/charts').then(r=>r.json())).slice(0,10);if(!songs.length){el.innerHTML='<div style="color:#555;text-align:center;padding:30px">还没有人唱过歌</div>';return;}songs.forEach((s,i)=>{const d=document.createElement('div');d.className='chart-row';const rk=i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}`;d.innerHTML=`<div class="ck ${i<3?'r'+(i+1):''}"> ${rk}</div><div class="chart-info"><div class="ct">${s.title}${mediaBadge(s)}<span class="mt-b mt-srv">服务器</span>${lrcBadge(s)}</div><div class="cm">${s.artist||'未知歌手'}</div></div><span class="cp">${s.play_count}次</span><button class="btn-add" onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button>`;el.appendChild(d);});}
 let st2;
 // 40,000+ 曲库修复：搜索结果原本被硬限在 60 首、且无法翻看更多——一个宽泛
 // 关键词（如歌手姓、单字）能命中成千上万首，却永远只看到前 60 首。
@@ -2709,10 +2710,11 @@ function lxRenderList(el,songs){
     const d=document.createElement('div');d.className='lx-row';
     const hi=i<3?`color:${i===0?'#ffd479':i===1?'#cfd8e3':'#e8a06b'}`:'';
     // 本地曲库拥有情况角标（服务端附加 localMp3/localMv）：MP3 / MV / 同时拥有=MP3+MV；
-    // localLrc=本地有歌词文件时追加「歌词」角标
+    // localLrc=本地有歌词，「歌词」=普通 LRC、「LRCX」=逐字歌词
     const tag=(s.localMp3&&s.localMv?'<span class="mt-b mt-both">MP3+MV</span>'
       :s.localMp3?'<span class="mt-b mt-a">MP3</span>'
-      :s.localMv?'<span class="mt-b mt-v">MV</span>':'')+(s.localLrc?'<span class="mt-b mt-lrc">歌词</span>':'');
+      :s.localMv?'<span class="mt-b mt-v">MV</span>':'')
+      +(s.localLrc?`<span class="mt-b mt-lrc">${s.localLrcx?'LRCX':'歌词'}</span>`:'');
     d.innerHTML=`<div class="n" style="${hi}">${i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}</div>
       <div class="t">${s.name||''}${tag}</div><div class="a">${s.singer||''}</div>
       <button class="btn-add" data-f onclick="lxOrder(${i})">点歌</button>`;
@@ -3410,20 +3412,24 @@ document.addEventListener('keydown',e=>{if(isFS)showOverlay();switch(e.key){case
 function esc(s){return String(s||'').replace(/'/g,"&#39;");}
 // 歌名后媒体类型角标：无损（flac/wav/ape…）/ MV / 音频扩展名。
 // 优先按 filename 后缀判断（老数据 media_type 可能缺失），media_type 兜底。
-// 有歌词（lyrics_path）时追加「歌词」角标（本机歌曲无该字段则不显示）。
 function mediaBadge(s){
   if(!s) return '';
   const fn=String(s.filename||'').toLowerCase();
   let ext=fn.slice(fn.lastIndexOf('.'));
   if(!/^\.[a-z0-9]+$/.test(ext)){const e=String(s.ext||'').toLowerCase().replace(/^\./,'');ext=e?'.'+e:'';}
-  const lrc=s.lyrics_path?'<span class="mt-b mt-lrc">歌词</span>':'';
   if(s.media_type==='video'||['.ts','.mp4','.mkv','.avi','.flv','.mov','.webm','.mpg'].includes(ext))
-    return '<span class="mt-b mt-v">MV</span>'+lrc;
+    return '<span class="mt-b mt-v">MV</span>';
   if(['.flac','.wav','.ape','.alac','.aiff'].includes(ext))
-    return '<span class="mt-b mt-lossless">无损</span>'+lrc;
+    return '<span class="mt-b mt-lossless">无损</span>';
   if(['.m4a','.aac','.ogg','.opus'].includes(ext))
-    return '<span class="mt-b mt-a">'+ext.slice(1).toUpperCase()+'</span>'+lrc;
-  return '<span class="mt-b mt-a">MP3</span>'+lrc;
+    return '<span class="mt-b mt-a">'+ext.slice(1).toUpperCase()+'</span>';
+  return '<span class="mt-b mt-a">MP3</span>';
+}
+// 歌词角标：放在 MP3/无损/服务器/本地 标签之后——有歌词显示「歌词」，
+// 逐字歌词（lrc_karaoke）显示「LRCX」；本机歌曲无 lyrics_path 字段不显示。
+function lrcBadge(s){
+  if(!s||!s.lyrics_path) return '';
+  return `<span class="mt-b mt-lrc">${s.lrc_karaoke?'LRCX':'歌词'}</span>`;
 }
 function showToast(m,persist){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._hideTimer);if(!persist)t._hideTimer=setTimeout(()=>t.classList.remove('show'),1800);}
 function hideToast(){const t=document.getElementById('toast');clearTimeout(t._hideTimer);t.classList.remove('show');}

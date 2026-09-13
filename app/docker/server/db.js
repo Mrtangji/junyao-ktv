@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS songs (
   audio_tracks INTEGER,
   media_type TEXT DEFAULT 'video',
   lyrics_path TEXT,
+  lrc_karaoke INTEGER,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -84,6 +85,10 @@ try {
   }
   if (!cols.includes('lyrics_path')) {
     db.exec('ALTER TABLE songs ADD COLUMN lyrics_path TEXT');
+  }
+  if (!cols.includes('lrc_karaoke')) {
+    // 逐字歌词标记：0=普通 LRC，1=含 <mm:ss.xx> 逐字标签（lrcx / .lrcx 文件）
+    db.exec('ALTER TABLE songs ADD COLUMN lrc_karaoke INTEGER');
   }
   if (!cols.includes('lang')) {
     db.exec('ALTER TABLE songs ADD COLUMN lang TEXT');

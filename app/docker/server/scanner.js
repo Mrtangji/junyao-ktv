@@ -50,8 +50,7 @@ const HLS_SEGMENT_RE = /^(video|audio\d*)_\d{4}\.ts$/i;
 
 // LRC 是与歌曲同名的旁车歌词文件，不作为歌曲入库；支持大小写后缀，
 // 例如「周杰伦 - 晴天.mp3」对应「周杰伦 - 晴天.lrc」。
-// 逐字歌词优先：同名再加 _word 后缀的（如「晴天_word.lrc」）是增强型 LRC
-// （带 <mm:ss.xx> 逐字时间标签），优先于逐行版关联入库。
+// 逐字歌词（LRCX，带 <mm:ss.xx> 逐字时间标签）用 .lrcx 后缀，优先于 .lrc 关联入库。
 // 目录列表带 mtime 缓存：刷新阶段要给每个文件找同名 .lrc，一个歌手目录动辄
 // 几百个文件，原实现每个文件都 readdirSync 一次；现在按目录 mtime 缓存——
 // 目录没变直接复用，目录变了（用户后补了歌词）才重新 readdir。这样既省掉
@@ -73,10 +72,21 @@ function findLyricsPath(filepath) {
   const dir = path.dirname(filepath);
   const stem = path.basename(filepath, path.extname(filepath));
   const names = readDirCached(dir);
-  const word = names.find(name => name.toLowerCase() === `${stem.toLowerCase()}_word.lrc`);
+  // 逐字歌词 .lrcx 优先于普通 .lrc（播放时优先逐字版）
+  const lrcx = names.find(name => name.toLowerCase() === `${stem.toLowerCase()}.lrcx`);
+  if (lrcx) return path.join(dir, lrcx);
   const exact = names.find(name => name.toLowerCase() === `${stem.toLowerCase()}.lrc`);
-  if (word) return path.join(dir, word);
   return exact ? path.join(dir, exact) : null;
+}
+
+// 逐字歌词嗅探：读歌词内容看有没有 <mm:ss.xx> 行内逐字标签
+// （kw lrcx 增强歌词即此格式）。LRC 文件只有几 KB，读一次成本可忽略。
+function sniffLrcKaraoke(lyricsPath) {
+  if (!lyricsPath) return 0;
+  if (/\.lrcx$/i.test(lyricsPath)) return 1;
+  try {
+    return /<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>/.test(fs.readFileSync(lyricsPath, 'utf8')) ? 1 : 0;
+  } catch (e) { return 0; }
 }
 
 // Bug修复：原唱/伴唱切换失效的根源——浏览器的 HTMLMediaElement.audioTracks
@@ -332,8 +342,8 @@ async function scanLibrary() {
   scanState.files = files.length;
   scanState.processed = 0;
   const insert = db.prepare(`
-    INSERT INTO songs (title, artist, filename, filepath, audio_tracks, media_type, lyrics_path, pinyin, pinyin_initial, lang)
-    VALUES (@title, @artist, @filename, @filepath, @audio_tracks, @media_type, @lyrics_path, @pinyin, @pinyin_initial, @lang)
+    INSERT INTO songs (title, artist, filename, filepath, audio_tracks, media_type, lyrics_path, lrc_karaoke, pinyin, pinyin_initial, lang)
+    VALUES (@title, @artist, @filename, @filepath, @audio_tracks, @media_type, @lyrics_path, @lrc_karaoke, @pinyin, @pinyin_initial, @lang)
     ON CONFLICT(filename) DO NOTHING
   `);
   const existing = db.prepare('SELECT filename FROM songs').all().map(r => r.filename);
@@ -413,7 +423,8 @@ async function scanLibrary() {
             // 歌词路径存绝对路径：下载目录可配置后歌词文件不一定在 MV_DIR 下，相对路径
             // 表达不了跨目录引用（/lyrics/:id 接口同时兼容旧库存量的相对路径）。
             const lyrics_path = lyrics ? lyrics : null;
-            const r = insert.run({ title, artist, filename: rel, filepath: f, audio_tracks, media_type, lyrics_path, pinyin: toPinyin(title), pinyin_initial: toPinyinInitial(title), lang: detectLang(title, artist) });
+            const lrc_karaoke = sniffLrcKaraoke(lyrics_path);
+            const r = insert.run({ title, artist, filename: rel, filepath: f, audio_tracks, media_type, lyrics_path, lrc_karaoke, pinyin: toPinyin(title), pinyin_initial: toPinyinInitial(title), lang: detectLang(title, artist) });
             if (r.changes > 0) added++;
             upsertStat.run(rel, mtimeMs, size);   // 探测通过才登记；失败的下轮重试
           } catch (e) {
@@ -441,16 +452,18 @@ async function scanLibrary() {
   // 是纯浪费的 WAL 写放大；歌词目录读取走 mtime 缓存（readDirCached），同一
   // 歌手目录只 readdir 一次，且后补的歌词（目录 mtime 变了）仍会被发现。
   try {
-    const rows = db.prepare('SELECT filename, media_type, lyrics_path FROM songs').all();
+    const rows = db.prepare('SELECT filename, media_type, lyrics_path, lrc_karaoke FROM songs').all();
     const rowMap = new Map(rows.map(r => [r.filename, r]));
-    const updMeta = db.prepare('UPDATE songs SET media_type = ?, lyrics_path = ? WHERE filename = ?');
+    const updMeta = db.prepare('UPDATE songs SET media_type = ?, lyrics_path = ?, lrc_karaoke = ? WHERE filename = ?');
     for (const x of files) {
       const type = AUDIO_EXT.includes(path.extname(x.f).toLowerCase()) ? 'audio' : 'video';
       const lrc = findLyricsPath(x.f);
       const lrcPath = lrc ? lrc : null;
       const row = rowMap.get(x.rel);
-      if (row && (row.media_type !== type || row.lyrics_path !== lrcPath)) {
-        updMeta.run(type, lrcPath, x.rel);
+      if (!row) continue;
+      // 逐字标记只嗅探一次（null=从未嗅探过，升级首扫补齐）；路径变化时重嗅
+      if (row.media_type !== type || row.lyrics_path !== lrcPath || row.lrc_karaoke == null) {
+        updMeta.run(type, lrcPath, sniffLrcKaraoke(lrcPath), x.rel);
       }
     }
   } catch (e) {
@@ -549,11 +562,12 @@ function scanFile(f) {
     const media_type = AUDIO_EXT.includes(ext) ? 'audio' : 'video';
     const audio_tracks = media_type === 'audio' ? 1 : probeAudioTracks(f);
     const lyrics_path = findLyricsPath(f) || null;
+    const lrc_karaoke = sniffLrcKaraoke(lyrics_path);
     const insert = db.prepare(`
-      INSERT INTO songs (title, artist, filename, filepath, audio_tracks, media_type, lyrics_path, pinyin, pinyin_initial, lang)
-      VALUES (@title, @artist, @filename, @filepath, @audio_tracks, @media_type, @lyrics_path, @pinyin, @pinyin_initial, @lang)
+      INSERT INTO songs (title, artist, filename, filepath, audio_tracks, media_type, lyrics_path, lrc_karaoke, pinyin, pinyin_initial, lang)
+      VALUES (@title, @artist, @filename, @filepath, @audio_tracks, @media_type, @lyrics_path, @lrc_karaoke, @pinyin, @pinyin_initial, @lang)
     `);
-    insert.run({ title, artist, filename: rel, filepath: f, audio_tracks, media_type, lyrics_path, pinyin: toPinyin(title), pinyin_initial: toPinyinInitial(title), lang: detectLang(title, artist) });
+    insert.run({ title, artist, filename: rel, filepath: f, audio_tracks, media_type, lyrics_path, lrc_karaoke, pinyin: toPinyin(title), pinyin_initial: toPinyinInitial(title), lang: detectLang(title, artist) });
     // 顺手登记 mtime/size：下一轮全量扫描时这个文件就能走"未变化跳过探测"通道
     try {
       const st = fs.statSync(f);

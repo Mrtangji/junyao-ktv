@@ -571,11 +571,11 @@ function normTitle(t) {
 function localSongMap() {
   if (_locMap && Date.now() - _locMapAt < 60000) return _locMap;
   const map = new Map();
-  for (const r of db.prepare('SELECT title, artist, media_type, lyrics_path FROM songs').all()) {
+  for (const r of db.prepare('SELECT title, artist, media_type, lyrics_path, lrc_karaoke FROM songs').all()) {
     const k = normTitle(r.title);
     if (!k) continue;
     if (!map.has(k)) map.set(k, []);
-    map.get(k).push({ artist: String(r.artist || '').toLowerCase(), mt: r.media_type, lrc: !!r.lyrics_path });
+    map.get(k).push({ artist: String(r.artist || '').toLowerCase(), mt: r.media_type, lrc: !!r.lyrics_path, lrcx: !!r.lrc_karaoke });
   }
   _locMap = map; _locMapAt = Date.now();
   return map;
@@ -607,14 +607,14 @@ function localFlags(name, singer) {
     // 歌手过滤无命中时不强行过滤（榜名歌手写法差异大），退回全部标题匹配
     if (m.length) matched = m;
   }
-  return { mp3: matched.some(r => r.mt === 'audio'), mv: matched.some(r => r.mt === 'video'), lrc: matched.some(r => r.lrc) };
+  return { mp3: matched.some(r => r.mt === 'audio'), mv: matched.some(r => r.mt === 'video'), lrc: matched.some(r => r.lrc), lrcx: matched.some(r => r.lrcx) };
 }
 function attachLocalFlags(list) {
   if (!Array.isArray(list) || !list.length) return list;
   return list.map(s => {
     try {
       const f = localFlags(s.name, s.singer);
-      return { ...s, localMp3: !!f.mp3, localMv: !!f.mv, localLrc: !!f.lrc };
+      return { ...s, localMp3: !!f.mp3, localMv: !!f.mv, localLrc: !!f.lrc, localLrcx: !!f.lrcx };
     } catch (e) { return s; }
   });
 }
@@ -873,6 +873,73 @@ app.put('/api/songs/:id', requireAdminAuth, (req, res) => {
 });
 
 // ---------- 扫描 / 统计 ----------
+
+// ---------- 全库歌词补全（admin） ----------
+// 给库里没有歌词的歌逐首补歌词：kw 搜索「标题 歌手」→ 同时下载两个版本——
+// `歌名.lrc`（逐行版）+ `歌名.lrcx`（逐字版，酷我 newlyric lrcx 接口，拿不到就只有 .lrc），
+// 写到歌曲同目录，更新 lyrics_path / lrc_karaoke。播放时 findLyricsPath 优先 .lrcx。
+// 节流与歌手批量一致（kwSearch 内部已有），整体串行跑，可随时停止。
+let lrcBackfill = { running: false, stopFlag: false, total: 0, done: 0, ok: 0, okLrcx: 0, fail: 0, noMatch: 0, current: '' };
+app.post('/api/lyrics/backfill/start', requireAdminAuth, async (req, res) => {
+  if (lrcBackfill.running) return res.status(409).json({ error: '歌词补全已在进行中' });
+  const rows = db.prepare('SELECT id, title, artist, filepath, filename FROM songs WHERE lyrics_path IS NULL').all();
+  if (!rows.length) return res.json({ ok: true, total: 0 });
+  lrcBackfill = { running: true, stopFlag: false, total: rows.length, done: 0, ok: 0, okLrcx: 0, fail: 0, noMatch: 0, current: '' };
+  res.json({ ok: true, total: rows.length });
+  (async () => {
+    const { kwSearch, kwLyric, kwLyricLrcx } = lxmusic;
+    const norm = t => String(t || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+    for (const row of rows) {
+      if (lrcBackfill.stopFlag) break;
+      lrcBackfill.current = `${row.artist || ''} - ${row.title}`.trim();
+      try {
+        // 搜索：标题 + 首位歌手
+        const q = `${row.title} ${String(row.artist || '').split(/[、;；|/]/)[0] || ''}`.trim();
+        const r = await kwSearch(q, 1, 10);
+        const nt = norm(row.title);
+        const hit = (r.list || []).find(s => {
+          return norm(s.name) === nt || norm(s.name).includes(nt) || nt.includes(norm(s.name));
+        }) || (r.list || [])[0];
+        if (!hit || !hit.songmid) { lrcBackfill.noMatch++; continue; }
+        const dir = path.dirname(row.filepath);
+        const base = path.basename(row.filename, path.extname(row.filename));
+        let wroteLrcx = false, wroteLrc = false;
+        try {
+          const enh = await kwLyricLrcx(hit.songmid, null);
+          fs.writeFileSync(path.join(dir, `${base}.lrcx`), enh, 'utf8'); wroteLrcx = true;
+        } catch (e) {}
+        try {
+          const plain = await kwLyric(hit.songmid, null);
+          fs.writeFileSync(path.join(dir, `${base}.lrc`), plain, 'utf8'); wroteLrc = true;
+        } catch (e) {}
+        if (!wroteLrcx && !wroteLrc) { lrcBackfill.fail++; continue; }
+        // 歌词路径与逐字标记：findLyricsPath 同口径（.lrcx 优先）
+        const lrcPath = wroteLrcx ? path.join(dir, `${base}.lrcx`) : path.join(dir, `${base}.lrc`);
+        db.prepare('UPDATE songs SET lyrics_path=?, lrc_karaoke=? WHERE id=?').run(lrcPath, wroteLrcx ? 1 : 0, row.id);
+        lrcBackfill.ok++;
+        if (wroteLrcx) lrcBackfill.okLrcx++;
+      } catch (e) {
+        lrcBackfill.fail++;
+        console.error('歌词补全失败(' + lrcBackfill.current + '):', e.message);
+      } finally {
+        lrcBackfill.done++;
+        await new Promise(r => setTimeout(r, 400 + Math.random() * 400)); // 节流，防限流
+      }
+    }
+    lrcBackfill.running = false;
+    lrcBackfill.current = '';
+    console.log(`[歌词补全] 结束：${lrcBackfill.ok}/${lrcBackfill.total} 成功（逐字 ${lrcBackfill.okLrcx}），无匹配 ${lrcBackfill.noMatch}，失败 ${lrcBackfill.fail}${lrcBackfill.stopFlag ? '（已停止）' : ''}`);
+  })().catch(e => { lrcBackfill.running = false; console.error('[歌词补全] 异常终止:', e); });
+});
+app.get('/api/lyrics/backfill/status', (req, res) => {
+  const { running, stopFlag, total, done, ok, okLrcx, fail, noMatch, current } = lrcBackfill;
+  res.json({ running, stopping: stopFlag && running, total, done, ok, okLrcx, fail, noMatch, current });
+});
+app.post('/api/lyrics/backfill/stop', requireAdminAuth, (req, res) => {
+  lrcBackfill.stopFlag = true;
+  res.json({ ok: true });
+});
+
 app.post('/api/scan', async (req, res) => {
   // 已在扫就别再起一轮：全量扫描是重活，并发只会互相拖慢、CPU 翻倍
   if (getScanState().scanning) {

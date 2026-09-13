@@ -714,27 +714,28 @@ function lrcxToEnhancedLrc(text) {
   return converted > 0 ? outLines.join('\n') : null;
 }
 
-// lrcx 优先、普通歌词兜底（普通路径不会带 <..> 逐字标签，tv 端自动退化整行显示）
+// 逐字版（.lrcx 专用）：只返回 lrcx 增强文本，失败抛错（由调用方决定回落）
+async function kwLyricLrcx(songmid, signal) {
+  const params = `user=12345,web,web,web&requester=localhost&req=1&rid=MUSIC_${songmid}&lrcx=1`;
+  const key = Buffer.from('yeelion');
+  const raw = Buffer.alloc(params.length);
+  for (let i = 0, j = 0; i < params.length; i++, j = (j + 1) % key.length) raw[i] = params.charCodeAt(i) ^ key[j];
+  const resp = await httpReq(`http://newlyric.kuwo.cn/newlyric.lrc?${raw.toString('base64')}`, { responseType: 'buffer', timeout: 15000, signal });
+  const buf = resp.body;
+  if (resp.statusCode !== 200 || buf.toString('utf8', 0, 10) !== 'tp=content') throw new Error('歌词接口响应异常');
+  const inflated = zlib.inflateSync(buf.slice(buf.indexOf('\r\n\r\n') + 4));
+  const xored = Buffer.from(inflated.toString('latin1'), 'base64');
+  for (let i = 0, j = 0; i < xored.length; i++, j = (j + 1) % key.length) xored[i] ^= key[j];
+  const text = new TextDecoder('gb18030').decode(xored);
+  const enhanced = lrcxToEnhancedLrc(text);
+  if (!enhanced || !/\[\d{1,2}:\d{2}/.test(enhanced)) throw new Error('lrcx 转换失败');
+  return enhanced;
+}
+
+// lrcx 优先、普通歌词兜底（返回"能拿到的最好的一版"）
 async function kwLyricEx(songmid, signal) {
-  try {
-    const params = `user=12345,web,web,web&requester=localhost&req=1&rid=MUSIC_${songmid}&lrcx=1`;
-    const key = Buffer.from('yeelion');
-    const raw = Buffer.alloc(params.length);
-    for (let i = 0, j = 0; i < params.length; i++, j = (j + 1) % key.length) raw[i] = params.charCodeAt(i) ^ key[j];
-    const resp = await httpReq(`http://newlyric.kuwo.cn/newlyric.lrc?${raw.toString('base64')}`, { responseType: 'buffer', timeout: 15000, signal });
-    const buf = resp.body;
-    if (resp.statusCode !== 200 || buf.toString('utf8', 0, 10) !== 'tp=content') throw new Error('歌词接口响应异常');
-    const inflated = zlib.inflateSync(buf.slice(buf.indexOf('\r\n\r\n') + 4));
-    const xored = Buffer.from(inflated.toString('latin1'), 'base64');
-    for (let i = 0, j = 0; i < xored.length; i++, j = (j + 1) % key.length) xored[i] ^= key[j];
-    const text = new TextDecoder('gb18030').decode(xored);
-    const enhanced = lrcxToEnhancedLrc(text);
-    if (enhanced && /\[\d{1,2}:\d{2}/.test(enhanced)) return enhanced;
-    throw new Error('lrcx 转换失败');
-  } catch (e) {
-    // 任何异常回落普通歌词
-    return kwLyric(songmid, signal);
-  }
+  try { return await kwLyricLrcx(songmid, signal); }
+  catch (e) { return kwLyric(songmid, signal); }
 }
 
 // ---------- 下载入库 ----------
@@ -979,17 +980,24 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
       try { fs.unlinkSync(tmpPath); } catch (e) {}
     }
   } catch (e) { try { fs.unlinkSync(finalPath); } catch (e2) {} throw e; }
-  // 同步下载 LRC 歌词（同名 .lrc 放一起，扫描器自动关联 lyrics_path）；
-  // 歌词属附属信息，失败不影响歌曲入库。外部传入 lrcText（wy/tx/kg 由 boardsdk 取）
-  // 优先使用；kw 平台用内置酷我歌词接口兜底。
+  // 同步下载歌词，两个版本都落盘：`歌名.lrc`（逐行版）+ `歌名.lrcx`（逐字版，
+  // 仅 kw 平台能拿到；扫描器 findLyricsPath 优先 .lrcx，播放自动用逐字版）。
+  // 歌词属附属信息，失败不影响歌曲入库。外部传入 lrcText（wy/tx/kg 由 boardsdk
+  // 取，只有逐行版）优先使用；kw 平台用内置酷我歌词接口兜底。
   // 已被停止：跳过附属的歌词抓取（音频已经落盘，没必要再等一次网络请求才收工）
   try {
     if (!isAborted(signal)) {
-      let lrc = lrcText;
-      if (!lrc && platform === 'kw') { try { lrc = await kwLyricEx(songmid, signal); } catch (e) { lrc = null; } }
-      if (lrc) {
-        fs.writeFileSync(path.join((isMv ? mp3Root : dlRoot), rel.replace(/\.(mp3|mp4|flac|m4a|aac|ogg|opus|wav)$/i, '.lrc')), lrc, 'utf8');
-      } else { console.error('LRC 下载失败(忽略):', name); }
+      const lrcDir = isMv ? mp3Root : dlRoot;
+      const lrcBase = rel.replace(/\.(mp3|mp4|flac|m4a|aac|ogg|opus|wav)$/i, '');
+      let plain = lrcText, enhanced = null;
+      if (platform === 'kw') {
+        try { enhanced = await kwLyricLrcx(songmid, signal); } catch (e) { enhanced = null; }
+        if (!plain) { try { plain = await kwLyric(songmid, signal); } catch (e) { plain = null; } }
+      }
+      let wrote = false;
+      if (plain) { fs.writeFileSync(path.join(lrcDir, `${lrcBase}.lrc`), plain, 'utf8'); wrote = true; }
+      if (enhanced) { fs.writeFileSync(path.join(lrcDir, `${lrcBase}.lrcx`), enhanced, 'utf8'); wrote = true; }
+      if (!wrote) console.error('LRC 下载失败(忽略):', name);
     }
   } catch (e) { console.error('LRC 下载失败(忽略):', name, e.message); }
   // 4) 入库并返回新行：只登记本首（含 MV 模式保留的同名 mp3），不再触发整库全量重扫，
@@ -1036,7 +1044,7 @@ function findLocalSong(name, singer, filter) {
 
 module.exports = {
   initActiveSource, activateSourceById, deactivateSource, activateScript, activeSource: () => activeSource,
-  resolveMusicUrl, resolveMusicUrlWithFallback, kwSearch, kwBoardSongs, KW_BOARDS, kwLyric, kwLyricEx, lrcxToEnhancedLrc,
+  resolveMusicUrl, resolveMusicUrlWithFallback, kwSearch, kwBoardSongs, KW_BOARDS, kwLyric, kwLyricEx, kwLyricLrcx, lrcxToEnhancedLrc,
   downloadSong, findLocalSong, parseScriptMeta,
   runSourceScript,
   getLxTrace: () => lxTraceBuf.slice(),

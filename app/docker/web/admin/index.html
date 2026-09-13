@@ -249,6 +249,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
   <button class="hbtn" onclick="window.open('/tv','_blank')">📺 TV端</button>
   <button class="hbtn" onclick="window.open('/m','_blank')">📱 手机端</button>
   <button class="hbtn primary" onclick="doScan()">🔄 扫描曲库</button>
+  <button class="hbtn" id="lrcbf-btn" onclick="lrcBackfillStart()">📝 补全歌词</button>
   <button class="hbtn" onclick="openBulkModal()">📦 全曲库下载</button>
   <button class="hbtn" onclick="openSingerModal()">🎤 歌手批量下载</button>
   <button class="hbtn" onclick="openLxModal()">🎼 LX 音源</button>
@@ -385,9 +386,6 @@ main{max-width:960px;margin:0 auto;padding:24px}
         <div style="flex:1"><label>合唱人数上限（0=不限）</label><input id="sb-maxsingers" type="number" min="0" max="20" step="1" value="2"></div>
       </div>
       <div class="form-row" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:2px">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="checkbox" id="sb-sqonly" checked> 只收无损（平台标注没有 FLAC 的直接跳过，不回落 MP3）
-        </label>
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
           <input type="checkbox" id="sb-onepage"> 只搜首页（快速收集，不翻页）
         </label>
@@ -846,6 +844,48 @@ async function doScan(){
   loadAll();
 }
 
+// ===== 全库歌词补全：给没歌词的歌逐首下载 .lrc（逐行版）+ .lrcx（逐字版） =====
+let lrcbfTimer = null;
+async function lrcBackfillStart(){
+  const btn = document.getElementById('lrcbf-btn');
+  btn.disabled = true; btn.textContent = '⏳ 启动中…';
+  try {
+    const r = await fetch('/api/lyrics/backfill/start', { method: 'POST' });
+    const d = await r.json();
+    if (!r.ok) { toast('⚠️ ' + (d.error || '启动失败')); btn.disabled = false; btn.textContent = '📝 补全歌词'; return; }
+    if (!d.total) { toast('✅ 曲库所有歌曲都已有歌词'); btn.disabled = false; btn.textContent = '📝 补全歌词'; return; }
+    toast(`歌词补全开始：共 ${d.total} 首待补`);
+    if (lrcbfTimer) clearInterval(lrcbfTimer);
+    lrcbfTimer = setInterval(lrcBackfillPoll, 1200);
+    lrcBackfillPoll();
+  } catch (e) {
+    toast('⚠️ 启动失败：' + e.message);
+    btn.disabled = false; btn.textContent = '📝 补全歌词';
+  }
+}
+async function lrcBackfillPoll(){
+  const btn = document.getElementById('lrcbf-btn');
+  let d;
+  try { d = await (await fetch('/api/lyrics/backfill/status')).json(); }
+  catch (e) { return; }
+  btn.textContent = d.running
+    ? `📝 补词中 ${d.done}/${d.total}（点击停止）`
+    : '📝 补全歌词';
+  btn.disabled = false;
+  btn.onclick = d.running ? lrcBackfillStop : lrcBackfillStart;
+  if (!d.running) {
+    if (lrcbfTimer) { clearInterval(lrcbfTimer); lrcbfTimer = null; }
+    if (d.done > 0) {
+      toast(`歌词补全结束：成功 ${d.ok}（逐字 ${d.okLrcx}）· 无匹配 ${d.noMatch} · 失败 ${d.fail}`);
+      loadAll();
+    }
+    btn.onclick = lrcBackfillStart;
+  }
+}
+async function lrcBackfillStop(){
+  try { await fetch('/api/lyrics/backfill/stop', { method: 'POST' }); toast('⏹ 正在停止歌词补全…'); } catch (e) {}
+}
+
 function toast(msg){
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
@@ -860,7 +900,7 @@ function mediaBadge(s){
   const fn = String(s.filename||'').toLowerCase();
   let ext = fn.slice(fn.lastIndexOf('.'));
   if(!/^\.[a-z0-9]+$/.test(ext)){ const e = String(s.ext||'').toLowerCase().replace(/^\./,''); ext = e ? '.'+e : ''; }
-  const lrc = s.lyrics_path ? '<span class="mt-b mt-lrc">歌词</span>' : '';
+  const lrc = s.lyrics_path ? `<span class="mt-b mt-lrc">${s.lrc_karaoke?'LRCX':'歌词'}</span>` : '';
   if(s.media_type === 'video' || ['.ts','.mp4','.mkv','.avi','.flv','.mov','.webm','.mpg'].includes(ext))
     return '<span class="mt-b mt-v">MV</span>'+lrc;
   if(['.flac','.wav','.ape','.alac','.aiff'].includes(ext))
@@ -1164,7 +1204,7 @@ async function sbRefresh(){
   document.getElementById('sb-status').innerHTML =
     (st.stopping ? `<span style="color:var(--cyan)">⏹ 正在停止…已断开在途请求，当前这首收尾后立即结束</span><br>` : '') +
     (paused ? `<span style="color:var(--cyan)">⏸ 已暂停${st.pausedReason ? `（${st.pausedReason}）` : ''} · 进度已保存，点「▶ 继续下载」接着下</span><br>` : '') +
-    (st.sources && st.sources.length > 1 ? `搜索平台：全部（${st.sources.join('/')}）${st.sqOnly ? ' · <span style="color:var(--cyan)">只收无损</span>' : ''}<br>` : (st.sqOnly ? '<span style="color:var(--cyan)">只收无损</span><br>' : '')) +
+    (st.sources && st.sources.length > 1 ? `搜索平台：全部（${st.sources.join('/')}）<br>` : '') +
     `${st.message || '运行中…'}<br>` +
     `歌手进度：${st.singersDone}/${st.singersTotal} · 当前：${st.current || '—'}<br>` +
     `<span style="color:var(--accent)">已下载 ${st.done}</span>` +
@@ -1194,7 +1234,7 @@ async function sbStart(){
     format: document.getElementById('sb-format').value,
     minDur: parseFloat(document.getElementById('sb-mindur').value) || 0,
     maxDur: parseFloat(document.getElementById('sb-maxdur').value) || 0,
-    sqOnly: document.getElementById('sb-sqonly').checked,
+    sqOnly: false,
     autoPage: !document.getElementById('sb-onepage').checked,
     maxSingers: parseInt(document.getElementById('sb-maxsingers').value) || 0,
     useFilter: document.getElementById('sb-usefilter').checked,
@@ -1223,7 +1263,7 @@ async function sbStartSingle(){
     onlyTitle: title,
     src: document.getElementById('sb-src').value,
     format: document.getElementById('sb-format').value,
-    sqOnly: document.getElementById('sb-sqonly').checked,
+    sqOnly: false,
     autoPage: true,
     useFilter: false,
     filterWords: '',
