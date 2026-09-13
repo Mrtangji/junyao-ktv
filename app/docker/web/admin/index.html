@@ -956,9 +956,14 @@ async function bulkRefresh(){
       const pct = d.total ? Math.round(d.done*100/d.total) : 0;
       const phase = d.mode === 'scan' && d.scanned < d.total && !d.done ? `扫描中 ${d.scanned}` : '';
       const modeName = d.mode==='scan' ? '扫库补缺' : d.mode==='retry' ? '重试失败清单' : d.mode==='nos' ? '按编号下载' : '区间下载';
+      // 每个 worker 一行"当前[序号]"；后端没给 currents（旧版）就退回单行 current。
+      // 注意 currents 的槽位序号即 worker 序号，两个并发下的是两首不同的歌。
+      const curLine = (Array.isArray(d.currents) && d.currents.some(c=>c))
+        ? d.currents.map((c,i)=>c?`当前[${i+1}]：${esc(c)}`:null).filter(Boolean).join('<br>')
+        : (d.current?`当前：${esc(d.current)}`:'');
       runLine = `⏳ ${modeName}进行中：<b style="color:var(--cyan)">${d.done}/${d.total}</b>（${pct}%）` +
         (d.failed?`，失败 ${d.failed}`:'') + (d.skipped?`，跳过反盗版 ${d.skipped}`:'') + (phase?` · ${phase}`:'') +
-        (d.current?`<br>当前：${esc(d.current)}`:'');
+        (curLine?`<br>${curLine}`:'');
       const wrap = document.getElementById('bulk-bar-wrap');
       wrap.style.display = 'block';
       document.getElementById('bulk-bar').style.width = pct + '%';
@@ -972,7 +977,7 @@ async function bulkRefresh(){
     const skipN = d.skippedCount || 0;
     const skipLine = skipN ? `跳过反盗版：${skipN} 首（编号在 /data/${esc(d.skippedFile||'bulk-skipped.txt')}，可粘贴到上面重试）` : '跳过反盗版：0';
     el.innerHTML = `麦动曲库：${museLine}<br>保存目录：MV/ts · ${catLine}<br>${skipLine}<br>${runLine}` +
-      (d.concurrency?` · 并发 ${d.concurrency}`:'') + `<br>${runLine}` +
+      (d.concurrency?` · 并发 ${d.concurrency}`:'') +
       (d.lastError?`<br><span style="color:var(--pink)">最近错误：${esc(d.lastError)}</span>`:'');
   }catch(e){ el.textContent = '状态获取失败：' + e.message; }
 }
@@ -1156,6 +1161,7 @@ async function sbRefresh(){
     (st.fallback ? `（其中换源成功 ${st.fallback}）` : '') +
     ` · 本地已有跳过 ${st.skipped}` +
     (st.noLossless ? ` · <span style="color:var(--cyan)">无无损跳过 ${st.noLossless}</span>` : '') +
+    (st.preview ? ` · <span style="color:var(--cyan)">试听片段 ${st.preview}</span>` : '') +
     ` · <span style="color:${st.failed ? 'var(--pink)' : 'inherit'}">失败 ${st.failed}</span>` +
     (st.lastError ? `<br><span style="color:var(--pink)">${st.lastError}</span>` : '');
   const fwEl = document.getElementById('sb-failed-wrap');

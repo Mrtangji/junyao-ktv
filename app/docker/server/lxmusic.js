@@ -21,7 +21,7 @@ const https = require('https');
 const zlib = require('zlib');
 const crypto = require('crypto');
 const vm = require('vm');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const db = require('./db');
 const { firstSinger } = require('./singers');
 
@@ -566,6 +566,15 @@ function moveFile(src, dst) {
 // "Invalid data found when processing input"，且坏内容可能被当歌曲改名入库。
 // 这里用魔数识别：mp3/flac/ogg/m4a/wav/aac(ADTS) 视为有效；m3u8 单独提示；
 // 文本类取出前 120 字符展示给用户（通常是接口报错信息）。
+// 用 ffprobe 读媒体时长（秒）；读不出返回 null（调用方放行，探测失败不误杀）。
+function probeDurationSec(file) {
+  try {
+    const out = execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file], { timeout: 15000 }).toString().trim();
+    const d = parseFloat(String(out).split(/\r?\n/)[0]);
+    return Number.isFinite(d) && d > 0 ? d : null;
+  } catch (e) { return null; }
+}
+
 function sniffAudio(buf) {
   if (!buf || buf.length < 16) return { kind: 'unknown' };
   const head = buf.toString('latin1', 0, 512).replace(/^\uFEFF/, '').trimStart();
@@ -672,6 +681,17 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   const finalPath = path.join(dlRoot, rel);
   const key = rel.replace(/\\/g, '/');
   fs.writeFileSync(tmpPath, resp.body);
+  // 完整性校验：VIP 歌曲走兜底直链拿到的常是十几秒的「试听/保护片段」
+  //（格式合法、sniff 能过，但根本不是完整歌曲——实测《七里香》只有 11.3 秒）。
+  // 用 ffprobe 实测时长，低于阈值整首作废：宁可这首计跳过，也不让垃圾混进曲库。
+  const minSec = Math.max(0, parseFloat(process.env.DL_MIN_AUDIO_SEC || '60') || 0);
+  if (minSec > 0) {
+    const dur = probeDurationSec(tmpPath);
+    if (dur != null && dur < minSec) {
+      try { fs.unlinkSync(tmpPath); } catch (e) {}
+      throw Object.assign(new Error(`音源返回的是试听/保护片段（仅 ${dur.toFixed(1)} 秒），已拒收`), { __previewClip: true });
+    }
+  }
   // 转码/合成阶段可被"停止"立刻掐断（kill 掉 ffmpeg 子进程），不必等整首转完
   try {
     if (!isMv) {

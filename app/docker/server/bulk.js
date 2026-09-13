@@ -25,6 +25,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const https = require('https');
+const { execFileSync } = require('child_process');
 const muse = require('./muse');
 const dlcfg = require('./dlconfig');
 const log = require('./logger');
@@ -262,6 +263,7 @@ class BulkDownloader {
       done: this.state.done || 0,
       failed: this.state.failed || 0,
       current: this.state.current || '',
+      currents: this.state.currents || [],
       lastError: this.state.lastError || '',
       startedAt: this.state.startedAt || null,
       from: this.state.from || 1,
@@ -318,25 +320,33 @@ class BulkDownloader {
    * 整包对齐；首包/尾包/中部抽样包的同步字节必须是 0x47。截断、0 字节、被
    * HTML 错误页覆盖等损坏基本都能拦住。
    */
-  checkTsIntegrity(p) {
-    try {
-      const size = fs.statSync(p).size;
-      if (size === 0) return false;
-      let pkt = 0;
-      if (size % 188 === 0) pkt = 188;
-      else if (size % 192 === 0) pkt = 192;
-      else return false;
-      const fd = fs.openSync(p, 'r');
-      try {
-        const buf = Buffer.alloc(1);
-        const syncOk = (pos) => { fs.readSync(fd, buf, 0, 1, pos); return buf[0] === 0x47; };
-        if (!syncOk(0)) return false;
-        if (!syncOk(size - pkt)) return false;
-        if (size > pkt * 2 && !syncOk(Math.floor(size / 2 / pkt) * pkt)) return false;
-        return true;
-      } finally { fs.closeSync(fd); }
-    } catch (e) { return false; }
-  }
+   checkTsIntegrity(p) {
+     try {
+       const size = fs.statSync(p).size;
+       if (size === 0) return false;
+       // 快路径：标准 MPEG-TS（188/192 字节包长 + 0x47 同步字节三点头），
+       // 零子进程开销，绝大多数文件走这条直接通过。
+       let pkt = 0;
+       if (size % 188 === 0) pkt = 188;
+       else if (size % 192 === 0) pkt = 192;
+       if (pkt) {
+         const fd = fs.openSync(p, 'r');
+         try {
+           const buf = Buffer.alloc(1);
+           const syncOk = (pos) => { fs.readSync(fd, buf, 0, 1, pos); return buf[0] === 0x47; };
+           if (syncOk(0) && syncOk(size - pkt) && (size <= pkt * 2 || syncOk(Math.floor(size / 2 / pkt) * pkt))) return true;
+         } finally { fs.closeSync(fd); }
+       }
+       // 慢路径：源有时返回能正常播放但不是"教科书式 TS"的容器（fMP4/mp4、
+       // 带尾部元数据导致字节数不再被 188 整除、纯音频等）。原来的同步字节 +
+       // 整除检查会误杀这类文件——已实测「烟雨醉江南」下载完整可播放却被判
+       // "不是有效 TS"。交给 ffprobe 实测：能打开并 demux 出流即为完整媒体。
+       try {
+         execFileSync('ffprobe', ['-v', 'error', '-i', p], { timeout: 20000, stdio: 'ignore' });
+         return true;
+       } catch (e) { return false; }
+     } catch (e) { return false; }
+   }
 
   /** 递归收集 MV_DIR/ts 下所有 .ts/.mp3 的相对路径，每 200 个让出事件循环。 */
   async _scanDirRels() {
@@ -491,10 +501,25 @@ class BulkDownloader {
       this.state.skipped = 0;
       this._saveState();
     }
+    // 队列去重：清单/区间里同一首出现两次时（muse.db 有重复曲目项），两个
+    // worker 会同时选中同一个目标文件（_pickTarget 只判断"文件不存在"），
+    // 并发写坏文件。键用编号/歌名——它决定 _nameCandidates 的输出。
+    const seenKey = new Set();
+    queue = queue.filter((it) => {
+      const k = (it && it.no != null) ? `no:${it.no}` : `${(it && it.singer) || ''} - ${(it && it.title) || ''}`;
+      if (seenKey.has(k)) return false;
+      seenKey.add(k);
+      return true;
+    });
+    this.state.total = queue.length;
+    // 每个 worker 一格的实时进度：worker(i) 只写自己的槽位，管理页分开显示
+    // "当前[1]/当前[2]"两行不同的歌（原来只有一个 current 字段，两行拼重了
+    // 像是"并发在下同一首"）。
+    this.state.currents = new Array(DL_CONCURRENCY).fill('');
     let sinceSave = 0;
     const failedList = this.state.failedList || (this.state.failedList = []);
 
-    const worker = async () => {
+    const worker = async (idx) => {
       while (queue.length > 0) {
         if (this.state.stopRequested) return;
         const item = queue.shift();
@@ -511,7 +536,8 @@ class BulkDownloader {
           this._removeSkipped(item.no, this._nameCandidates(item)[0]);
           continue;
         }
-        this.state.current = `${item.title}（${item.singer || '未知歌手'}）`;
+        this.state.currents[idx] = `${item.title}（${item.singer || '未知歌手'}）`;
+        this.state.current = this.state.currents.filter(Boolean).join(' ｜ ');
         let target = null;
         try {
           // 学习 maidong ④编号MV补下逻辑：先请求 ls=0（普通 MV 源）。接口对
@@ -551,7 +577,8 @@ class BulkDownloader {
             if (target) { try { fs.unlinkSync(target); } catch (e2) {} }
             this.state.skipped++;
             this._recordSkipped(item);
-            this.state.current = `跳过反盗版：${item.title}（${item.singer || '未知歌手'}）`;
+            this.state.currents[idx] = `跳过反盗版：${item.title}（${item.singer || '未知歌手'}）`;
+            this.state.current = this.state.currents.filter(Boolean).join(' ｜ ');
           } else {
             this.state.failed++;
             this.state.lastError = `${item.title}: ${reason}`;
@@ -567,10 +594,11 @@ class BulkDownloader {
       }
     };
 
-    const workers = Array.from({ length: DL_CONCURRENCY }, () => worker());
+    const workers = Array.from({ length: DL_CONCURRENCY }, (_, i) => worker(i));
     await Promise.all(workers);
     this.state.running = false;
     this.state.current = '';
+    this.state.currents = [];
     this._saveState();
     log.info('BULK', `批量下载结束：完成 ${this.state.done}，失败 ${this.state.failed}`);
     // 结束后自动扫一次曲库把新文件入库（失败不影响下载结果，可手动再扫）

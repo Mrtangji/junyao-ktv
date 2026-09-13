@@ -137,6 +137,7 @@ const state = {
   failed: 0,
   skipped: 0,           // 本地已有
   noLossless: 0,        // 只收无损模式下：四平台都没有无损，主动跳过
+  preview: 0,           // 试听/保护片段拒收（ffprobe 时长低于阈值）
   fallback: 0,          // 换平台成功数
   lastError: '',
   failedList: [],       // [{name, singer, src, reason}] 上限 500
@@ -502,6 +503,11 @@ async function runJob(job) {
               // 只收无损模式：四平台都只给到有损 → 不算失败，单独计数
               bump(job, 'noLossless');
               state.lastError = `${song.name}：无无损资源，已跳过`;
+            } else if (e2 && e2.__previewClip) {
+              // 音源给的是十几秒的试听/保护片段（ffprobe 实测时长不足），
+              // 不算失败也不入库，单独计数
+              bump(job, 'preview');
+              state.lastError = `${song.name}：试听/保护片段，已拒收`;
             } else if (/block ip/i.test(String((e2 && e2.message) || e2))) {
               state.lastError = `${song.name}：音源限流（block ip）`;
               autoPause('音源限流（block ip），等几分钟再点「继续下载」');
@@ -548,7 +554,8 @@ async function runJob(job) {
 
 function finish(kind) {
   const tail = (state.fallback > 0 ? `、换源 ${state.fallback}` : '') + `、跳过 ${state.skipped}` +
-    (state.noLossless ? `、无无损 ${state.noLossless}` : '') + `、失败 ${state.failed}`;
+    (state.noLossless ? `、无无损 ${state.noLossless}` : '') +
+    (state.preview ? `、试听片段 ${state.preview}` : '') + `、失败 ${state.failed}`;
   state.phase = 'done';
   state.running = false;
   state.stopping = false;
@@ -613,7 +620,7 @@ async function start(opts = {}) {
     opts: { src, format, sqOnly, autoPage, maxSingers, useFilter, filterWords, minDurSec: minDur, maxDurSec: maxDur },
     singerIndex: 0,
     pendingSongs: [],
-    stats: { done: 0, failed: 0, skipped: 0, noLossless: 0, fallback: 0, failedList: [] },
+    stats: { done: 0, failed: 0, skipped: 0, noLossless: 0, preview: 0, fallback: 0, failedList: [] },
     reason: '',
     savedAt: '',
   };
@@ -637,7 +644,7 @@ function launch(job) {
     singersTotal: job.names.length, singersDone: job.singerIndex || 0,
     current: job.names[job.singerIndex] || '', collected: 0,
     done: job.stats.done, failed: job.stats.failed, skipped: job.stats.skipped,
-    noLossless: job.stats.noLossless, fallback: job.stats.fallback,
+    noLossless: job.stats.noLossless, preview: job.stats.preview || 0, fallback: job.stats.fallback,
     lastError: '', failedList: job.stats.failedList,
     stopping: false,
     sources: o.src === 'all' ? [...ALL_SOURCES] : [o.src || 'kw'],
@@ -747,7 +754,7 @@ function stopSingerBatch() {
     singersTotal: job.names.length, singersDone: job.singerIndex || 0,
     current: job.names[job.singerIndex] || '', collected: 0,
     done: job.stats.done, failed: job.stats.failed, skipped: job.stats.skipped,
-    noLossless: job.stats.noLossless, fallback: job.stats.fallback,
+    noLossless: job.stats.noLossless, preview: job.stats.preview || 0, fallback: job.stats.fallback,
     lastError: (job.stats.failedList || []).length ? '' : '', failedList: job.stats.failedList,
     pausedReason: job.reason || '上次任务未完成',
     sources: o.src === 'all' ? [...ALL_SOURCES] : [o.src || 'kw'],
@@ -775,7 +782,7 @@ module.exports = {
         minDurSec: 0, maxDurSec: 0,
       },
       singerIndex: 0, pendingSongs: [],
-      stats: { done: 0, failed: 0, skipped: 0, noLossless: 0, fallback: 0, failedList: [] },
+      stats: { done: 0, failed: 0, skipped: 0, noLossless: 0, preview: 0, fallback: 0, failedList: [] },
       reason: '', savedAt: '',
     }),
     saveJob, loadJob, clearJob, syncPending, isJobPending, state, JOB_FILE,
