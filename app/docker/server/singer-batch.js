@@ -313,6 +313,8 @@ async function downloadViaOtherSources(song, format, excludeSrc, sqOnly, maxSing
       if (stopFlag || pauseFlag) return null;
       const cand = (r.list || []).find(m =>
         titleMatch(m.name, song.name) && singerMatch(m.singer, lead) &&
+        // 候选歌名带括号（Demo/Live/网友改编等杂版）与收集阶段口径一致，换源也不收
+        !/[()（）]/.test(m.name) &&
         !(sqOnly && typesSayNoLossless(m)) &&
         !(maxSingers > 0 && singerCount(m.singer) > maxSingers));
       if (!cand) continue;
