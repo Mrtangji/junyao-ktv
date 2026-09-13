@@ -7,6 +7,9 @@
 <style>
 :root{--bg:#07071a;--card:#10102a;--accent:#c736f7;--cyan:#36d9f7;--pink:#ff4f9b;--text:#f4f4ff;--sub:#8888aa}
 *{box-sizing:border-box;margin:0;padding:0}
+/* 安卓 Chrome 的文字自动放大（Font Boosting）会随屏幕宽度擅自放大字号、
+   撑破布局，关掉它，让页面按 CSS 实际字号渲染。 */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 /* 下拉框：原生 popup 默认白底会吞掉浅色文字，强制深色底+浅色字 */
 select{color:var(--text)}
 select option{background:var(--card);color:var(--text)}
@@ -220,6 +223,58 @@ main{max-width:960px;margin:0 auto;padding:24px}
 #sb-modal{width:min(560px,92vw);max-height:86vh;overflow-y:auto;background:var(--card);border:1px solid rgba(255,255,255,.1);
   border-radius:18px;padding:26px}
 #sb-modal h3{font-size:17px;margin-bottom:18px}
+
+/* ===== 安卓手机浏览器适配（≤768px）=====
+   要点：
+   1) 输入框字号提到 16px —— 安卓/iOS 聚焦 <16px 的输入框会自动放大整页，
+      导致"点一下搜索框页面就变糊/错位"。
+   2) 头部 9 个按钮改为自动换行，不再横向溢出。
+   3) 表格窄屏放不下 5 列，隐藏序号(#)与播放数，歌名允许换行。
+   4) 弹窗接近满宽 + 内部滚动，避免超出屏幕后"保存"按钮点不到。
+   5) 底部扫描进度条避开刘海屏/手势条的 safe-area。 */
+@media (max-width:768px){
+  /* 1) 防聚焦放大 */
+  .search-box input,.form-row input,.form-row textarea,.auth-box input{font-size:16px}
+
+  /* 2) 头部换行 + 紧凑化 */
+  header{padding:10px 12px;gap:8px;flex-wrap:wrap}
+  .logo{font-size:16px}
+  .logo span{display:none}          /* 副标题"曲库管理"窄屏省掉 */
+  .ver-badge{font-size:11px;padding:4px 8px;margin-left:auto}
+  header .spacer{display:none}
+  .hbtn{padding:8px 11px;font-size:12px;border-radius:9px;line-height:1.2}
+
+  /* 3) 主体与统计卡 */
+  main{padding:12px 10px calc(14px + env(safe-area-inset-bottom))}
+  .stats-row{gap:8px;margin-bottom:16px}
+  .stat{padding:12px 4px;border-radius:12px}
+  .stat .n{font-size:22px}
+  .stat .l{font-size:11px}
+  .toolbar{margin-bottom:12px}
+  .search-box{padding:9px 12px}
+
+  /* 4) 歌曲表格：隐藏第1列(序号)与第4列(播放数) */
+  .song-table th:nth-child(1),.song-table td:nth-child(1),
+  .song-table th:nth-child(4),.song-table td:nth-child(4){display:none}
+  .song-table th{padding:8px 8px;font-size:11px}
+  .song-table td{padding:9px 8px;font-size:13px}
+  .song-table .title-cell{white-space:normal;overflow-wrap:anywhere}
+  .song-table .artist-cell{font-size:12px;max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row-acts{gap:5px}
+  .act-btn{padding:7px 10px;font-size:12px;min-height:30px}   /* 触控目标加大 */
+  .song-pager{gap:10px;padding:14px 0;font-size:12px}
+  .song-pager button{padding:9px 15px}
+
+  /* 5) 弹窗：接近满宽 + 可滚动 */
+  #modal,#pw-modal{width:94vw;max-width:94vw;padding:20px;max-height:88vh;overflow-y:auto;border-radius:16px}
+  #lx-modal,#bulk-modal,#sb-modal{width:94vw;max-height:88vh;padding:18px;border-radius:16px}
+  .modal-btns .hbtn{padding:10px 16px;font-size:13px}
+
+  /* 6) 底部扫描进度条避开手势条 */
+  #scan-progress{padding:9px 12px calc(10px + env(safe-area-inset-bottom))}
+  #scan-progress .sp-head{font-size:12px;gap:8px;flex-wrap:wrap}
+  #toast{font-size:13px;padding:9px 16px;max-width:90vw;text-align:center}
+}
 </style>
 </head>
 <body>
