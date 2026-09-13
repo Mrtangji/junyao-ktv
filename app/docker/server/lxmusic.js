@@ -468,10 +468,19 @@ function acquireSourceSlot(interval = SOURCE_INTERVAL, jitter = SOURCE_JITTER) {
 // 目的：对比 PC 端 lx-music 与服务端对同一首歌拿到的真实链接/响应头差异，
 // 判断中转是否按客户端指纹降级（下发防盗版片段）。
 const lxTraceBuf = [];
+// 失败/错误类记录：常驻环形缓冲，避免被海量成功下载刷掉（诊断接口默认只回这些）
+const LX_TRACE_FAIL_KINDS = new Set(['resolveFail', 'downloadFail', 'previewClip']);
 function pushLxTrace(entry) {
   try {
     lxTraceBuf.push(Object.assign({ ts: new Date().toISOString() }, entry));
-    if (lxTraceBuf.length > 60) lxTraceBuf.splice(0, lxTraceBuf.length - 60);
+    const MAX = 60;
+    if (lxTraceBuf.length > MAX) {
+      // 优先淘汰"正常"记录（download/resolve），保留失败类，确保错误不被冲掉
+      for (let i = 0; i < lxTraceBuf.length && lxTraceBuf.length > MAX; i++) {
+        if (!LX_TRACE_FAIL_KINDS.has(lxTraceBuf[i].kind)) { lxTraceBuf.splice(i, 1); i--; }
+      }
+      if (lxTraceBuf.length > MAX) lxTraceBuf.splice(0, lxTraceBuf.length - MAX);
+    }
   } catch (e) {}
 }
 function briefUrl(u) {   // 脱敏：只留 host + 路径前 80 字符，query 打印 key 不打值
@@ -935,13 +944,22 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   if (sniff.kind === 'encrypted') throw new Error(`音源返回的是加密文件，无法直存：${sniff.detail}（请换普通无损音源或稍后重试）`);
   const isMp3Src = sniff.kind === 'mp3';
   const rawAudio = isMp3Src || ['flac', 'ogg', 'm4a', 'wav', 'aac'].includes(sniff.kind);
-  if (!rawAudio) throw new Error('音源返回的内容不是有效音频（可能已加密或链接已失效）' + (sniff.detail ? ` 实际：${sniff.detail}` : '') + '，请换音源或稍后重试');
-  // 「只收无损」：搜索阶段靠平台音质标注过滤过一道，这里是最终兜底——
-  // 音源实际返回的不是 FLAC（虚标无损/只有 320K MP3）就整首放弃。
-  // 此时临时文件还没写盘（writeFileSync 在下面），直接抛错即可，不留垃圾。
+  // 内容校验失败 → 记一条明确的 downloadFail（独立于上面的 download 响应记录），
+  // 让 /api/diag/lx 能直接看到"哪首因为什么原因没下成"，不再淹没在成功的 download 里
+  const wantQ = lossless ? (format === 'hires' ? 'flac24bit' : 'flac') : '320k';
+  let failMsg = null;
+  if (sniff.kind === 'text') failMsg = `音源返回的不是音频（接口可能已失效或被风控）：${sniff.detail}`;
+  else if (sniff.kind === 'm3u8') failMsg = '音源返回的是 HLS 播放列表(m3u8)，该链接不支持直接下载，请换音源';
+  else if (sniff.kind === 'encrypted') failMsg = `音源返回的是加密文件，无法直存：${sniff.detail}（请换普通无损音源或稍后重试）`;
+  else if (!rawAudio) failMsg = '音源返回的内容不是有效音频（可能已加密或链接已失效）' + (sniff.detail ? ` 实际：${sniff.detail}` : '') + '，请换音源或稍后重试';
+  if (failMsg) {
+    pushLxTrace({ kind: 'downloadFail', name: `${artistFull} - ${title}`, want: wantQ, sniff: sniff.kind, reason: failMsg });
+    throw new Error(failMsg);
+  }
   // 无损模式（flac/hires）无音质回落：源实际返回的不是 FLAC（虚标无损/只有有损）
   // 就整首放弃——不论是否勾选"只收无损"。临时文件还没写盘，直接抛错不留垃圾。
   if (lossless && !isMv && sniff.kind !== 'flac') {
+    pushLxTrace({ kind: 'downloadFail', name: `${artistFull} - ${title}`, want: wantQ, sniff: sniff.kind, reason: '该曲目无可用的无损资源（音源只返回了有损音质）' });
     throw Object.assign(new Error('该曲目无可用的无损资源（音源只返回了有损音质）'), { __noLossless: true });
   }
   // 无损模式且源确实给了 FLAC → 原样落盘 .flac（不转码，保住无损）；

@@ -1259,7 +1259,14 @@ app.get('/api/diag/egress', async (req, res) => {
 // 定位"中转按客户端指纹降级下发防盗版片段"的问题。?clear=1 清空。
 app.get('/api/diag/lx', (req, res) => {
   if (req.query.clear != null) { lxmusic.clearLxTrace(); }
-  res.json(lxmusic.getLxTrace());
+  const all = lxmusic.getLxTrace();
+  // 默认只返回失败/错误类（resolveFail / downloadFail / previewClip），过滤掉正常下载；
+  // ?all=1 返回完整环形缓冲（含正常 download/resolve），用于对照解析链路
+  const failsOnly = !req.query.all;
+  const out = failsOnly
+    ? all.filter(e => ['resolveFail', 'downloadFail', 'previewClip'].includes(e.kind))
+    : all;
+  res.json(out);
 });
 
 app.get('/api/diag', async (req, res) => {
