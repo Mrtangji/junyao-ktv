@@ -1180,6 +1180,14 @@ app.get('/api/diag/egress', async (req, res) => {
   res.json(out);
 });
 
+// 换链/下载追踪：最近 60 条 musicUrl 解析与下载结果（URL 脱敏、嗅探结果、
+// 响应头、试听片段拒收记录）。用来对比 PC 端 lx-music 与服务端拿到的链接差异，
+// 定位"中转按客户端指纹降级下发防盗版片段"的问题。?clear=1 清空。
+app.get('/api/diag/lx', (req, res) => {
+  if (req.query.clear != null) { lxmusic.clearLxTrace(); }
+  res.json(lxmusic.getLxTrace());
+});
+
 app.get('/api/diag', async (req, res) => {
   let cpu;
   try { cpu = await procmon.sampleCpu({ sampleMs: Math.min(3000, Number(req.query.ms) || 500), top: 15 }); }

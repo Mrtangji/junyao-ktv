@@ -339,6 +339,25 @@ function acquireSourceSlot() {
   return task;
 }
 
+// ---------- 换链追踪（诊断"为什么拿到的是试听片段/有损"） ----------
+// 每次换链与下载结果记进内存环形缓冲（最近 60 条），GET /api/diag/lx 查看。
+// 目的：对比 PC 端 lx-music 与服务端对同一首歌拿到的真实链接/响应头差异，
+// 判断中转是否按客户端指纹降级（下发防盗版片段）。
+const lxTraceBuf = [];
+function pushLxTrace(entry) {
+  try {
+    lxTraceBuf.push(Object.assign({ ts: new Date().toISOString() }, entry));
+    if (lxTraceBuf.length > 60) lxTraceBuf.splice(0, lxTraceBuf.length - 60);
+  } catch (e) {}
+}
+function briefUrl(u) {   // 脱敏：只留 host + 路径前 80 字符，query 打印 key 不打值
+  try {
+    const x = new URL(u);
+    const q = [...x.searchParams.keys()].join(',');
+    return `${x.host}${x.pathname.slice(0, 80)}${q ? ` ?${q}` : ''}`;
+  } catch (e) { return String(u).slice(0, 100); }
+}
+
 async function resolveViaInstance(inst, sourceKey, musicInfo, preferQuality, signal) {
   const keys = Object.keys(inst.sources);
   const key = keys.includes(sourceKey) ? sourceKey : null;
@@ -352,7 +371,10 @@ async function resolveViaInstance(inst, sourceKey, musicInfo, preferQuality, sig
       await acquireSourceSlot();   // 节流：与桌面版同参数（并发 1 + 1.5s+抖动）
       throwIfAborted(signal);
       const url = await inst.requestHandler({ source: key, action: 'musicUrl', info: { type: q, musicInfo } });
-      if (url && typeof url === 'string' && /^https?:/.test(url)) return url;
+      if (url && typeof url === 'string' && /^https?:/.test(url)) {
+        pushLxTrace({ kind: 'resolve', source: key, quality: q, srcName: inst.meta.name, url: briefUrl(url) });
+        return url;
+      }
       lastErr = new Error('脚本返回无效 url');
     } catch (e) { if (e && e.__stopped) throw e; lastErr = e; }
   }
@@ -662,6 +684,12 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   // 内容校验：不是有效音频就直接给出可读原因，不再让 ffmpeg 报晦涩错误，
   // 也避免坏内容被 content-type 误判直接改名为 .mp3 入库
   const sniff = sniffAudio(resp.body);
+  pushLxTrace({
+    kind: 'download', name: `${artistFull} - ${title}`, want: lossless ? 'flac' : '320k',
+    url: briefUrl(url), status: resp.statusCode, sniff: sniff.kind,
+    contentType: (resp.headers && (resp.headers['content-type'] || resp.headers['Content-Type'])) || null,
+    bytes: resp.body ? resp.body.length : 0,
+  });
   if (sniff.kind === 'text') throw new Error(`音源返回的不是音频（接口可能已失效或被风控）：${sniff.detail}`);
   if (sniff.kind === 'm3u8') throw new Error('音源返回的是 HLS 播放列表(m3u8)，该链接不支持直接下载，请换音源');
   const isMp3Src = sniff.kind === 'mp3';
@@ -689,7 +717,7 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
     const dur = probeDurationSec(tmpPath);
     if (dur != null && dur < minSec) {
       try { fs.unlinkSync(tmpPath); } catch (e) {}
-      throw Object.assign(new Error(`音源返回的是试听/保护片段（仅 ${dur.toFixed(1)} 秒），已拒收`), { __previewClip: true });
+      throw Object.assign(new Error(`音源返回的是试听/保护片段（仅 ${dur.toFixed(1)} 秒），已拒收`), { __previewClip: true, __traced: (pushLxTrace({ kind: 'previewClip', name: `${artistFull} - ${title}`, durSec: Math.round(dur * 10) / 10, url: briefUrl(url) }), undefined) });
     }
   }
   // 转码/合成阶段可被"停止"立刻掐断（kill 掉 ffmpeg 子进程），不必等整首转完
@@ -773,6 +801,8 @@ module.exports = {
   initActiveSource, activateSourceById, deactivateSource, activateScript, activeSource: () => activeSource,
   resolveMusicUrl, resolveMusicUrlWithFallback, kwSearch, kwBoardSongs, KW_BOARDS, kwLyric,
   downloadSong, findLocalSong, parseScriptMeta,
+  getLxTrace: () => lxTraceBuf.slice(),
+  clearLxTrace: () => { lxTraceBuf.length = 0; },
   // 长流程（歌手批量下载）注册/解除"取消令牌"，让脚本内、内置源内发起的请求也能被掐断
   setCancelSignal,
   // 内部工具：供 maidong.js 等模块复用下载入库链路
