@@ -399,8 +399,8 @@ async function resolveMusicUrl(musicInfo, preferQuality = '320k') {
   //（此时平台不匹配大概率失败，报错会注明平台，方便换源）。
   const keys = Object.keys(activeSource.sources);
   const sourceKey = keys.includes('kw') ? 'kw' : keys[0];
-  const qualitys = activeSource.sources[sourceKey].qualitys;
-  const order = [preferQuality, ...qualitys.filter(q => q !== preferQuality)];
+  // 不做音质回落：只请求指定音质，源没有就直接失败（由调用方跳过/换源）
+  const order = [preferQuality];
   let lastErr;
   for (const q of order) {
     try {
@@ -441,9 +441,10 @@ async function getAltSourceInstance(id) {
 // 封锁且重试会续期——所以无损跑批量必须低频慢跑，宁可慢也不能进冷却。
 // 可用 LX_SOURCE_INTERVAL_FLAC_MS 覆盖。
 const SOURCE_INTERVAL = Math.max(0, parseInt(process.env.LX_SOURCE_INTERVAL_MS, 10) || 1500);
+// 无损间隔与有损一致（用户要求严格对齐 PC 端 1500ms）；仍可用 LX_SOURCE_INTERVAL_FLAC_MS 覆盖
 const SOURCE_INTERVAL_FLAC = Math.max(
   SOURCE_INTERVAL,
-  parseInt(process.env.LX_SOURCE_INTERVAL_FLAC_MS, 10) || 6000,
+  parseInt(process.env.LX_SOURCE_INTERVAL_FLAC_MS, 10) || SOURCE_INTERVAL,
 );
 const SOURCE_JITTER = Math.min(800, SOURCE_INTERVAL);
 const SOURCE_JITTER_FLAC = Math.min(2000, SOURCE_INTERVAL_FLAC);
@@ -485,13 +486,13 @@ async function resolveViaInstance(inst, sourceKey, musicInfo, preferQuality, sig
   const keys = Object.keys(inst.sources);
   const key = keys.includes(sourceKey) ? sourceKey : null;
   if (!key) throw new Error(`音源「${inst.meta.name}」不支持 ${sourceKey} 平台`);
-  const qualitys = inst.sources[key].qualitys || ['128k', '320k'];
-  const order = [preferQuality, ...qualitys.filter(q => q !== preferQuality)];
+  // 不做音质回落：只请求指定音质，源没有就直接失败（由调用方跳过/换源）
+  const order = [preferQuality];
   let lastErr;
   for (const q of order) {
     throwIfAborted(signal);   // 音源脚本会把网络错误吞掉换成自己的错误，靠令牌状态兜住
     try {
-      // 节流：无损请求低频慢跑（6s+抖动），有损保持桌面版同参数（1.5s+抖动）
+      // 节流：全部与桌面版同参数（1500ms + 0~800ms 抖动，并发 1）
       const losslessQ = LOSSLESS_QUALITIES.includes(String(q).toLowerCase());
       await acquireSourceSlot(
         losslessQ ? SOURCE_INTERVAL_FLAC : SOURCE_INTERVAL,
@@ -778,7 +779,7 @@ function sniffAudio(buf) {
 // sqOnly: 仅 format='flac' 时有意义。置 true 时"只要真无损"——音源实际只给到
 //         有损内容（嗅探出的不是 FLAC）就放弃这一首（不落盘、不入库），
 //         抛 __noLossless 让调用方换平台再找，避免库里混进 MP3 冒充无损。
-async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, format = 'mp3', lrcText = null, info = null, signal = null, sqOnly = false }) {
+async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, format = 'mp3', lrcText = null, info = null, signal = null, sqOnly = false, storage = 'mp3' }) {
   throwIfAborted(signal);   // 已被停止（含脚本内部请求被掐断的情形）→ 直接干净退出
   const mp3Root = dlcfg.getMp3Dir();
   const mvRoot = path.resolve(dlcfg.MV_DIR);
@@ -786,7 +787,8 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   const lossless = format === 'flac' || format === 'hires';
   // hires（24bit 母带）：请求 flac24bit 音质，脚本按优先序自动回落 flac/320k；
   // 落盘仍是 .flac（24bit FLAC 的文件魔数同样是 fLaC），目录/命名口径不变。
-  const dlRoot = isMv ? mvRoot : mp3Root; // 本次下载主文件的目标根目录
+  // storage='mv'：主文件落 MV_DIR（点唱曲库，可直接点播），LRC 同目录；默认 'mp3' 落 MP3_DIR。
+  const dlRoot = isMv ? mvRoot : (storage === 'mv' ? mvRoot : mp3Root); // 本次下载主文件的目标根目录
   if (!fs.existsSync(dlRoot)) throw new Error('MV_DIR_UNAVAILABLE');
   if (!fs.existsSync(isMv ? mp3Root : mvRoot)) throw new Error('MV_DIR_UNAVAILABLE');
   // 目录名取「第一位歌手」：合作曲（周杰伦、温岚）统一落到 周杰伦/ 目录下，
@@ -825,9 +827,8 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
       if (info[k] != null && info[k] !== '') musicInfo[k] = info[k];
     }
   }
-  // 无损模式先请求 flac 音质（脚本按 preferQuality 优先、失败才轮换其余音质；
-  // 内置酷我直链兜底也支持 flac 参数），拿不到无损时返回值会是 mp3 直链，
-  // 由下面的落盘分支自动按 MP3 处理。
+  // 无损模式请求指定音质（flac / flac24bit），源没有会直接失败（无音质回落），
+  // 由调用方按 __noLossless 换平台/跳过。
   if (signal && signal.aborted) throw stopError();
   const url = await resolveMusicUrlWithFallback(platform, musicInfo, lossless ? (format === 'hires' ? 'flac24bit' : 'flac') : '320k', signal);
   throwIfAborted(signal);
@@ -852,7 +853,9 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   // 「只收无损」：搜索阶段靠平台音质标注过滤过一道，这里是最终兜底——
   // 音源实际返回的不是 FLAC（虚标无损/只有 320K MP3）就整首放弃。
   // 此时临时文件还没写盘（writeFileSync 在下面），直接抛错即可，不留垃圾。
-  if (lossless && !isMv && sqOnly && sniff.kind !== 'flac') {
+  // 无损模式（flac/hires）无音质回落：源实际返回的不是 FLAC（虚标无损/只有有损）
+  // 就整首放弃——不论是否勾选"只收无损"。临时文件还没写盘，直接抛错不留垃圾。
+  if (lossless && !isMv && sniff.kind !== 'flac') {
     throw Object.assign(new Error('该曲目无可用的无损资源（音源只返回了有损音质）'), { __noLossless: true });
   }
   // 无损模式且源确实给了 FLAC → 原样落盘 .flac（不转码，保住无损）；
@@ -905,7 +908,7 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
       let lrc = lrcText;
       if (!lrc && platform === 'kw') { try { lrc = await kwLyric(songmid, signal); } catch (e) { lrc = null; } }
       if (lrc) {
-        fs.writeFileSync(path.join(mp3Root, rel.replace(/\.(mp3|mp4|flac|m4a|aac|ogg|opus|wav)$/i, '.lrc')), lrc, 'utf8');
+        fs.writeFileSync(path.join((isMv ? mp3Root : dlRoot), rel.replace(/\.(mp3|mp4|flac|m4a|aac|ogg|opus|wav)$/i, '.lrc')), lrc, 'utf8');
       } else { console.error('LRC 下载失败(忽略):', name); }
     }
   } catch (e) { console.error('LRC 下载失败(忽略):', name, e.message); }

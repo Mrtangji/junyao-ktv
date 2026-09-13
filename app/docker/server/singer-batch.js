@@ -294,6 +294,7 @@ async function downloadOne(song, format, sqOnly) {
   return lxmusic.downloadSong({
     songmid: song.songmid, name: song.name, singer: song.singer, pic: song.pic || null,
     source: song.src, format, lrcText, sqOnly,
+    storage: 'mv',   // 批量/单曲下载落点 = 点唱曲库（MV_DIR），与点唱榜同库可直接点播
     signal: sbAbort ? sbAbort.signal : null,
     // 平台换链必需字段：kg 的 FileHash、tx 的数字 songId/strMediaMid 等
     info: { hash: song.hash, songId: song.songId, strMediaMid: song.strMediaMid, albumAudioId: song.albumAudioId, duration: song.duration, types: song.types },
@@ -608,8 +609,8 @@ async function start(opts = {}) {
   if (!names.length) return { ok: false, error: '歌手名单为空' };
   // src='all' → 四平台合并搜索；否则单平台
   const src = opts.src === 'all' ? 'all' : (boardsdk.isValidSource(opts.src) ? opts.src : 'kw');
-  // mp3（320K 有声）/ flac（无损优先，源无无损回落 MP3）/ hires（24bit 母带，回落 flac/320K）/ mv（封面合成视频）
-  // 默认无损优先（FLAC）：未指定或传了不认识的值都按 flac 处理，只有明确选 mp3/mv 才降级。
+  // mp3（320K 有声）/ flac（无损）/ hires（24bit 母带）/ mv（封面合成视频）
+  // 无音质回落：源没有所选音质就整首失败跳过（__noLossless）。
   const format = opts.format === 'mv' ? 'mv' : (opts.format === 'mp3' ? 'mp3' : (opts.format === 'hires' ? 'hires' : 'flac'));
   // 只收无损：只在无损格式下有意义（mp3/mv 模式本身就允许有损）
   const sqOnly = opts.sqOnly === true && (format === 'flac' || format === 'hires');
