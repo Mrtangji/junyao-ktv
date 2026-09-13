@@ -657,6 +657,86 @@ async function kwLyric(songmid, signal) {
   return lrc;
 }
 
+// 逐字歌词（lrcx）——参考 lxserver kw/lyric.js + kw/util.js lrcTools：
+//   请求参数追加 &lrcx=1；响应 inflate 后还要 base64 → XOR('yeelion') → GB18030。
+//   文本格式：`[mm:ss.xxx]<a,b>字<a,b>字...`，<a,b> 是其后一个字的相对时间
+//   （start=|a+b|/(2*off1) ms、时长=|a-b|/(2*off2) ms；off1/off2 由 [kuwo:八进制]
+//   标签给出，如 [kuwo:134] → 0o134=92 → off1=9、off2=2）。
+//   这里把它换算成 tv 端 parseLrc 已支持的增强 LRC：每个字前插 `<mm:ss.xxx>`
+//   绝对时间标签（tv 逐字点亮 .wf/.wp）。解析失败返回 null，由调用方回落普通歌词。
+function lrcxToEnhancedLrc(text) {
+  if (!text || text.indexOf('<') === -1) return null;
+  let off1 = 1, off2 = 1;
+  const kuwoTag = text.match(/^\[kuwo:(\d+)\]\s*$/m);
+  if (kuwoTag) {
+    const v = parseInt(kuwoTag[1], 8);
+    const a = Math.trunc(v / 10), b = v % 10;
+    if (a > 0) off1 = a;
+    if (b > 0) off2 = b;
+  }
+  const fmt = ms => {
+    ms = Math.max(0, Math.round(ms));
+    const m = Math.floor(ms / 60000), s = Math.floor(ms % 60000 / 1000), f = ms % 1000;
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(f).padStart(3, '0')}`;
+  };
+  const fracMs = f => f ? (+f) / Math.pow(10, f.length) * 1000 : 0;
+  const lineRe = /^\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]([\s\S]*)$/;
+  const wordRe = /^<(-?\d+),(-?\d+)(?:,-?\d+)?>/;
+  const outLines = [];
+  let converted = 0;
+  for (const raw of text.split(/\r?\n/)) {
+    if (!raw) continue;
+    if (/^\[kuwo:/.test(raw)) continue;            // 除数标签已消费，不写入
+    const m = raw.match(lineRe);
+    if (!m) { outLines.push(raw); continue; }      // [ti:]/[ar:] 等标签原样保留
+    const lineMs = (+m[1]) * 60000 + (+m[2]) * 1000 + fracMs(m[3]);
+    let rest = m[4] || '';
+    if (!wordRe.test(rest)) { outLines.push(raw); continue; } // 无逐字标签的行原样保留
+    const words = [];
+    let lead = '';
+    while (rest) {
+      const wm = rest.match(wordRe);
+      if (!wm) { lead += rest; break; }
+      const a = parseInt(wm[1], 10), b = parseInt(wm[2], 10);
+      const startMs = Math.abs(a + b) / (off1 * 2);
+      rest = rest.slice(wm[0].length);
+      // 该字的文本 = 到下一个 < 标签之前
+      const nextLt = rest.indexOf('<');
+      const word = nextLt === -1 ? rest : rest.slice(0, nextLt);
+      rest = nextLt === -1 ? '' : rest.slice(nextLt);
+      if (word) words.push({ t: lineMs + startMs, w: word });
+    }
+    if (!words.length) { outLines.push(raw); continue; }
+    if (lead) words[0].w = lead + words[0].w;
+    outLines.push(`[${fmt(lineMs)}]` + words.map(w => `<${fmt(w.t)}>${w.w}`).join(''));
+    converted++;
+  }
+  return converted > 0 ? outLines.join('\n') : null;
+}
+
+// lrcx 优先、普通歌词兜底（普通路径不会带 <..> 逐字标签，tv 端自动退化整行显示）
+async function kwLyricEx(songmid, signal) {
+  try {
+    const params = `user=12345,web,web,web&requester=localhost&req=1&rid=MUSIC_${songmid}&lrcx=1`;
+    const key = Buffer.from('yeelion');
+    const raw = Buffer.alloc(params.length);
+    for (let i = 0, j = 0; i < params.length; i++, j = (j + 1) % key.length) raw[i] = params.charCodeAt(i) ^ key[j];
+    const resp = await httpReq(`http://newlyric.kuwo.cn/newlyric.lrc?${raw.toString('base64')}`, { responseType: 'buffer', timeout: 15000, signal });
+    const buf = resp.body;
+    if (resp.statusCode !== 200 || buf.toString('utf8', 0, 10) !== 'tp=content') throw new Error('歌词接口响应异常');
+    const inflated = zlib.inflateSync(buf.slice(buf.indexOf('\r\n\r\n') + 4));
+    const xored = Buffer.from(inflated.toString('latin1'), 'base64');
+    for (let i = 0, j = 0; i < xored.length; i++, j = (j + 1) % key.length) xored[i] ^= key[j];
+    const text = new TextDecoder('gb18030').decode(xored);
+    const enhanced = lrcxToEnhancedLrc(text);
+    if (enhanced && /\[\d{1,2}:\d{2}/.test(enhanced)) return enhanced;
+    throw new Error('lrcx 转换失败');
+  } catch (e) {
+    // 任何异常回落普通歌词
+    return kwLyric(songmid, signal);
+  }
+}
+
 // ---------- 下载入库 ----------
 // 给 ffmpeg 子进程挂上取消：点「停止」时立刻 SIGKILL，不必等它把整首歌转完
 // （一首 4 分钟的 FLAC 转 MP3 或合成 MP4，在 NAS 上要几十秒，这就是"按了停止
@@ -906,7 +986,7 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   try {
     if (!isAborted(signal)) {
       let lrc = lrcText;
-      if (!lrc && platform === 'kw') { try { lrc = await kwLyric(songmid, signal); } catch (e) { lrc = null; } }
+      if (!lrc && platform === 'kw') { try { lrc = await kwLyricEx(songmid, signal); } catch (e) { lrc = null; } }
       if (lrc) {
         fs.writeFileSync(path.join((isMv ? mp3Root : dlRoot), rel.replace(/\.(mp3|mp4|flac|m4a|aac|ogg|opus|wav)$/i, '.lrc')), lrc, 'utf8');
       } else { console.error('LRC 下载失败(忽略):', name); }
@@ -956,7 +1036,7 @@ function findLocalSong(name, singer, filter) {
 
 module.exports = {
   initActiveSource, activateSourceById, deactivateSource, activateScript, activeSource: () => activeSource,
-  resolveMusicUrl, resolveMusicUrlWithFallback, kwSearch, kwBoardSongs, KW_BOARDS, kwLyric,
+  resolveMusicUrl, resolveMusicUrlWithFallback, kwSearch, kwBoardSongs, KW_BOARDS, kwLyric, kwLyricEx, lrcxToEnhancedLrc,
   downloadSong, findLocalSong, parseScriptMeta,
   runSourceScript,
   getLxTrace: () => lxTraceBuf.slice(),

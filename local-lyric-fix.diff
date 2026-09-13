@@ -1,0 +1,153 @@
+diff --git a/android/app/src/main/java/cn/junyao/ktv/LocalMusicStore.java b/android/app/src/main/java/cn/junyao/ktv/LocalMusicStore.java
+index ad75845..4847ad3 100644
+--- a/android/app/src/main/java/cn/junyao/ktv/LocalMusicStore.java
++++ b/android/app/src/main/java/cn/junyao/ktv/LocalMusicStore.java
+@@ -16,7 +16,9 @@ import java.io.InputStream;
+ import java.io.OutputStream;
+ import java.nio.charset.StandardCharsets;
+ import java.util.ArrayList;
++import java.util.HashMap;
+ import java.util.List;
++import java.util.Map;
+ import java.util.concurrent.ExecutorService;
+ import java.util.concurrent.Executors;
+ import java.util.zip.CRC32;
+@@ -110,6 +112,10 @@ final class LocalMusicStore {
+             throw new IllegalStateException("query returned null (folder permission lost?)");
+         }
+         List<String> subDirs = new ArrayList<>();
++        List<JSONObject> audioItems = new ArrayList<>();
++        // 同目录同名 .lrc（与歌曲在一起）的文档 id：basename(小写) -> docId，
++        // 扫描完挂到对应音频项上当作歌词源（本地模式歌词就靠它，不依赖服务器）。
++        Map<String, String> lrcDoc = new HashMap<>();
+         while (c.moveToNext()) {
+             String docId = c.getString(0);
+             String name = c.getString(1) == null ? "" : c.getString(1);
+@@ -119,6 +125,12 @@ final class LocalMusicStore {
+                 subDirs.add(docId);
+                 continue;
+             }
++            String lower = name.toLowerCase();
++            if (lower.endsWith(".lrc")) {
++                // 去掉 .lrc 后缀当 basename，大小写不敏感匹配音频文件
++                lrcDoc.put(name.substring(0, name.length() - 4).toLowerCase(), docId);
++                continue;
++            }
+             String ext = extOf(name);
+             if (ext == null) continue;
+             JSONObject o = new JSONObject();
+@@ -130,9 +142,21 @@ final class LocalMusicStore {
+             o.put("uri", uriStr);
+             // 文件名不含"歌手 - 歌名"分隔符时，读 ID3 元数据兜底补歌手/歌名
+             if (!nameLooksTagged(name)) applyMediaMeta(ctx, o, Uri.parse(uriStr));
+-            out.add(o);
++            // 暂存 basename(小写) 用于匹配同名 .lrc，构建完再移除
++            o.put("_base", name.substring(0, name.length() - (ext.length() + 1)).toLowerCase());
++            audioItems.add(o);
+         }
+         c.close();
++        // 把同名 .lrc 的文档 URI 挂到音频项；没有就不挂（歌词面板会显示"暂无歌词"）
++        for (JSONObject o : audioItems) {
++            String base = o.optString("_base", "");
++            o.remove("_base");
++            String lrcId = lrcDoc.get(base);
++            if (lrcId != null) {
++                o.put("lyricUri", DocumentsContract.buildDocumentUriUsingTree(treeUri, lrcId).toString());
++            }
++            out.add(o);
++        }
+         for (String dir : subDirs) walk(ctx, dir, treeUri, out);
+     }
+ 
+diff --git a/android/app/src/main/java/cn/junyao/ktv/MainActivity.java b/android/app/src/main/java/cn/junyao/ktv/MainActivity.java
+index 8c54b28..053593b 100644
+--- a/android/app/src/main/java/cn/junyao/ktv/MainActivity.java
++++ b/android/app/src/main/java/cn/junyao/ktv/MainActivity.java
+@@ -33,6 +33,8 @@ import java.net.HttpURLConnection;
+ import java.net.Inet4Address;
+ import java.net.InetAddress;
+ import java.net.NetworkInterface;
++import java.io.ByteArrayOutputStream;
++import java.io.InputStream;
+ import java.net.URL;
+ import java.util.ArrayList;
+ import org.json.JSONObject;
+@@ -762,6 +764,31 @@ public class MainActivity extends Activity {
+             }
+         }
+ 
++        /** 读取本机歌曲同目录同名 .lrc 的歌词文本（索引里存了 lyricUri）。无歌词返回 null。 */
++        @JavascriptInterface
++        public String localPlayLyric(int id) {
++            try {
++                JSONObject item = LocalMusicStore.byId(MainActivity.this, id);
++                if (item == null) return null;
++                String uri = item.optString("lyricUri", null);
++                if (uri == null || uri.isEmpty()) return null;
++                // 兜底续一次持久授权，失败不影响读取
++                try {
++                    getContentResolver().takePersistableUriPermission(Uri.parse(uri), Intent.FLAG_GRANT_READ_URI_PERMISSION);
++                } catch (Exception ignored) {}
++                InputStream in = getContentResolver().openInputStream(Uri.parse(uri));
++                if (in == null) return null;
++                ByteArrayOutputStream bos = new ByteArrayOutputStream();
++                byte[] buf = new byte[8192];
++                int n;
++                while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
++                in.close();
++                return bos.toString("UTF-8");
++            } catch (Exception e) {
++                return null;
++            }
++        }
++
+         /** 清空本机曲库索引 */
+         @JavascriptInterface
+         public boolean clearLocal() {
+diff --git a/app/docker/web/tv/index.html b/app/docker/web/tv/index.html
+index 25c130e..36b4949 100644
+--- a/app/docker/web/tv/index.html
++++ b/app/docker/web/tv/index.html
+@@ -1566,10 +1566,31 @@ function renderLyrics(){
+ }
+ async function loadLyrics(song){
+   resetLyrics();
+-  if(!song || song.song_id<0)return; // MV 也加载 LRC（KTV 双行底部歌词）；本机歌曲无服务端歌词
++  if(!song)return;
+   const panel=document.getElementById('lyrics-panel');
+   const isAudio=song.media_type==='audio';
++  const isLocal=!!(song.local||(song.queue_id&&String(song.queue_id).startsWith('local_')));
+   if(isAudio)panel.classList.add('show');
++  // 本机歌曲（安卓 SAF 曲库）：歌词来自同目录同名 .lrc，经 KtvBridge.localPlayLyric 读文本。
++  // 浏览器 IndexedDB 本机歌曲没带歌词则不显示，属正常。
++  if(isLocal){
++    let lrc=null;
++    try{ if(window.KtvBridge&&typeof window.KtvBridge.localPlayLyric==='function'&&typeof song.localId==='number') lrc=window.KtvBridge.localPlayLyric(song.localId); }catch(e){ lrc=null; }
++    if(lrc&&lrc.length){
++      try{
++        lyricLines=parseLrc(lrc);
++        if(lyricLines.length){
++          panel.classList.remove('no-lyrics');
++          renderLyrics();
++          lyricTimer=setInterval(renderLyrics,150);
++          return;
++        }
++      }catch(e){}
++    }
++    if(isAudio)panel.classList.add('show','no-lyrics'); // 有音频但没词 → 显示"暂无歌词"
++    return;
++  }
++  if(song.song_id<0)return; // MV 也加载 LRC（KTV 双行底部歌词）；服务端歌曲走下面的接口
+   if(!song.lyrics_path){if(isAudio)panel.classList.add('no-lyrics');return;}
+   try{
+     const resp=await fetch(`${BASE}/lyrics/${song.song_id}`);
+@@ -3160,7 +3181,8 @@ async function playLocalSong(id){
+   document.getElementById('ni-meta').textContent=`${s.artist||'本机音频'} · 本机`;
+   document.getElementById('ov-title').textContent=s.title;
+   document.getElementById('ov-artist').textContent=`${s.artist||''} · 本机`.replace(/^ · /,'');
+-  curSong={queue_id:'local_'+id,song_id:-1,title:s.title,artist:s.artist,media_type:'audio'};
++  curSong={queue_id:'local_'+id,song_id:-1,localId:id,title:s.title,artist:s.artist,media_type:'audio'};
++  loadLyrics(curSong); // 本机歌曲歌词来自同目录同名 .lrc（经 KtvBridge.localPlayLyric 读取）
+   updateAudioMode();
+   endingNotified=true;
+   // 播放失败带具体原因（能走到这里说明本地服务已探测通过，剩余为解码/格式问题）
