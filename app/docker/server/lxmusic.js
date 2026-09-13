@@ -18,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const https = require('https');
+const iconv = require('iconv-lite');
 const zlib = require('zlib');
 const crypto = require('crypto');
 const vm = require('vm');
@@ -164,6 +165,7 @@ function httpReq(url, options = {}, redirectCount = 0) {
         throw e;   // 其它错误（超时/HTTP层）如实上抛，别吞
       });
     }
+    return nativeReq();   // http 或无 curl 引擎时走 Node 原生路径（勿漏——漏了 promise 永不 settle）
     function nativeReq() {
     // 整体死线：options.timeout 只是 socket 空闲超时，覆盖不到 DNS/连接阶段——
     // 实测在 DNS/连接期间被 abort（req.destroy 于 socket 未建立时调用），Node 22
@@ -595,10 +597,33 @@ const KW_BOARDS = [
 ].map(([bangid, name]) => ({ id: `kw__${bangid}`, name, bangid }));
 
 async function kwSearch(str, page = 1, limit = 30) {
-  const url = `http://search.kuwo.cn/r.s?client=kt&all=${encodeURIComponent(str)}&pn=${page - 1}&rn=${limit}&uid=794762570&ver=kwplayer_ar_9.2.2.1&vipver=1&show_copyright_off=1&newver=1&ft=music&cluster=0&strategy=2012&encoding=utf8&rformat=json&vermerge=1&mobi=1&issubtitle=1`;
-  const resp = await httpReq(url);
-  let body = resp.body;
-  if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { throw new Error('酷我搜索响应解析失败'); } }
+  // r.s 接口走多节点负载均衡，节点质量参差（实测同一请求有时 TOTAL:0、有时 GBK 乱码、
+  // 有时 gzip 截断）。PC 端"一直正常"只是命中好节点。策略：先发桌面版同参数请求，
+  // 若结果为空/坏响应，再换备选参数（GBK 查询 + 精简参数集）重试，最多 3 次。
+  const gbkQ = Array.from(iconv.encode(str, 'gbk')).map(b => (b > 127 || b < 33 ? '%' + b.toString(16).toUpperCase().padStart(2, '0') : String.fromCharCode(b))).join('');
+  const urls = [
+    // 1) 与 lx-music-desktop 完全一致的原始请求
+    `http://search.kuwo.cn/r.s?client=kt&all=${encodeURIComponent(str)}&pn=${page - 1}&rn=${limit}&uid=794762570&ver=kwplayer_ar_9.2.2.1&vipver=1&show_copyright_off=1&newver=1&ft=music&cluster=0&strategy=2012&encoding=utf8&rformat=json&vermerge=1&mobi=1&issubtitle=1`,
+    // 2) 备选：GBK 编码查询 + 精简参数（部分节点只认这个）
+    `http://search.kuwo.cn/r.s?client=kt&all=${gbkQ}&pn=${page - 1}&rn=${limit}&rformat=json&vermerge=1&mobi=1`,
+  ];
+  const parseBody = (raw) => {
+    let text = raw.toString('utf8');
+    if (text.includes('\uFFFD')) text = iconv.decode(raw, 'gbk');   // GBK 字节按 utf8 解会出替换符，歌名全花，必须重解
+    try { return JSON.parse(text); } catch (_e) { try { return JSON.parse(iconv.decode(raw, 'gbk')); } catch (_e2) { return null; } }
+  };
+  let body = null, lastErr = null;
+  for (let attempt = 0; attempt < 3 && !body; attempt++) {
+    if (attempt) await new Promise(r => setTimeout(r, 800));   // 换节点/避峰
+    try {
+      const resp = await httpReq(urls[attempt % urls.length], { responseType: 'buffer' });
+      const raw = Buffer.isBuffer(resp.body) ? resp.body : Buffer.from(String(resp.body), 'binary');
+      const parsed = parseBody(raw);
+      if (parsed && (parseInt(parsed.TOTAL) > 0 || (parsed.abslist || []).length)) { body = parsed; break; }
+      lastErr = new Error(`空结果(TOTAL=${parsed ? parsed.TOTAL : 'N/A'} len=${raw.length})`);
+    } catch (e) { lastErr = e; }
+  }
+  if (!body) throw new Error(`酷我搜索失败（${lastErr ? lastErr.message : '未知'}）`);
   const list = (body.abslist || []).map(info => kwSong({ songmid: String(info.MUSICRID || '').replace('MUSIC_', ''), name: info.SONGNAME, singer: formatSinger(info.ARTIST), album: info.ALBUM, DURATION: info.DURATION, types: kwParseQuality(info.N_MINFO) }));
   return { list, total: parseInt(body.TOTAL || list.length), page, limit };
 }
