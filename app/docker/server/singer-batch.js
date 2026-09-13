@@ -90,7 +90,6 @@ const JOB_VERSION = 1;
 // 会被 findLocalSong（本地已有）直接跳过，只是多几次本地查库。
 // 暂停 / 停止 / 歌手切换 / 任务异常这些关键点仍然立即落盘，不受节流影响。
 const SAVE_THROTTLE_MS = 20000;
-const AUTO_PAUSE_AFTER_FAILS = 5; // 连续失败多少首后自动暂停（多半是断网/被平台限流）
 
 // "本地已有跳过"的口径按任务格式区分——库里已有的其它版本不应挡住本次下载：
 //   · flac 任务：只认已有 .flac（TS/MV 是视频、MP3 是有损，都不算"已有无损"，
@@ -435,7 +434,6 @@ async function runJob(job) {
     preferLossless: opts.format === 'flac' || opts.format === 'hires',
     maxSingers: opts.maxSingers || 0,
   };
-  let consecutiveFail = 0;
   try {
     while (job.singerIndex < names.length) {
       if (stopFlag) break;
@@ -471,10 +469,6 @@ async function runJob(job) {
       while (k < songs.length) {
         if (stopFlag) break;
         if (pauseFlag) { await pausePoint(); continue; }
-        if (consecutiveFail >= AUTO_PAUSE_AFTER_FAILS) {
-          autoPause(`连续 ${consecutiveFail} 首下载失败（可能是网络中断或平台限流），已自动暂停`);
-          continue;
-        }
         const song = songs[k];
         // 记录断点：当前歌手 + 剩余待下（含这首）——暂停/意外都能从这里接着下
         job.singerIndex = i;
@@ -492,7 +486,6 @@ async function runJob(job) {
         try {
           await downloadWithBlockBackoff(song, opts);
           bump(job, 'done');
-          consecutiveFail = 0;
         } catch (e) {
           if (e && e.__stopped) {
             if (stopFlag) break;
@@ -510,7 +503,7 @@ async function runJob(job) {
           // 换平台续下（自动换源）
           try {
             const via = await downloadViaOtherSources(song, opts.format, song.src, opts.maxSingers || 0);
-            if (via) { bump(job, 'done'); bump(job, 'fallback'); consecutiveFail = 0; }
+            if (via) { bump(job, 'done'); bump(job, 'fallback'); }
             else throw e;
           } catch (e2) {
             if (e2 && e2.__stopped) {
@@ -532,7 +525,6 @@ async function runJob(job) {
               autoPause('音源限流（block ip），等几分钟再点「继续下载」');
               continue;
             } else {
-              consecutiveFail++;
               bump(job, 'failed');
               const reason = String((e2 && e2.message) || e2).slice(0, 200);
               state.lastError = `${song.name}: ${reason}`;

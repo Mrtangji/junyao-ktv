@@ -9,7 +9,7 @@
 //   · 暂停能秒级停下并把断点写进 DATA_DIR/singer-batch-job.json
 //   · 「继续」能从断点接着下（内存热恢复 & 进程重启后的冷恢复）
 //   · 「停止」才是放弃（快照一并清掉）
-//   · 连续失败 / 任务异常会自动转入暂停而不是把剩下的歌丢进失败名单
+//   · 任务异常会自动转入暂停（连续失败自动暂停已移除）而不是把剩下的歌丢进失败名单
 'use strict';
 const path = require('path');
 const os = require('os');
@@ -152,27 +152,7 @@ const jobJson = () => JSON.parse(fs.readFileSync(JOB_FILE, 'utf8'));
     ok('跑完后快照被清理', !fs.existsSync(JOB_FILE));
   }
 
-  console.log('=== E. 连续失败 → 自动暂停保留断点（不把整批丢进失败）===');
-  {
-    lxmusic.downloadSong = async () => { throw new Error('模拟网络中断'); };
-    boardsdk.search = async (src, name, page) => {
-      if (src === 'kw') return page === 1
-        ? { list: Array.from({ length: 10 }, (_, i) => ({ songmid: 'f' + i, name: '失败歌' + i, singer: name, duration: 200, src })), total: 10 }
-        : { list: [], total: 0 };
-      return { list: [], total: 0 };   // 其它平台也没有候选 → 换源同样失败
-    };
-    await sb.start({ text: '测试歌手', src: 'kw', format: 'mp3', minDur: 0, maxDur: 0, useFilter: true, filterWords: '' });
-    const paused = await until(() => sb.status().phase === 'paused', 15000);
-    const s = sb.status();
-    ok('连续失败后自动进入暂停', paused && s.phase === 'paused', s.message);
-    ok('提示是"自动暂停"并说明原因', /连续/.test(s.pausedReason || '') || /连续/.test(s.message), s.message);
-    ok('失败数达到阈值（5）', s.failed >= 5, `failed=${s.failed}`);
-    ok('剩余的歌还在断点里（没被丢掉）', s.pendingSongs > 0, `pendingSongs=${s.pendingSongs}`);
-    ok('断点快照已保存', fs.existsSync(JOB_FILE) && (jobJson().pendingSongs || []).length > 0);
-    // 收尾：放弃
-    sb.stop();
-    await until(() => !sb.status().running, 3000);
-  }
+  console.log('=== E.（已移除）连续失败自动暂停功能已删除：失败只计数、不暂停 ===');
 
   console.log('=== F. 任务意外抛异常 → 自动暂停（冷），可再继续 ===');
   {
