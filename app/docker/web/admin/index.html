@@ -807,6 +807,10 @@ async function doScan(){
   pre.textContent = '扫描中…（进度见页面底部的进度条）';
   // 先开轮询再发请求：即使返回 409（已有扫描在跑）也能立刻看到那次扫描的进度
   scanPollStart();
+  // 点下去立刻把底部进度条亮出来（先显示成"枚举中"的流动条纹）。否则小曲库/已缓存时
+  // 扫描可能在 800ms 轮询抓到 scanning:true 之前就结束，完成分支只改了 display:none 的
+  // 盒子（从不补 .show）→ 进度条整段不显示，表现成"扫描曲库的进度条不见了"
+  renderScanProgress({ files: 0, processed: 0, runningSec: 0 });
   let d;
   try {
     const res = await fetch('/api/scan',{method:'POST'});
@@ -833,6 +837,7 @@ async function doScan(){
   // 完成：进度条收尾并停留几秒
   if(scanTimer){ clearInterval(scanTimer); scanTimer = null; }
   const el = scanEls();
+  el.box.classList.add('show');   // 保证完成态也一定可见（快扫时轮询可能没抓到 scanning:true）
   if(el.bar){ el.bar.classList.remove('indet'); el.bar.style.width = '100%'; }
   if(el.pct) el.pct.textContent = '100%';
   if(el.title) el.title.textContent = '✅ 扫描完成';
