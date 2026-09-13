@@ -375,7 +375,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
           </select></div>
         <div style="flex:1"><label>下载格式</label>
           <select id="sb-format" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--text);padding:8px">
-            <option value="flac" selected>无损 FLAC（默认：优先无损，源无则回落 320K MP3）</option><option value="mp3">MP3（320K 音频+歌词）</option><option value="mv">MV（封面合成视频）</option>
+            <option value="hires" selected>HIRES（24bit 母带，无则回落 FLAC/320K）</option><option value="flac">FLAC 无损（无则回落 320K）</option><option value="mp3">320K MP3</option><option value="mv">MV（封面合成视频）</option>
           </select></div>
       </div>
       <div class="form-row" style="display:flex;gap:10px">
@@ -401,7 +401,8 @@ main{max-width:960px;margin:0 auto;padding:24px}
         逐个歌手搜索收集（自动翻页，可关），过滤噪声歌名、时长与音质后逐首下载入库；本地已有的自动跳过。
         平台选「全部平台」时四家（酷我/网易云/QQ/酷狗）都会搜一遍再按歌名+歌手合并去重，收录最全。
         单首下载失败会<b>自动换平台</b>找同名歌续下；下载保存到 MP3_DIR / MV_DIR（与点歌下载一致，按歌手分目录）。
-        默认「无损 FLAC」：先向音源要 flac 音质，拿到无损就原样存为 .flac（不转码），源没有无损时回落 320K MP3；
+        音质选项与 PC 端一致：HIRES（向音源要 24bit 母带 flac24bit，无则自动回落 FLAC/320K）、FLAC 无损（回落 320K）、320K MP3；
+        HIRES/FLAC 拿到无损就原样存为 .flac（不转码）；
         勾选「只收无损」则反过来——宁可不下也不落有损文件（先按平台音质标注预筛，再用实际下载内容兜底）。
         合唱人数超过「合唱人数上限」的歌视为大合唱、直接跳过（0=不限）；合作曲统一保存到<b>第一位歌手</b>的目录
         （「周杰伦、温岚」→ 周杰伦/，文件名仍保留完整歌手）。

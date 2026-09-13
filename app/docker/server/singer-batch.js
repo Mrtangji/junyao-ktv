@@ -100,6 +100,7 @@ const AUTO_PAUSE_AFTER_FAILS = 5; // 连续失败多少首后自动暂停（多�
 // 点唱接口（/api/lx/queue 等）不传 filter，保持老口径：任何版本都算已有（能播就行）。
 const LOCAL_FILTERS = {
   flac: { exts: ['flac'] },
+  hires: { exts: ['flac'] },   // hires（24bit）同样以 .flac 落盘
   mp3: { exts: ['mp3', 'flac'] },
   mv: { mediaTypes: ['video'] },
 };
@@ -423,7 +424,7 @@ async function runJob(job) {
     maxDur: opts.maxDurSec || 0,
     sqOnly: !!opts.sqOnly,
     autoPage: opts.autoPage !== false,
-    preferLossless: opts.format === 'flac',
+    preferLossless: opts.format === 'flac' || opts.format === 'hires',
     maxSingers: opts.maxSingers || 0,
   };
   let consecutiveFail = 0;
@@ -607,11 +608,11 @@ async function start(opts = {}) {
   if (!names.length) return { ok: false, error: '歌手名单为空' };
   // src='all' → 四平台合并搜索；否则单平台
   const src = opts.src === 'all' ? 'all' : (boardsdk.isValidSource(opts.src) ? opts.src : 'kw');
-  // mp3（320K 有声）/ flac（无损优先，源无无损回落 MP3）/ mv（封面合成视频）
+  // mp3（320K 有声）/ flac（无损优先，源无无损回落 MP3）/ hires（24bit 母带，回落 flac/320K）/ mv（封面合成视频）
   // 默认无损优先（FLAC）：未指定或传了不认识的值都按 flac 处理，只有明确选 mp3/mv 才降级。
-  const format = opts.format === 'mv' ? 'mv' : (opts.format === 'mp3' ? 'mp3' : 'flac');
+  const format = opts.format === 'mv' ? 'mv' : (opts.format === 'mp3' ? 'mp3' : (opts.format === 'hires' ? 'hires' : 'flac'));
   // 只收无损：只在无损格式下有意义（mp3/mv 模式本身就允许有损）
-  const sqOnly = opts.sqOnly === true && format === 'flac';
+  const sqOnly = opts.sqOnly === true && (format === 'flac' || format === 'hires');
   // 翻页开关：默认翻页收集，显式传 false 时只搜首页（快速模式）
   const autoPage = opts.autoPage !== false;
   // 合唱人数上限（同 lx 的 download.maxSingerCount，界面默认 2）：超过上限的歌视为大合唱，

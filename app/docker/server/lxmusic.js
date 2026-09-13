@@ -783,7 +783,9 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   const mp3Root = dlcfg.getMp3Dir();
   const mvRoot = path.resolve(dlcfg.MV_DIR);
   const isMv = format === 'mv';
-  const lossless = format === 'flac';
+  const lossless = format === 'flac' || format === 'hires';
+  // hires（24bit 母带）：请求 flac24bit 音质，脚本按优先序自动回落 flac/320k；
+  // 落盘仍是 .flac（24bit FLAC 的文件魔数同样是 fLaC），目录/命名口径不变。
   const dlRoot = isMv ? mvRoot : mp3Root; // 本次下载主文件的目标根目录
   if (!fs.existsSync(dlRoot)) throw new Error('MV_DIR_UNAVAILABLE');
   if (!fs.existsSync(isMv ? mp3Root : mvRoot)) throw new Error('MV_DIR_UNAVAILABLE');
@@ -827,7 +829,7 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   // 内置酷我直链兜底也支持 flac 参数），拿不到无损时返回值会是 mp3 直链，
   // 由下面的落盘分支自动按 MP3 处理。
   if (signal && signal.aborted) throw stopError();
-  const url = await resolveMusicUrlWithFallback(platform, musicInfo, lossless ? 'flac' : '320k', signal);
+  const url = await resolveMusicUrlWithFallback(platform, musicInfo, lossless ? (format === 'hires' ? 'flac24bit' : 'flac') : '320k', signal);
   throwIfAborted(signal);
   const tmpPath = path.join(TMP_DIR, `dl_${Date.now()}_${process.pid}`);
   const resp = await httpReq(url, { responseType: 'buffer', timeout: 25000, signal });
@@ -837,7 +839,7 @@ async function downloadSong({ songmid, name, singer, source = 'kw', pic = null, 
   // 也避免坏内容被 content-type 误判直接改名为 .mp3 入库
   const sniff = sniffAudio(resp.body);
   pushLxTrace({
-    kind: 'download', name: `${artistFull} - ${title}`, want: lossless ? 'flac' : '320k',
+    kind: 'download', name: `${artistFull} - ${title}`, want: lossless ? (format === 'hires' ? 'flac24bit' : 'flac') : '320k',
     url: briefUrl(url), status: resp.statusCode, sniff: sniff.kind,
     contentType: (resp.headers && (resp.headers['content-type'] || resp.headers['Content-Type'])) || null,
     bytes: resp.body ? resp.body.length : 0,
