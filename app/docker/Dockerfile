@@ -1,4 +1,7 @@
-FROM node:20-bookworm-slim
+# Node 22（2026-09）：TLS 指纹伪装实验的一部分——Node 20 与桌面版 Electron 的
+# 传输层指纹差异被怀疑是中转风控"block ip"的触发点之一，升级基础镜像改变
+# OpenSSL/TLS栈版本；配合 lxmusic.js 的 Chrome 套件顺序伪装一起验证。
+FROM node:22-bookworm-slim
 
 # better-sqlite3 编译依赖 + ffmpeg（Bug修复：双音轨MV切换原唱/伴唱需要用它按需
 # 提取指定音轨，浏览器的 HTMLMediaElement.audioTracks 在本应用运行的浏览器内核里

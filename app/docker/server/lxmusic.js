@@ -59,6 +59,32 @@ function isAborted(signal) {
 }
 
 // ---------- 通用 HTTP（跟随重定向 + gzip，供 lx.request 与内置源共用） ----------
+// ---------- TLS 指纹伪装（对齐 Chrome/Electron 的传输层特征） ----------
+// 背景：中转(88.lxmusic.中国)对服务器回 "block ip" 而同 IP 同 fingerprint 的
+// PC 端(Electron/Chromium)正常——IP、设备标识、UA 均已排除，剩余嫌疑是传输层
+// 指纹。Node 默认 OpenSSL 套件顺序(AES256 优先)与 Chrome(AES128 优先、含
+// CHACHA20)差异明显，网关可在 ClientHello 阶段就分流。这里把出站 HTTPS 调成
+// Chrome 的特征组合；LX_TLS_MIMIC=0 可关闭回归原生 Node 指纹做对照。
+const TLS_MIMIC = process.env.LX_TLS_MIMIC !== '0';
+const CHROME_CIPHERS = [
+  'TLS_AES_128_GCM_SHA256', 'TLS_AES_256_GCM_SHA384', 'TLS_CHACHA20_POLY1305_SHA256',
+  'ECDHE-ECDSA-AES128-GCM-SHA256', 'ECDHE-RSA-AES128-GCM-SHA256',
+  'ECDHE-ECDSA-AES256-GCM-SHA384', 'ECDHE-RSA-AES256-GCM-SHA384',
+  'ECDHE-ECDSA-CHACHA20-POLY1305', 'ECDHE-RSA-CHACHA20-POLY1305',
+  'ECDHE-RSA-AES128-SHA', 'ECDHE-ECDSA-AES128-SHA',
+  'ECDHE-RSA-AES256-SHA', 'ECDHE-ECDSA-AES256-SHA',
+  'AES128-GCM-SHA256', 'AES256-GCM-SHA384', 'AES128-SHA', 'AES256-SHA',
+].join(':');
+function chromeTlsOptions() {
+  if (!TLS_MIMIC) return {};
+  return {
+    ciphers: CHROME_CIPHERS,                 // Chrome 的 TLS1.2/1.3 套件顺序
+    ecdhCurve: 'X25519:P-256:P-384',         // Chrome 的 key_share 曲线组
+    minVersion: 'TLSv1.2',
+    ALPNProtocols: ['http/1.1'],             // 只声明本通道真能说的协议（此路径不支持 h2）
+  };
+}
+
 function httpReq(url, options = {}, redirectCount = 0) {
   return new Promise((resolve, reject) => {
     // 取消令牌：显式传入优先，否则用当前流程注册的令牌（覆盖脚本内部/内置源内部请求）
@@ -82,7 +108,7 @@ function httpReq(url, options = {}, redirectCount = 0) {
       headers['Content-Type'] = `multipart/form-data; boundary=${boundary}`;
     }
     if (body) headers['Content-Length'] = Buffer.byteLength(body);
-    const req = mod.request(u, { method: (options.method || (body ? 'POST' : 'GET')).toUpperCase(), headers, timeout: options.timeout || 15000 }, (res) => {
+    const req = mod.request(u, Object.assign({ method: (options.method || (body ? 'POST' : 'GET')).toUpperCase(), headers, timeout: options.timeout || 15000 }, u.protocol === 'https:' ? chromeTlsOptions() : {}), (res) => {
       if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirectCount < 5) {
         res.resume();
         const next = new URL(res.headers.location, u).toString();
