@@ -315,7 +315,8 @@ async function downloadViaOtherSources(song, format, excludeSrc, sqOnly, maxSing
         titleMatch(m.name, song.name) && singerMatch(m.singer, lead) &&
         // 候选歌名带括号（Demo/Live/网友改编等杂版）与收集阶段口径一致，换源也不收
         !/[()（）]/.test(m.name) &&
-        !(sqOnly && typesSayNoLossless(m)) &&
+        // 无损任务：标注没无损的候选不换（省一次注定失败的下载，同 PC 口径）
+        !((format === 'flac' || format === 'hires') && typesSayNoLossless(m)) &&
         !(maxSingers > 0 && singerCount(m.singer) > maxSingers));
       if (!cand) continue;
       if (stopFlag || pauseFlag) return null;
@@ -329,6 +330,7 @@ async function downloadViaOtherSources(song, format, excludeSrc, sqOnly, maxSing
 // 单平台收集：翻页搜索 → 过滤（词/歌手/时长/音质）→ 按 songmid 去重
 async function collectFromSource(name, srcId, opts) {
   const collected = new Map();
+  const losslessTask = opts.format === 'flac' || opts.format === 'hires';
   let total = 0;
   const maxPage = opts.autoPage ? MAX_PAGES : 1;
   for (let page = 1; page <= maxPage; page++) {
@@ -365,6 +367,9 @@ async function collectFromSource(name, srcId, opts) {
       // 只收无损：平台明确标注了音质、且其中没有无损 → 跳过。
       // 未标注（types 为空）的不在这里跳过，改为下载时兜底判定，避免误杀。
       if (opts.sqOnly && typesSayNoLossless(m)) continue;
+      // 无损任务（flac/hires）一律按平台标注过滤——标注只有 128k/320k 的歌
+      // 请求无损必然失败（PC 端/LXSERVER 同样先看标注再请求），不再依赖 sqOnly。
+      if (losslessTask && typesSayNoLossless(m)) continue;
       collected.set(String(m.songmid), m);
     }
     state.message = `正在收集「${name}」${opts.multi ? `（${srcId}）` : ''}：第 ${page} 页，已收集 ${collected.size} 首`;
