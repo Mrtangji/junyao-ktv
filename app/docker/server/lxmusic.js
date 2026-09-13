@@ -388,9 +388,10 @@ async function resolveMusicUrlWithFallback(platform, musicInfo, preferQuality = 
   // 1) 当前激活源
   if (activeSource) {
     try { return await resolveViaInstance(activeSource, platform, musicInfo, preferQuality, signal); }
-    catch (e) { if (e && e.__stopped) throw e; errors.push(`当前源「${activeSource.meta.name}」: ${e.message}`); }
+    catch (e) { if (e && e.__stopped) throw e; errors.push(`当前源「${activeSource.meta.name}」: ${e.message}`); pushLxTrace({ kind: 'resolveFail', stage: 'active', srcName: activeSource.meta.name, source: platform, quality: preferQuality, err: String(e.message).slice(0, 200) }); }
   } else {
     errors.push('NO_ACTIVE_SOURCE');
+    pushLxTrace({ kind: 'resolveFail', stage: 'active', err: 'NO_ACTIVE_SOURCE' });
   }
   // 2) 其余已导入源逐个轮换
   const rows = activeSource
@@ -399,9 +400,9 @@ async function resolveMusicUrlWithFallback(platform, musicInfo, preferQuality = 
   for (const row of rows) {
     throwIfAborted(signal);
     const inst = await getAltSourceInstance(row.id);
-    if (!inst) { errors.push(`源#${row.id} 拉起失败`); continue; }
+    if (!inst) { errors.push(`源#${row.id} 拉起失败`); pushLxTrace({ kind: 'resolveFail', stage: 'alt', srcName: row.name, err: '实例拉起失败' }); continue; }
     try { return await resolveViaInstance(inst, platform, musicInfo, preferQuality, signal); }
-    catch (e) { if (e && e.__stopped) throw e; errors.push(`源「${inst.meta.name}」: ${e.message}`); }
+    catch (e) { if (e && e.__stopped) throw e; errors.push(`源「${inst.meta.name}」: ${e.message}`); pushLxTrace({ kind: 'resolveFail', stage: 'alt', srcName: inst.meta.name, source: platform, quality: preferQuality, err: String(e.message).slice(0, 200) }); }
   }
   // 3) kw 平台最后用内置酷我直链兜底
   if (platform === 'kw') {
@@ -409,7 +410,7 @@ async function resolveMusicUrlWithFallback(platform, musicInfo, preferQuality = 
       throwIfAborted(signal);
       const { resolveKwUrl } = require('./kw-url');
       const url = await resolveKwUrl(musicInfo.songmid || musicInfo.songId || musicInfo.musicId, preferQuality, signal);
-      if (url) return url;
+      if (url) { pushLxTrace({ kind: 'resolveFail', stage: 'kwFallback', err: '脚本链全失败，退内置酷我直链' }); return url; }
       errors.push('内置酷我直链也失败');
     } catch (e) { if (e && e.__stopped) throw e; errors.push(`内置酷我直链: ${e.message}`); }
   }
