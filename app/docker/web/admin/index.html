@@ -345,6 +345,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
     <div id="lx-err" style="color:var(--pink);font-size:12px;min-height:14px;margin-bottom:8px"></div>
     <div class="modal-btns" style="justify-content:flex-start">
       <button class="hbtn primary" onclick="lxImport()">📥 导入并启用</button>
+      <button class="hbtn" onclick="lxImport(false)">📥 仅导入不启用</button>
       <button class="hbtn" onclick="closeLxModal()">关闭</button>
     </div>
     <div style="margin-top:18px;font-size:13px;color:var(--sub)">已导入的音源</div>
@@ -948,7 +949,7 @@ async function lxLoadList(){
     });
   }catch(e){document.getElementById('lx-cur').textContent='加载失败：'+e.message;}
 }
-async function lxImport(){
+async function lxImport(activate = true){
   const err = document.getElementById('lx-err');
   err.textContent = '';
   const url = document.getElementById('lx-url').value.trim();
@@ -957,10 +958,11 @@ async function lxImport(){
   toast('音源导入中…');
   try{
     const body = url ? {url} : {script};
+    if(!activate) body.activate = false;   // 仅导入入库，不切换当前启用源
     const res = await fetch('/api/lx/source',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const r = await res.json();
     if(r.error){err.textContent = r.error;toast('⚠️ 导入失败');return;}
-    toast(`✅ 已导入并启用：${r.name}`);
+    toast(activate ? `✅ 已导入并启用：${r.name}` : `✅ 已导入（未启用）：${r.name}，需用时在列表点「启用」`);
     document.getElementById('lx-url').value = '';
     document.getElementById('lx-script').value = '';
     lxLoadList();

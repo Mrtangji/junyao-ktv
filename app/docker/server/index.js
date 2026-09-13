@@ -534,8 +534,13 @@ app.post('/api/lx/source', async (req, res) => {
     const inst = await lxmusic.activateScript(script); // 校验可运行后才入库
     const info = db.prepare('INSERT INTO lx_sources (name,description,version,author,homepage,script) VALUES (?,?,?,?,?,?)')
       .run(inst.meta.name, inst.meta.description, inst.meta.version, inst.meta.author, inst.meta.homepage, script);
-    await lxmusic.activateSourceById(info.lastInsertRowid);
-    res.json({ ok: true, id: info.lastInsertRowid, name: inst.meta.name, sources: inst.sources });
+    // activate:false → 仅导入入库不启用（activateScript 只是校验解析，不设 activeSource）
+    if (req.body.activate === false) {
+      res.json({ ok: true, id: info.lastInsertRowid, name: inst.meta.name, sources: inst.sources, activated: false });
+    } else {
+      await lxmusic.activateSourceById(info.lastInsertRowid);
+      res.json({ ok: true, id: info.lastInsertRowid, name: inst.meta.name, sources: inst.sources, activated: true });
+    }
   } catch (e) {
     res.status(400).json({ error: '源导入失败: ' + e.message });
   }
