@@ -165,6 +165,17 @@ function httpReq(url, options = {}, redirectCount = 0) {
       });
     }
     function nativeReq() {
+    // 整体死线：options.timeout 只是 socket 空闲超时，覆盖不到 DNS/连接阶段——
+    // 实测在 DNS/连接期间被 abort（req.destroy 于 socket 未建立时调用），Node 22
+    // 不会发出 error，请求 promise 永远挂起，主循环因此卡死在"正在停止"。
+    // 这里加一个覆盖全生命周期的硬死线兜底：到点必 destroy+reject。
+    const deadline = setTimeout(() => {
+      const e = new Error(`request deadline (${url.slice(0, 60)})`);
+      try { req.destroy(e); } catch (_e) {}
+      reject(e);
+    }, (options.timeout || 15000) + 10000);
+    const _rej = reject; reject = (e) => { clearTimeout(deadline); _rej(e); };
+    const _res = resolve; resolve = (v) => { clearTimeout(deadline); _res(v); };
     const headers = Object.assign({ 'User-Agent': 'lx-music-request/2.0.0', 'Accept-Encoding': 'gzip, deflate' }, options.headers || {});
     let body = options.body != null ? String(options.body) : null;
     if (options.form) {
@@ -917,6 +928,7 @@ module.exports = {
   initActiveSource, activateSourceById, deactivateSource, activateScript, activeSource: () => activeSource,
   resolveMusicUrl, resolveMusicUrlWithFallback, kwSearch, kwBoardSongs, KW_BOARDS, kwLyric,
   downloadSong, findLocalSong, parseScriptMeta,
+  runSourceScript,
   getLxTrace: () => lxTraceBuf.slice(),
   clearLxTrace: () => { lxTraceBuf.length = 0; },
   // 长流程（歌手批量下载）注册/解除"取消令牌"，让脚本内、内置源内发起的请求也能被掐断

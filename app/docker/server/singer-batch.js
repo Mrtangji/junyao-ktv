@@ -408,6 +408,9 @@ async function collectSinger(name, src, opts) {
 }
 
 // ---------- 主循环（可暂停 / 可续传） ----------
+// 停止诊断：记录主循环当前所处阶段，stopSingerBatch 10s 后仍未退出时打印，
+// 用于定位"停止后 UI 回不到默认界面"这类卡死问题。
+let dbgStage = '';
 
 async function runJob(job) {
   loopRunning = true;
@@ -435,6 +438,7 @@ async function runJob(job) {
       job.pendingSongs = [];
       if (!songs.length) {
         state.message = `正在收集「${name}」（${i + 1}/${names.length}）`;
+        dbgStage = 'collect';
         try { songs = await collectSinger(name, opts.src, collectOpts); }
         catch (e) {
           if (e && e.__stopped) {
@@ -475,6 +479,7 @@ async function runJob(job) {
           k++; continue;
         }
         state.message = `「${name}」${k + 1}/${songs.length} 下载中：${song.name} - ${song.singer}`;
+        dbgStage = 'download';
         try {
           await downloadWithBlockBackoff(song, opts);
           bump(job, 'done');
@@ -748,6 +753,20 @@ function stopSingerBatch() {
   }
   state.stopping = true;
   state.message = '⏹ 正在停止：正在中断在途的取链/下载请求…';
+  // 看门狗：主循环正常应在秒级退出；万一卡在不可中断的 await 上（历史 bug：
+  // DNS/连接阶段被 abort 的请求 promise 永不 settle），20s 后强制收尾，保证
+  // 状态一定回到"已结束"，UI 一定能回到默认配置界面。
+  setTimeout(() => {
+    if (!state.stopping) return;
+    console.error(`[SB][stop-watchdog] 停止 20s 未退出（stage=${dbgStage}），强制结束`);
+    stopFlag = true; pauseFlag = false;
+    try { if (sbAbort) sbAbort.abort(); } catch (e) {}
+    sbAbort = null;
+    lxmusic.setCancelSignal(null);
+    loopRunning = false;
+    finish('stopped');
+    state.message = '已停止：完成 ' + state.singersDone + '/' + state.singersTotal + ' 个歌手，下载 ' + state.done + '（强制收尾）';
+  }, 20000);
   return { ok: true };
 }
 
