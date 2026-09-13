@@ -632,25 +632,54 @@ app.get('/api/lx/boards', async (req, res) => {
   catch (e) { res.status(502).json({ error: '榜单获取失败: ' + e.message }); }
 });
 
+// 带超时的 Promise 包装：外部平台接口若因网络黑洞迟迟不响应，这里保证最迟
+// BOARD_TIMEOUT_MS 后一定 settle，避免服务端请求挂起导致前端 fetch 超时 → “榜单加载失败”。
+const BOARD_TIMEOUT_MS = 12000;
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} 超时（${ms}ms，服务器可能连不上该平台接口）`)), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 // 榜单歌曲
 app.get('/api/lx/board', async (req, res) => {
   const src = boardsdk.isValidSource(req.query.src) ? req.query.src : 'kw';
   const limit = parseInt(req.query.limit) || 100;
+  let boardErr = null;
   try {
-    const r = await boardsdk.boardSongs(src, req.query.bangid || '255', parseInt(req.query.page) || 1, limit);
+    const r = await withTimeout(boardsdk.boardSongs(src, req.query.bangid || '255', parseInt(req.query.page) || 1, limit), BOARD_TIMEOUT_MS, `${src} 榜单`);
     r.list = attachLocalFlags(r.list);
-    res.json(r);
-  } catch (e) {
-    // 四平台榜单直连失败（平台接口失效 / 服务器到不了官网）→ 兜底本站热门点唱榜，保证点唱榜可用
-    // 服务器能直连时上方 try 已返回真实榜，不会走到这里
-    try {
-      const rows = db.prepare('SELECT id,title,artist,album,cover FROM songs WHERE media_type=? ORDER BY play_count DESC, id DESC LIMIT ?').all('audio', limit);
-      const list = rows.map(s => ({ songmid: String(s.id), name: s.title, singer: s.artist || '', album: s.album || '', pic: s.cover || '', src, duration: 0 }));
-      res.json({ list: attachLocalFlags(list), total: list.length, page: 1, limit: list.length, fallback: true, fallbackReason: '平台榜单接口暂不可用，已显示本站热门点唱' });
-    } catch (e2) {
-      res.status(502).json({ error: '榜单获取失败: ' + e.message });
-    }
+    return res.json(r);
+  } catch (e) { boardErr = e; }
+  // 四平台榜单直连失败（接口失效 / 服务器到不了官网 / 网络超时）→ 兜底本站热门点唱榜
+  // 服务器能直连时上方 try 已返回真实榜，不会走到这里
+  try {
+    const rows = db.prepare('SELECT id,title,artist,album,cover FROM songs WHERE media_type=? ORDER BY play_count DESC, id DESC LIMIT ?').all('audio', limit);
+    const list = rows.map(s => ({ songmid: String(s.id), name: s.title, singer: s.artist || '', album: s.album || '', pic: s.cover || '', src, duration: 0 }));
+    return res.json({ list: attachLocalFlags(list), total: list.length, page: 1, limit: list.length, fallback: true, fallbackReason: `平台榜单接口暂不可用（${boardErr ? boardErr.message : '未知错误'}），已显示本站热门点唱` });
+  } catch (e2) {
+    // 兜底查询也失败（如 media_type 列不存在/曲库为空）→ 返回空列表而非 502，保证前端不“加载失败”
+    return res.json({ list: [], total: 0, page: 1, limit, fallback: true, fallbackReason: `平台榜单与本站兜底均不可用：${boardErr ? boardErr.message : ''}｜${e2.message}` });
   }
+});
+
+// 榜单接口连通性自检：从服务器侧实测四平台是否可达，用于排查“除麦动外榜单加载失败”
+// 访问 /api/lx/boards/health —— ok=false 表示服务器连不上该平台接口（网络/防火墙/地区限制），
+// 与 PC 端 lx-music-desktop 能连不代表部署服务器也能连。
+app.get('/api/lx/boards/health', async (req, res) => {
+  const defs = { kw: '255', wy: '3778678', tx: '26', kg: '8888' };
+  const out = {};
+  await Promise.all(Object.entries(defs).map(async ([s, bid]) => {
+    const t0 = Date.now();
+    try {
+      const r = await withTimeout(boardsdk.boardSongs(s, bid, 1, 3), BOARD_TIMEOUT_MS, s);
+      out[s] = { ok: true, ms: Date.now() - t0, count: (r.list || []).length };
+    } catch (e) {
+      out[s] = { ok: false, ms: Date.now() - t0, error: e.message };
+    }
+  }));
+  out._hint = 'ok=false = 该平台接口从服务器侧不可达（网络/防火墙/地区限制）；ok=true = 服务器能正常拉取该平台榜单';
+  res.json(out);
 });
 
 // 网络搜索（src: kw/wy/tx/kg，缺省 kw；四平台统一由 boardsdk 提供）
