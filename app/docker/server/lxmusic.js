@@ -423,14 +423,24 @@ async function getAltSourceInstance(id) {
 // （抖动让请求节奏不那么规律，降低被上游识别为爬虫的概率）。中转接口按 IP
 // 限流（"block ip"），批量以 300ms/首连发必然触发；把服务端请求节奏降到与
 // 桌面版一致。基准间隔可用环境变量 LX_SOURCE_INTERVAL_MS 覆盖。
+// 无损（flac/flac24bit/hires）单独用更大的间隔（默认 6s）：实测同一脚本/shim
+// 以稀疏节奏请求（PC 手动、lxserver 单曲）中转从不 block，只有批量连发会触发
+// 封锁且重试会续期——所以无损跑批量必须低频慢跑，宁可慢也不能进冷却。
+// 可用 LX_SOURCE_INTERVAL_FLAC_MS 覆盖。
 const SOURCE_INTERVAL = Math.max(0, parseInt(process.env.LX_SOURCE_INTERVAL_MS, 10) || 1500);
+const SOURCE_INTERVAL_FLAC = Math.max(
+  SOURCE_INTERVAL,
+  parseInt(process.env.LX_SOURCE_INTERVAL_FLAC_MS, 10) || 6000,
+);
 const SOURCE_JITTER = Math.min(800, SOURCE_INTERVAL);
+const SOURCE_JITTER_FLAC = Math.min(2000, SOURCE_INTERVAL_FLAC);
+const LOSSLESS_QUALITIES = ['flac', 'flac24bit', 'hires', 'wav', 'ape'];
 let srcLastAt = 0;
 let srcChain = Promise.resolve();
-function acquireSourceSlot() {
+function acquireSourceSlot(interval = SOURCE_INTERVAL, jitter = SOURCE_JITTER) {
   const task = srcChain.then(async () => {
     const wait = srcLastAt
-      ? srcLastAt + SOURCE_INTERVAL + Math.random() * SOURCE_JITTER - Date.now()
+      ? srcLastAt + interval + Math.random() * jitter - Date.now()
       : 0;
     if (wait > 0) await new Promise(r => setTimeout(r, wait));
     srcLastAt = Date.now();
@@ -468,7 +478,12 @@ async function resolveViaInstance(inst, sourceKey, musicInfo, preferQuality, sig
   for (const q of order) {
     throwIfAborted(signal);   // 音源脚本会把网络错误吞掉换成自己的错误，靠令牌状态兜住
     try {
-      await acquireSourceSlot();   // 节流：与桌面版同参数（并发 1 + 1.5s+抖动）
+      // 节流：无损请求低频慢跑（6s+抖动），有损保持桌面版同参数（1.5s+抖动）
+      const losslessQ = LOSSLESS_QUALITIES.includes(String(q).toLowerCase());
+      await acquireSourceSlot(
+        losslessQ ? SOURCE_INTERVAL_FLAC : SOURCE_INTERVAL,
+        losslessQ ? SOURCE_JITTER_FLAC : SOURCE_JITTER,
+      );
       throwIfAborted(signal);
       const url = await inst.requestHandler({ source: key, action: 'musicUrl', info: { type: q, musicInfo } });
       if (url && typeof url === 'string' && /^https?:/.test(url)) {
