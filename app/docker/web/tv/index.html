@@ -3410,19 +3410,19 @@ function activateFocused(){blurRealInput();focEls=getFocusables();if(focEls[focI
 document.addEventListener('keydown',e=>{if(isFS)showOverlay();switch(e.key){case 'ArrowUp':moveFocus('up');e.preventDefault();break;case 'ArrowDown':moveFocus('down');e.preventDefault();break;case 'ArrowLeft':moveFocus('left');e.preventDefault();break;case 'ArrowRight':moveFocus('right');e.preventDefault();break;case 'Enter':activateFocused();break;case ' ':togglePause();e.preventDefault();break;case 'Escape':closeTopPanel();break;case 'f':case 'F':isFS?exitKtvFullscreen():enterFullscreen();break;case 'n':case 'N':cutSong();break;}
 });
 function esc(s){return String(s||'').replace(/'/g,"&#39;");}
-// 歌名后媒体类型角标：无损（flac/wav/ape…）/ MV / 音频扩展名。
+// 歌名后媒体类型角标：MV / 直接显示格式后缀大写（FLAC、WAV、APE、MP3…）。
 // 优先按 filename 后缀判断（老数据 media_type 可能缺失），media_type 兜底。
 function mediaBadge(s){
   if(!s) return '';
   const fn=String(s.filename||'').toLowerCase();
   let ext=fn.slice(fn.lastIndexOf('.'));
   if(!/^\.[a-z0-9]+$/.test(ext)){const e=String(s.ext||'').toLowerCase().replace(/^\./,'');ext=e?'.'+e:'';}
-  if(s.media_type==='video'||['.ts','.mp4','.mkv','.avi','.flv','.mov','.webm','.mpg'].includes(ext))
+  const label=ext.replace(/^\./,'').toUpperCase();   // 格式后缀（大写）直接作为徽标文案
+  if(s.media_type==='video'||['.ts','.mp4','.mkv','.avi','.flv','.mov','.webm','.mpg','.m4v'].includes(ext))
     return '<span class="mt-b mt-v">MV</span>';
-  if(['.flac','.wav','.ape','.alac','.aiff'].includes(ext))
-    return '<span class="mt-b mt-lossless">无损</span>';
-  if(['.m4a','.aac','.ogg','.opus'].includes(ext))
-    return '<span class="mt-b mt-a">'+ext.slice(1).toUpperCase()+'</span>';
+  if(['.flac','.wav','.ape','.alac','.aiff','.aif','.dsf','.dff'].includes(ext))
+    return '<span class="mt-b mt-lossless">'+label+'</span>';
+  if(ext) return '<span class="mt-b mt-a">'+label+'</span>';
   return '<span class="mt-b mt-a">MP3</span>';
 }
 // 歌词角标：放在 MP3/无损/服务器/本地 标签之后——有歌词显示「歌词」，

@@ -51,7 +51,7 @@ header{
 .song-card .title{font-size:15px;font-weight:600}
 .song-card .artist{font-size:12px;color:var(--sub);margin-top:3px}
 
-/* ===== 歌曲类型徽标（MV / MP3 / 无损 / 歌词 / 逐字） ===== */
+/* ===== 歌曲类型徽标（MV / MP3 / 格式后缀如 FLAC / 歌词 / 逐字） ===== */
 .badges{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
 .badge{font-size:10px;line-height:1;padding:3px 6px;border-radius:6px;font-weight:800;letter-spacing:.5px}
 .b-mv  {background:rgba(255,79,155,.18);color:var(--pink);border:1px solid rgba(255,79,155,.4)}
@@ -330,20 +330,21 @@ function renderQueue(){
 async function topSong(id){ await fetch(`/api/queue/${id}/top`,{method:'POST'}); }
 async function delSong(id){ await fetch(`/api/queue/${id}`,{method:'DELETE'}); }
 
-// ===== 歌曲类型徽标：MV / MP3 / 无损 / 歌词(逐字) =====
-// 数据来源：songs 行的 media_type（video=MV / audio=音视频文件）、
-// filename 扩展名（.mp3=MP3，.flac/.wav/.ape/.m4a 等=无损）、
+// ===== 歌曲类型徽标：MV（视频）/ MP3 / 直接显示格式后缀大写（FLAC、WAV、APE…）+ 歌词(LRC/LRCX) =====
+// 数据来源：filename 扩展名（大写即格式，如 FLAC）、media_type（video=MV / audio=音视频文件）、
 // lyrics_path（有=歌词）、lrc_karaoke（有=逐字歌词）。
 function extOf(f){ const m=/\.([a-z0-9]+)$/i.exec(f||''); return m?m[1].toLowerCase():''; }
+// 无损系格式（紫）与其它音频格式（灰）——具体文案一律用后缀大写表示。
+const LOSSLESS_EXT=['flac','wav','ape','alac','aiff','aif','dsf','dff'];
 function songBadges(s){
-  const ext = extOf(s.filename);
+  const ext = extOf(s.filename) || String(s.ext||'').toLowerCase().replace(/^\./,'');
   const out = [];
   if(s.media_type === 'video'){
     out.push(['MV','mv']);
   } else if(ext === 'mp3'){
     out.push(['MP3','mp3']);
-  } else if(['flac','wav','ape','m4a','ogg','opus','aac'].includes(ext)){
-    out.push(['无损','flac']);
+  } else if(ext){
+    out.push([ext.toUpperCase(), LOSSLESS_EXT.includes(ext)?'flac':'audio']);
   } else {
     out.push(['音频','audio']);
   }
