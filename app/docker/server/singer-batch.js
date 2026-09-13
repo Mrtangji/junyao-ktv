@@ -5,7 +5,7 @@
 //   续下，换源链见 lxmusic.resolveMusicUrlWithFallback）。
 // 对齐 lx 版（src/renderer/store/singerBatch.ts）的几处做法：
 //   · 多音源：src='all' 时 kw/wy/tx/kg 逐家搜完再合并（按歌名+歌手跨源去重）
-//   · sqOnly：按平台音质标注（boardsdk 统一解析出的 types）跳过没有无损的歌
+//   · flac/hires 任务：按平台音质标注（boardsdk 统一解析出的 types）跳过没有无损的歌
 //   · autoPage：可只搜首页（快速模式）
 //   · 音源级节流：同一平台两次请求之间留最小间隔，平台间 300ms、歌手间 1000ms
 // 暂停 / 断点续传（LX 没有，KTV 侧新增）：
@@ -137,14 +137,13 @@ const state = {
   done: 0,
   failed: 0,
   skipped: 0,           // 本地已有
-  noLossless: 0,        // 只收无损模式下：四平台都没有无损，主动跳过
+  noLossless: 0,        // flac/hires 任务：源只给到有损，主动跳过
   preview: 0,           // 试听/保护片段拒收（ffprobe 时长低于阈值）
   fallback: 0,          // 换平台成功数
   lastError: '',
   failedList: [],       // [{name, singer, src, reason}] 上限 500
   stopping: false,      // 已请求停止、尚在收尾（前端可显示"正在停止…"）
   sources: [],          // 本次任务的搜索平台
-  sqOnly: false,        // 本次任务是否「只收无损」
   maxSingers: 2,        // 本次任务的合唱人数上限（0=不限）
   pendingSongs: 0,      // 当前歌手还剩多少首没下（暂停/续传时看这个）
   remainingSingers: 0,  // 还剩多少个歌手没处理完（含当前）
@@ -272,7 +271,7 @@ async function backoffDelay(ms) {
 async function downloadWithBlockBackoff(song, opts) {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await downloadOne(song, opts.format, opts.sqOnly);
+      return await downloadOne(song, opts.format);
     } catch (e) {
       if (e && e.__stopped) throw e;
       if (attempt < BLOCK_BACKOFF_MS.length && /block ip/i.test(String((e && e.message) || e))) {
@@ -285,7 +284,7 @@ async function downloadWithBlockBackoff(song, opts) {
   }
 }
 
-async function downloadOne(song, format, sqOnly) {
+async function downloadOne(song, format) {
   if (stopFlag || pauseFlag) throw stopError();
   // 取歌词（附属信息，失败不挡下载）
   let lrcText = null;
@@ -293,7 +292,7 @@ async function downloadOne(song, format, sqOnly) {
   if (stopFlag || pauseFlag) throw stopError();
   return lxmusic.downloadSong({
     songmid: song.songmid, name: song.name, singer: song.singer, pic: song.pic || null,
-    source: song.src, format, lrcText, sqOnly,
+    source: song.src, format, lrcText,
     storage: 'mv',   // 批量/单曲下载落点 = 点唱曲库（MV_DIR），与点唱榜同库可直接点播
     signal: sbAbort ? sbAbort.signal : null,
     // 平台换链必需字段：kg 的 FileHash、tx 的数字 songId/strMediaMid 等
@@ -303,7 +302,7 @@ async function downloadOne(song, format, sqOnly) {
 
 // 换平台找同名歌续下：按 [其它三个平台] 顺序，搜索歌名过滤歌手+歌名匹配，取第一个下载成功。
 // 只收无损模式下，媒体库明确标注无无损的候选直接跳过（省一次下载）。
-async function downloadViaOtherSources(song, format, excludeSrc, sqOnly, maxSingers) {
+async function downloadViaOtherSources(song, format, excludeSrc, maxSingers) {
   const lead = firstSinger(song.singer);
   for (const s of ALL_SOURCES) {
     if (s === excludeSrc) continue;
@@ -320,7 +319,7 @@ async function downloadViaOtherSources(song, format, excludeSrc, sqOnly, maxSing
         !(maxSingers > 0 && singerCount(m.singer) > maxSingers));
       if (!cand) continue;
       if (stopFlag || pauseFlag) return null;
-      await downloadWithBlockBackoff(cand, { format, sqOnly });
+      await downloadWithBlockBackoff(cand, { format });
       return s;
     } catch (e) { if (e && e.__stopped) throw e; /* 下一个平台 */ }
   }
@@ -366,7 +365,6 @@ async function collectFromSource(name, srcId, opts) {
       if (opts.maxSingers > 0 && singerCount(m.singer) > opts.maxSingers) continue;
       // 只收无损：平台明确标注了音质、且其中没有无损 → 跳过。
       // 未标注（types 为空）的不在这里跳过，改为下载时兜底判定，避免误杀。
-      if (opts.sqOnly && typesSayNoLossless(m)) continue;
       // 无损任务（flac/hires）一律按平台标注过滤——标注只有 128k/320k 的歌
       // 请求无损必然失败（PC 端/LXSERVER 同样先看标注再请求），不再依赖 sqOnly。
       if (losslessTask && typesSayNoLossless(m)) continue;
@@ -433,7 +431,6 @@ async function runJob(job) {
     filterRegs,
     minDur: opts.minDurSec || 0,
     maxDur: opts.maxDurSec || 0,
-    sqOnly: !!opts.sqOnly,
     autoPage: opts.autoPage !== false,
     preferLossless: opts.format === 'flac' || opts.format === 'hires',
     maxSingers: opts.maxSingers || 0,
@@ -512,7 +509,7 @@ async function runJob(job) {
           }
           // 换平台续下（自动换源）
           try {
-            const via = await downloadViaOtherSources(song, opts.format, song.src, opts.sqOnly, opts.maxSingers || 0);
+            const via = await downloadViaOtherSources(song, opts.format, song.src, opts.maxSingers || 0);
             if (via) { bump(job, 'done'); bump(job, 'fallback'); consecutiveFail = 0; }
             else throw e;
           } catch (e2) {
@@ -622,8 +619,6 @@ async function start(opts = {}) {
   // mp3（320K 有声）/ flac（无损）/ hires（24bit 母带）/ mv（封面合成视频）
   // 无音质回落：源没有所选音质就整首失败跳过（__noLossless）。
   const format = opts.format === 'mv' ? 'mv' : (opts.format === 'mp3' ? 'mp3' : (opts.format === 'hires' ? 'hires' : 'flac'));
-  // 只收无损：只在无损格式下有意义（mp3/mv 模式本身就允许有损）
-  const sqOnly = opts.sqOnly === true && (format === 'flac' || format === 'hires');
   // 翻页开关：默认翻页收集，显式传 false 时只搜首页（快速模式）
   const autoPage = opts.autoPage !== false;
   // 合唱人数上限（同 lx 的 download.maxSingerCount，界面默认 2）：超过上限的歌视为大合唱，
@@ -637,14 +632,13 @@ async function start(opts = {}) {
   const maxDur = Math.max(0, Math.round((parseFloat(opts.maxDur) || 0) * 60));
 
   // 单曲下载：onlyTitle 非空时，收集阶段只保留歌名匹配它的结果（配合 names=[歌手]）。
-  // 这是用户明确点名的歌，过滤词/时长区间/合唱上限都不再套用（避免把想要的歌滤掉），
-  // 只收无损（sqOnly）仍然生效。
+  // 这是用户明确点名的歌，过滤词/时长区间/合唱上限都不再套用（避免把想要的歌滤掉）。
   const onlyTitle = String(opts.onlyTitle || '').trim();
 
   const job = {
     v: JOB_VERSION,
     names,
-    opts: { src, format, sqOnly, autoPage, maxSingers, useFilter, filterWords, minDurSec: minDur, maxDurSec: maxDur, onlyTitle },
+    opts: { src, format, autoPage, maxSingers, useFilter, filterWords, minDurSec: minDur, maxDurSec: maxDur, onlyTitle },
     singerIndex: 0,
     pendingSongs: [],
     stats: { done: 0, failed: 0, skipped: 0, noLossless: 0, preview: 0, fallback: 0, failedList: [] },
@@ -675,7 +669,7 @@ function launch(job) {
     lastError: '', failedList: job.stats.failedList,
     stopping: false,
     sources: o.src === 'all' ? [...ALL_SOURCES] : [o.src || 'kw'],
-    sqOnly: !!o.sqOnly, maxSingers: o.maxSingers == null ? 2 : o.maxSingers,
+    maxSingers: o.maxSingers == null ? 2 : o.maxSingers,
   });
   syncPending(job);
   saveJob();
@@ -799,7 +793,7 @@ function stopSingerBatch() {
     lastError: (job.stats.failedList || []).length ? '' : '', failedList: job.stats.failedList,
     pausedReason: job.reason || '上次任务未完成',
     sources: o.src === 'all' ? [...ALL_SOURCES] : [o.src || 'kw'],
-    sqOnly: !!o.sqOnly, maxSingers: o.maxSingers == null ? 2 : o.maxSingers,
+    maxSingers: o.maxSingers == null ? 2 : o.maxSingers,
   });
   syncPending(job);
   state.message = `⏸ 上次任务未完成（剩余 ${state.remainingSingers} 个歌手${state.pendingSongs ? `、当前歌手 ${state.pendingSongs} 首` : ''}）：` +
@@ -817,7 +811,7 @@ module.exports = {
       v: JOB_VERSION, names: names || ['测试歌手'],
       opts: {
         src: opts && opts.src || 'kw', format: opts && opts.format || 'flac',
-        sqOnly: !!(opts && opts.sqOnly), autoPage: !(opts && opts.autoPage === false),
+        autoPage: !(opts && opts.autoPage === false),
         maxSingers: opts && opts.maxSingers != null ? opts.maxSingers : 2,
         useFilter: true, filterWords: DEFAULT_FILTER_WORDS,
         minDurSec: 0, maxDurSec: 0,

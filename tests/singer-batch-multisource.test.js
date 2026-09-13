@@ -80,10 +80,10 @@ const OPTS = (over = {}) => ({ filterRegs: [], minDur: 0, maxDur: 0, sqOnly: fal
         song({ songmid: 'c', name: '有无损', types: ['flac'] }),
       ], total: 3, page, limit,
     });
-    const off = await collectFromSource('周杰伦', 'kw', OPTS({ sqOnly: false, autoPage: false }));
-    ok('未开只收无损 → 三首都收', off.length === 3, String(off.length));
-    const on = await collectFromSource('周杰伦', 'kw', OPTS({ sqOnly: true, autoPage: false }));
-    ok('开了只收无损 → 跳过硬标注无无损的那首', on.length === 2 && !on.find(s => s.name === '只有320K'), on.map(s => s.name).join('/'));
+    const off = await collectFromSource('周杰伦', 'kw', OPTS({ format: 'mp3', autoPage: false }));
+    ok('MP3 任务 → 三首都收（标注不过滤）', off.length === 3, String(off.length));
+    const on = await collectFromSource('周杰伦', 'kw', OPTS({ format: 'flac', autoPage: false }));
+    ok('FLAC 任务 → 跳过硬标注无无损的那首', on.length === 2 && !on.find(s => s.name === '只有320K'), on.map(s => s.name).join('/'));
     ok('未标注音质的歌保留（交给下载时兜底判定）', !!on.find(s => s.name === '没标注'));
   }
 
