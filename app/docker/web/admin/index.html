@@ -409,6 +409,12 @@ main{max-width:960px;margin:0 auto;padding:24px}
         任务支持<b>暂停 / 继续</b>：暂停会把断点存到磁盘（服务重启也不丢），之后点「▶ 继续下载」从断点接着下；
         网络中断、平台抽风、连续多首失败等意外也会<b>自动暂停</b>而不是把剩下的歌记成失败。
       </div>
+      <div class="form-row" style="display:flex;gap:10px;align-items:center;border-top:1px dashed rgba(255,255,255,.12);padding-top:10px">
+        <div style="flex:1"><label>🎵 单曲下载（格式：歌手 - 歌名，沿用上方平台/格式/只收无损设置）</label>
+          <input id="sb-single" type="text" placeholder="周杰伦 - 青花瓷" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:var(--text);padding:8px;font-size:13px" onkeydown="if(event.key==='Enter')sbStartSingle()">
+        </div>
+        <button class="hbtn" style="margin-top:16px" onclick="sbStartSingle()">⬇️ 下这首</button>
+      </div>
       <div id="sb-src-status" style="font-size:12px;min-height:16px;margin:2px 0 8px;line-height:1.6"></div>
       <div id="sb-err" style="color:var(--pink);font-size:12px;min-height:14px;margin-bottom:8px"></div>
       <div class="modal-btns" style="justify-content:flex-start;flex-wrap:wrap;gap:8px">
@@ -1197,8 +1203,36 @@ async function sbStart(){
     sbRefresh();
   }catch(e){ err.textContent = '启动失败：'+e.message; }
 }
-async function sbPause(){
+// 单曲下载：把「歌手 - 歌名」拆开，复用批量管线（names=[歌手] + onlyTitle=歌名）。
+// 过滤词/时长/合唱上限对单曲不生效（服务端跳过），平台/格式/只收无损沿用面板当前选择。
+async function sbStartSingle(){
+  const err = document.getElementById('sb-err');
+  err.textContent = '';
+  const raw = document.getElementById('sb-single').value.trim();
+  if(!raw){ err.textContent = '请输入「歌手 - 歌名」'; return; }
+  const m = raw.match(/^(.+?)\s+[-–—]\s+(.+)$/);
+  if(!m){ err.textContent = '格式不对：请用「歌手 - 歌名」（中间用短横线分隔）'; return; }
+  const singer = m[1].trim(), title = m[2].trim();
+  if(!singer || !title){ err.textContent = '歌手或歌名为空'; return; }
+  const body = {
+    text: singer,
+    onlyTitle: title,
+    src: document.getElementById('sb-src').value,
+    format: document.getElementById('sb-format').value,
+    sqOnly: document.getElementById('sb-sqonly').checked,
+    autoPage: true,
+    useFilter: false,
+    filterWords: '',
+  };
   try{
+    const r = await fetch('/api/singer-batch/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
+    if(r.error){ err.textContent = r.error; return; }
+    toast(`🎵 单曲下载已启动：${singer} - ${title}`);
+    document.getElementById('sb-single').value = '';
+    sbRefresh();
+  }catch(e){ err.textContent = '启动失败：'+e.message; }
+}
+async function sbPause(){  try{
     const r = await fetch('/api/singer-batch/pause',{method:'POST'}).then(r=>r.json());
     toast(r.ok ? '⏸ 已暂停：进度已保存，点「▶ 继续下载」可接着下' : (r.error || '暂停失败'));
     sbRefresh();

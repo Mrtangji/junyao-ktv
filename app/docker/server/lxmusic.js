@@ -85,6 +85,69 @@ function chromeTlsOptions() {
   };
 }
 
+// ---------- 请求引擎：curl-impersonate（完整 Chrome TLS 指纹） ----------
+// Node 的 OpenSSL 只能改套件顺序/曲线组，无法复刻 Chromium ClientHello 的
+// GREASE 与扩展顺序，风控在 TLS 层就能区分。curl-impersonate（打补丁的 curl）
+// 能发出和真 Chrome 一致的握手。探测到镜像内装有 curl_chrome116 就用它发
+// HTTPS 请求（含重定向/解压/超时/取消），任何失败（未安装/启动失败）自动
+// 回落上面的 Node 原生路径。LX_HTTP_ENGINE=node 可强制走 Node（对照实验）。
+let _curlBin = undefined;   // undefined=未探测；null=没有；string=可用
+function findCurlImpersonate() {
+  if (_curlBin !== undefined) return _curlBin;
+  const candidates = [
+    process.env.LX_CURL_IMPERSONATE,
+    '/usr/local/bin/curl_chrome116', '/usr/local/bin/curl_chrome110',
+    '/usr/bin/curl_chrome116',
+  ].filter(Boolean);
+  _curlBin = candidates.find(p => { try { fs.accessSync(p, fs.constants.X_OK); return true; } catch (e) { return false; } }) || null;
+  if (_curlBin) console.log('[LX] 请求引擎：curl-impersonate（Chrome TLS 指纹）→', _curlBin);
+  return _curlBin;
+}
+const CURL_ENGINE = (process.env.LX_HTTP_ENGINE || 'auto') !== 'node';
+function curlImpersonateReq(url, options = {}, signal = null) {
+  return new Promise((resolve, reject) => {
+    const bin = findCurlImpersonate();
+    if (!bin) return reject(Object.assign(new Error('no curl-impersonate'), { __noCurl: true }));
+    const args = ['-sS', '--compressed', '-L', '--max-redirs', '5',
+      '--max-time', String(Math.ceil((options.timeout || 15000) / 1000) + 2),
+      '-o', '-', '-w', '\n__LX__%{http_code}\t%{content_type}'];
+    const headers = Object.assign({}, options.headers || {});
+    if (options.form) headers['Content-Type'] = headers['Content-Type'] || 'application/x-www-form-urlencoded';
+    for (const [k, v] of Object.entries(headers)) args.push('-H', `${k}: ${v}`);
+    const method = (options.method || (options.form || options.body ? 'POST' : 'GET')).toUpperCase();
+    if (method !== 'GET') args.push('-X', method);
+    const body = options.form ? (typeof options.form === 'string' ? options.form : new URLSearchParams(options.form).toString())
+      : (options.body != null ? String(options.body) : null);
+    if (body) args.push('--data-binary', body);
+    args.push(url);
+    const child = spawn(bin, args, { windowsHide: true });
+    const chunks = [];
+    let done = false;
+    child.stdout.on('data', c => chunks.push(c));
+    child.stderr.on('data', () => {});   // -sS 的错误走 stderr，静默；失败靠 exit code
+    const onAbort = () => { if (!done) { done = true; try { child.kill('SIGKILL'); } catch (e) {} reject(stopError()); } };
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
+    child.on('error', e => { if (!done) { done = true; reject(e); } });
+    child.on('close', code => {
+      if (signal) { try { signal.removeEventListener('abort', onAbort); } catch (e) {} }
+      if (done) return;
+      done = true;
+      if (code !== 0) return reject(new Error(`curl-impersonate 退出码 ${code}`));
+      const buf = Buffer.concat(chunks);
+      // -w 写在 stdout 尾部：\n__LX__<code>\t<type>
+      const marker = '\n__LX__';
+      const idx = buf.lastIndexOf(marker);
+      if (idx < 0) return reject(new Error('curl-impersonate 输出无标记'));
+      const meta = buf.slice(idx + marker.length).toString('utf8').split('\t');
+      resolve({
+        statusCode: parseInt(meta[0], 10) || 0,
+        headers: { 'content-type': (meta[1] || '').trim() },
+        body: buf.slice(0, idx),
+      });
+    });
+  });
+}
+
 function httpReq(url, options = {}, redirectCount = 0) {
   return new Promise((resolve, reject) => {
     // 取消令牌：显式传入优先，否则用当前流程注册的令牌（覆盖脚本内部/内置源内部请求）
@@ -92,6 +155,16 @@ function httpReq(url, options = {}, redirectCount = 0) {
     if (signal && signal.aborted) return reject(stopError());
     const u = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
+    // HTTPS 优先走 curl-impersonate（Chrome TLS 指纹）；没有安装/启动失败则回落 Node。
+    // 下载媒体文件（responseType buffer）也走它——CDN 链接同样可能按指纹分流。
+    if (u.protocol === 'https:' && CURL_ENGINE) {
+      return curlImpersonateReq(url, options, signal).catch(e => {
+        if (e && e.__stopped) throw e;
+        if (e && (e.__noCurl || e.code === 'ENOENT')) return nativeReq();
+        throw e;   // 其它错误（超时/HTTP层）如实上抛，别吞
+      });
+    }
+    function nativeReq() {
     const headers = Object.assign({ 'User-Agent': 'lx-music-request/2.0.0', 'Accept-Encoding': 'gzip, deflate' }, options.headers || {});
     let body = options.body != null ? String(options.body) : null;
     if (options.form) {
@@ -143,6 +216,7 @@ function httpReq(url, options = {}, redirectCount = 0) {
     req.on('error', reject);
     if (body) req.write(body);
     req.end();
+    }
   });
 }
 

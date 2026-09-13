@@ -336,6 +336,11 @@ async function collectFromSource(name, srcId, opts) {
     for (const m of r.list || []) {
       if (!m.songmid || !m.name) continue;
       if (collected.has(m.songmid)) continue;
+      // 单曲模式：只留「歌名匹配 + 歌手匹配」的，跳过过滤词/时长/合唱/标点等全部批量规则
+      if (opts.onlyTitle) {
+        if (titleMatch(m.name, opts.onlyTitle) && singerMatch(m.singer, name)) collected.set(String(m.songmid), m);
+        continue;
+      }
       // 歌名过滤词
       if (opts.filterRegs.some(reg => reg.test(m.name))) continue;
       // 逗号/加号拼接的歌名多为串烧、评论合集类杂项。',' 本身是过滤词分隔符、
@@ -614,10 +619,15 @@ async function start(opts = {}) {
   const minDur = Math.max(0, Math.round((parseFloat(opts.minDur) || 0) * 60));
   const maxDur = Math.max(0, Math.round((parseFloat(opts.maxDur) || 0) * 60));
 
+  // 单曲下载：onlyTitle 非空时，收集阶段只保留歌名匹配它的结果（配合 names=[歌手]）。
+  // 这是用户明确点名的歌，过滤词/时长区间/合唱上限都不再套用（避免把想要的歌滤掉），
+  // 只收无损（sqOnly）仍然生效。
+  const onlyTitle = String(opts.onlyTitle || '').trim();
+
   const job = {
     v: JOB_VERSION,
     names,
-    opts: { src, format, sqOnly, autoPage, maxSingers, useFilter, filterWords, minDurSec: minDur, maxDurSec: maxDur },
+    opts: { src, format, sqOnly, autoPage, maxSingers, useFilter, filterWords, minDurSec: minDur, maxDurSec: maxDur, onlyTitle },
     singerIndex: 0,
     pendingSongs: [],
     stats: { done: 0, failed: 0, skipped: 0, noLossless: 0, preview: 0, fallback: 0, failedList: [] },

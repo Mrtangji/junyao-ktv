@@ -23,6 +23,15 @@ RUN apt-get update && apt-get install -y \
       libva2 libva-drm2 va-driver-all vainfo \
     && rm -rf /var/lib/apt/lists/*
 
+# curl-impersonate（Chrome 补丁版 curl）：完整复刻 Chromium 的 TLS ClientHello
+# （GREASE、扩展顺序、套件顺序、ALPN）——Node 的 OpenSSL 做不到的部分由它补齐，
+# 用于音源脚本对中转/平台的 HTTPS 请求（lxmusic.js 自动探测，缺失时回落 Node）。
+# 仅 x86_64（N100 适用）；下载失败不阻塞构建（运行时自动回落）。
+RUN curl -fsSL --retry 3 \
+      https://github.com/lwthiker/curl-impersonate/releases/download/v0.6.1/curl-impersonate-v0.6.1.x86_64-linux-gnu.tar.gz \
+      | tar xz -C /usr/local/bin \
+    && chmod +x /usr/local/bin/curl_chrome* /usr/local/bin/curl-impersonate-* 2>/dev/null || true
+
 WORKDIR /app
 
 COPY server/package.json ./
