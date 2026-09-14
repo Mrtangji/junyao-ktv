@@ -2165,7 +2165,7 @@ function scoreFinalize(){
   const best=scoreState.best!=null?Math.max(scoreState.best,total):total;
   document.getElementById('sr-meta').textContent=`唱 ${sung} 句 · 本曲历史最高 ${Math.round(best)}`;
   el.classList.add('show');
-  clearTimeout(_scoreResultTimer);_scoreResultTimer=setTimeout(()=>{el.classList.remove('show');advanceToNextSong();},5000);
+  clearTimeout(_scoreResultTimer);_scoreResultTimer=setTimeout(()=>{el.classList.remove('show');advanceToNextSong();},SCORE_SHOW_MS);
   if(curSong){
     fetch('/api/scores',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({song_id:curSong.song_id,score:total,grade:g,device:devId()})}).catch(()=>{});
@@ -2200,7 +2200,10 @@ setInterval(()=>{
 // Bug4修复：全屏（video移至body，fs-tap点击层，ktv_fs）
 const fsOv=document.getElementById('fs-ov'),fsTap=document.getElementById('fs-tap');
 let ovTimer;
-const CTL_HIDE_MS=3000; // 全屏控制栏唤出后无操作自动隐藏时长(ms)
+// 全屏控制栏/评分面板时长可调：URL 参数 ?ctlMs= / ?scoreMs= 可覆盖默认值（便于现场微调，无需改码重发）
+function _qInt(k,d){const v=new URLSearchParams(location.search).get(k);const n=v?parseInt(v,10):NaN;return Number.isFinite(n)&&n>0?n:d;}
+const CTL_HIDE_MS=_qInt('ctlMs',3000);   // 全屏控制栏唤出后无操作自动隐藏时长(ms)
+const SCORE_SHOW_MS=_qInt('scoreMs',5000); // 评分面板显示时长(ms)，到时后自动进入下一首
 // Bug7修复：主页焦点记忆功能未生效。
 // openPanel/openPF/closePanel/closePF 等所有"打开/关闭二级面板"的入口都会调用
 // pushFocus()/popFocus() 来记住/还原主页当时的焦点位置，唯独进入/退出全屏播放

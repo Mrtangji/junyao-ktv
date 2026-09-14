@@ -364,6 +364,12 @@ public class MainActivity extends Activity {
             web.goBack();
             return true;
         }
+        // 安卓电视物理遥控器任意键 → 若处于全屏播放，唤起 TV 端控制栏。
+        // WebView 未必会把 DPAD/方向键派发成 DOM keydown，这里从原生侧补一次，
+        // 与页面内 document keydown 监听互补（showOverlay 幂等，多次调用无副作用）。
+        if (keyCode != KeyEvent.KEYCODE_MENU) {
+            web.evaluateJavascript("if(window.ktv_fs&&window.showOverlay)window.showOverlay();", null);
+        }
         return super.onKeyDown(keyCode, event);
     }
 
