@@ -182,6 +182,11 @@ main{max-width:960px;margin:0 auto;padding:24px}
   border:1px solid rgba(255,255,255,.1)
 }
 #pw-modal h3{font-size:17px;margin-bottom:20px}
+/* 播放设置（TV 全屏时长）弹窗（复用 pw-modal 样式） */
+#tvset-modal-overlay{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center}
+#tvset-modal-overlay.open{display:flex}
+#tvset-modal{background:#12122e;border-radius:18px;padding:28px;width:460px;max-width:90vw;border:1px solid rgba(255,255,255,.1)}
+#tvset-modal h3{font-size:17px;margin-bottom:20px}
 /* LX 音源管理弹窗（复用 pw-modal 样式，宽度更大） */
 #lx-modal-overlay{
   position:fixed;top:0;left:0;right:0;bottom:0;z-index:50;display:none;align-items:center;justify-content:center;
@@ -273,7 +278,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
   .song-pager button{padding:9px 15px}
 
   /* 5) 弹窗：接近满宽 + 可滚动 */
-  #modal,#pw-modal{width:94vw;max-width:94vw;padding:20px;max-height:88vh;overflow-y:auto;border-radius:16px}
+  #modal,#pw-modal,#tvset-modal{width:94vw;max-width:94vw;padding:20px;max-height:88vh;overflow-y:auto;border-radius:16px}
   #lx-modal,#bulk-modal,#sb-modal{width:94vw;max-height:88vh;padding:18px;border-radius:16px}
   .modal-btns .hbtn{padding:10px 16px;font-size:13px}
 
@@ -315,6 +320,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
   <button class="hbtn" onclick="openBulkModal()">📦 麦动曲库</button>
   <button class="hbtn" onclick="openSingerModal()">🎤 洛雪曲库</button>
   <button class="hbtn" onclick="openLxModal()">🎼 LX 音源</button>
+  <button class="hbtn" onclick="openTvSetModal()">🎬 播放设置</button>
   <button class="hbtn" onclick="openPwModal()">🔑 修改密码</button>
   <button class="hbtn" onclick="doLogout()">🚪 退出登录</button>
 </header>
@@ -389,6 +395,28 @@ main{max-width:960px;margin:0 auto;padding:24px}
     <div class="modal-btns">
       <button class="hbtn" onclick="closePwModal()">取消</button>
       <button class="hbtn primary" onclick="submitChangePassword()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 播放设置（TV 全屏时长）弹窗 -->
+<div id="tvset-modal-overlay" onclick="closeTvSetModal()">
+  <div id="tvset-modal" onclick="event.stopPropagation()">
+    <h3>🎬 播放设置（TV 全屏）</h3>
+    <div class="form-row"><label>控制栏自动隐藏（秒）</label>
+      <input id="tvset-ctl" type="number" min="0.5" max="60" step="0.5" value="3">
+      <div style="font-size:12px;color:var(--sub);margin-top:4px">全屏播放时，遥控器/触摸唤出控制栏后多久无操作自动隐藏</div></div>
+    <div class="form-row"><label>评分面板显示时长（秒）</label>
+      <input id="tvset-score" type="number" min="0.5" max="60" step="0.5" value="5">
+      <div style="font-size:12px;color:var(--sub);margin-top:4px">一首歌唱完后，成绩面板显示多久再进入下一首</div></div>
+    <div id="tvset-err" style="color:var(--pink);font-size:12px;min-height:14px;margin-bottom:8px"></div>
+    <div style="font-size:12px;color:var(--sub);line-height:1.6;margin-bottom:10px">
+      仅对 TV 端生效，保存在服务器（重启/升级不丢）。单机调试也可在 TV 地址后加
+      <code>?ctlMs=4000&amp;scoreMs=7000</code> 临时覆盖（毫秒）。
+    </div>
+    <div class="modal-btns">
+      <button class="hbtn" onclick="closeTvSetModal()">取消</button>
+      <button class="hbtn primary" onclick="submitTvSet()">保存</button>
     </div>
   </div>
 </div>
@@ -696,6 +724,49 @@ async function submitChangePassword(){
     } else {
       const d = await r.json().catch(()=>({}));
       errEl.textContent = d.error || '修改失败，请重试';
+    }
+  }catch(e){
+    errEl.textContent = '请求失败，请检查网络';
+  }
+}
+
+// ===== 播放设置（TV 全屏时长，持久化到服务端 settings 表）=====
+function _secFromMs(ms){ return Math.round((Number(ms)||0)/1000*10)/10; }
+async function openTvSetModal(){
+  const errEl = document.getElementById('tvset-err');
+  errEl.textContent = '';
+  try{
+    const c = await fetch('/api/settings').then(r=>r.json());
+    document.getElementById('tvset-ctl').value = _secFromMs(c.ctlHideMs);
+    document.getElementById('tvset-score').value = _secFromMs(c.scoreShowMs);
+  }catch(e){
+    document.getElementById('tvset-ctl').value = 3;
+    document.getElementById('tvset-score').value = 5;
+  }
+  document.getElementById('tvset-modal-overlay').classList.add('open');
+}
+function closeTvSetModal(){ document.getElementById('tvset-modal-overlay').classList.remove('open'); }
+async function submitTvSet(){
+  const errEl = document.getElementById('tvset-err');
+  errEl.textContent = '';
+  const ctlSec = parseFloat(document.getElementById('tvset-ctl').value);
+  const scoreSec = parseFloat(document.getElementById('tvset-score').value);
+  if(!(ctlSec >= 0.5 && ctlSec <= 60)){ errEl.textContent = '控制栏隐藏时长需在 0.5 ~ 60 秒之间'; return; }
+  if(!(scoreSec >= 0.5 && scoreSec <= 60)){ errEl.textContent = '评分面板时长需在 0.5 ~ 60 秒之间'; return; }
+  try{
+    const r = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ctlHideMs: Math.round(ctlSec*1000), scoreShowMs: Math.round(scoreSec*1000) }),
+    });
+    if(r.ok){
+      closeTvSetModal();
+      toast('播放设置已保存 ✓ TV 端刷新后生效');
+    } else if(r.status === 401){
+      errEl.textContent = '登录已失效，请重新登录';
+    } else {
+      const d = await r.json().catch(()=>({}));
+      errEl.textContent = d.error || '保存失败，请重试';
     }
   }catch(e){
     errEl.textContent = '请求失败，请检查网络';

@@ -18,6 +18,7 @@ const muse = require('./muse');
 const { getPitchCurve } = require('./pitch');
 const log = require('./logger');
 const { firstSinger } = require('./singers');
+const tvsettings = require('./tvsettings');
 
 const PORT = process.env.PORT || 8080;
 // 请求体上限：主要是给「歌手批量下载」的歌手名单留余量——名单是整段文本 POST 上来的，
@@ -863,6 +864,15 @@ app.post('/api/singer-batch/resume', requireAdminAuth, (req, res) => {
 });
 // 停止才是真正放弃（连同断点快照一起清掉）
 app.post('/api/singer-batch/stop', requireAdminAuth, (req, res) => res.json(singerBatch.stop()));
+
+// ---------- TV 播放/评分时长配置 ----------
+// TV 端启动时拉取（公共接口，仅两个时长，不含敏感信息）；后台保存（需管理员登录）。
+// 详见 server/tvsettings.js 与 tv/index.html 里的 CTL_HIDE_MS / SCORE_SHOW_MS。
+app.get('/api/settings', (req, res) => res.json(tvsettings.get()));
+app.post('/api/settings', requireAdminAuth, (req, res) => {
+  try { res.json({ ok: true, ...tvsettings.set(req.body || {}) }); }
+  catch (e) { res.status(400).json({ error: '保存失败: ' + e.message }); }
+});
 
 // ---------- 爱唱榜 (按播放次数) ----------
 app.get('/api/charts', (req, res) => {

@@ -2200,10 +2200,18 @@ setInterval(()=>{
 // Bug4修复：全屏（video移至body，fs-tap点击层，ktv_fs）
 const fsOv=document.getElementById('fs-ov'),fsTap=document.getElementById('fs-tap');
 let ovTimer;
-// 全屏控制栏/评分面板时长可调：URL 参数 ?ctlMs= / ?scoreMs= 可覆盖默认值（便于现场微调，无需改码重发）
+// 全屏控制栏/评分面板时长：优先级 URL 参数 ?ctlMs= / ?scoreMs= > 服务端配置(/api/settings) > 默认值。
+// 服务端配置可在「曲库管理」后台「🎬 播放设置」里改，持久化在 settings 表（见 server/tvsettings.js）。
 function _qInt(k,d){const v=new URLSearchParams(location.search).get(k);const n=v?parseInt(v,10):NaN;return Number.isFinite(n)&&n>0?n:d;}
-const CTL_HIDE_MS=_qInt('ctlMs',3000);   // 全屏控制栏唤出后无操作自动隐藏时长(ms)
-const SCORE_SHOW_MS=_qInt('scoreMs',5000); // 评分面板显示时长(ms)，到时后自动进入下一首
+function _qHas(k){return new URLSearchParams(location.search).has(k);}
+let CTL_HIDE_MS=_qInt('ctlMs',3000);     // 全屏控制栏唤出后无操作自动隐藏时长(ms)
+let SCORE_SHOW_MS=_qInt('scoreMs',5000); // 评分面板显示时长(ms)，到时后自动进入下一首
+// 拉取服务端持久化配置（URL 未显式指定时才覆盖；失败静默保留默认值）
+fetch('/api/settings').then(r=>r.json()).then(c=>{
+  if(!c)return;
+  if(!_qHas('ctlMs')&&c.ctlHideMs>0)CTL_HIDE_MS=c.ctlHideMs;
+  if(!_qHas('scoreMs')&&c.scoreShowMs>0)SCORE_SHOW_MS=c.scoreShowMs;
+}).catch(()=>{});
 // Bug7修复：主页焦点记忆功能未生效。
 // openPanel/openPF/closePanel/closePF 等所有"打开/关闭二级面板"的入口都会调用
 // pushFocus()/popFocus() 来记住/还原主页当时的焦点位置，唯独进入/退出全屏播放
