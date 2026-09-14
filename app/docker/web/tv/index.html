@@ -1511,13 +1511,19 @@ function parseLrc(text){
     }
     // 逐字歌词格式二：(毫秒偏移,持续时间) 圆括号（QQ音乐 LRCX 下载）
     // 例：世(45513,266)界(45779,183)如(45962,123)此...
+    // 取"括号前整段非空白非括号文本"为字（兼容 55Tec/Music/A&R 等多字符 token）。
     if(!words || !words.length){
-      const ptags=[...content.matchAll(/(\D)\((\d+),(\d+)\)/g)];
+      const ptags=[...content.matchAll(/([^\s()]+)\s*[-－—]?\s*\((\d+),(\d+)\)/g)];
       if(ptags.length && ptags.length>=2){  // 至少2个字才视为有效逐字
-        words=[];
-        ptags.forEach(pt=>{
-          words.push({t:Number(pt[2])/1000,w:pt[1]});
-        });
+        // 仅当每个 token 都是单字（CJK 或单个拉丁字母）才视为逐字歌词——
+        // 词曲作者等"制作信息行"含全角冒号/英文/多字 token，按纯文本显示更可读。
+        const isKaraoke=ptags.every(pt=>/^[\u4e00-\u9fffA-Za-z]$/.test(pt[1]));
+        if(isKaraoke){
+          words=[];
+          ptags.forEach(pt=>{
+            words.push({t:Number(pt[2])/1000,w:pt[1]});
+          });
+        }
       }
     }
     const plain=content
