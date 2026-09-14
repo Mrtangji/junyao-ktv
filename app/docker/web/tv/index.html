@@ -271,8 +271,10 @@ html,body{width:100%;height:100%;width:100vw;height:100vh;overflow:hidden;backgr
   border:1px solid rgba(255,255,255,.12)}
 #clock-time{font-size:24px;font-weight:800;color:#fff;letter-spacing:.5px}
 #clock-date{font-size:14px;color:rgba(255,255,255,.65)}
-/* 安卓原生 App（KtvBridge 注入）：顶部仅保留时间，隐藏日期元素 */
-html.native-android #clock-date{display:none}
+/* 安卓原生 App 竖屏（KtvBridge 注入 + orientation:portrait）：顶部仅保留时间，隐藏日期元素；横屏仍显示 */
+@media (orientation:portrait){
+  html.native-android #clock-date{display:none}
+}
 .sp{flex:1}
 /* ============ 主界面布局容器（下辖 MV/控制按钮/歌名歌星常唱收藏/已点队列 四个模块） ============
    横屏(TV)下是三栏网格：MV播放列 | 歌名歌星常唱收藏卡片列 | 已点队列列；
