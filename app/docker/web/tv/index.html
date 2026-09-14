@@ -904,6 +904,9 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
 #score-tick.show{display:block}
 #score-status{position:fixed;top:54px;right:18px;z-index:46;display:none;font-size:13px;color:#ffd66b;text-shadow:0 1px 6px rgba(0,0,0,.8)}
 #score-status.show{display:block}
+#score-pop{position:fixed;top:18%;left:50%;transform:translateX(-50%) scale(.6);z-index:47;
+  font-size:44px;font-weight:900;letter-spacing:1px;opacity:0;pointer-events:none;
+  text-shadow:0 2px 16px rgba(0,0,0,.85)}
 #ob-score.act{border-color:#3ddc84;color:#3ddc84}
 #score-result{position:fixed;inset:0;z-index:80;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55)}
 #score-result.show{display:flex}
@@ -986,6 +989,7 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
 </div>
 <div id="score-tick">0</div>
 <div id="score-status">评分准备中…</div>
+<div id="score-pop"></div>
 <div id="score-wrap"><canvas id="score-cv"></canvas></div>
 <div id="score-result"><div class="sr-card"><div class="sr-grade" id="sr-grade">S</div><div class="sr-score" id="sr-score">0<small>/100</small></div><div class="sr-meta" id="sr-meta"></div></div></div>
 <div id="fsq" data-page-node-id="fME6Xa6UTcxwuSXlmaIojZ">
@@ -2033,6 +2037,25 @@ async function scorePrepare(songId){
     st.textContent='评分不可用（参考曲线提取失败）';
   }
 }
+// 逐句评价：音符段唱完后弹 Perfect/Great/Good/OK/Miss（唱吧式反馈）
+function gradeOf(sc){
+  if(sc>=95)return{label:'PERFECT',color:'#3ddc84'};
+  if(sc>=85)return{label:'GREAT',color:'#7cf6a0'};
+  if(sc>=70)return{label:'GOOD',color:'#ffd34d'};
+  if(sc>=50)return{label:'OK',color:'#ffae5a'};
+  return{label:'MISS',color:'#ff5a76'};
+}
+function showLineGrade(sc){
+  const el=document.getElementById('score-pop');if(!el)return;
+  const g=gradeOf(sc);el.textContent=g.label;el.style.color=g.color;
+  if(el.animate){el.getAnimations().forEach(a=>a.cancel());
+    el.animate([
+      {opacity:0,transform:'translateX(-50%) scale(.5)'},
+      {opacity:1,transform:'translateX(-50%) scale(1.15)',offset:0.22},
+      {opacity:1,transform:'translateX(-50%) scale(1)',offset:0.5},
+      {opacity:0,transform:'translateX(-50%) scale(1)',offset:1}
+    ],{duration:1000,easing:'ease-out'});}
+}
 function scoreTick(){
   const v=video;
   if(!scoreState.on||!v||v.paused||v.ended)return;
@@ -2066,13 +2089,15 @@ function scoreTick(){
     }
     scoreState.lastUserMidi=scoreState.userMidi;
   }else scoreState.lastUserMidi=0;
-  // 走完的音符段结算一句
+  // 走完的音符段结算一句（逐句弹评 Perfect/Great/Good…）
   while(scoreState.segPtr<segs.length&&t>segs[scoreState.segPtr].t+segs[scoreState.segPtr].d+0.08){
+    const sung=scoreState.curN>0;
     const sc=scoreState.curWeight>0?Math.round(100*scoreState.curSum/scoreState.curWeight):0;
     scoreState.segScores.push(sc);
     scoreState.curSum=0;scoreState.curWeight=0;scoreState.curN=0;scoreState.segPtr++;
     scoreState.total=Math.round(scoreState.segScores.reduce((a,b)=>a+b,0)/scoreState.segScores.length);
     document.getElementById('score-tick').textContent=scoreState.total;
+    if(sung)showLineGrade(sc);   // 逐句弹评（仅对已唱的段，休止/跳过不弹）
   }
   const cur=scoreState.segPtr<segs.length?segs[scoreState.segPtr]:null;
   if(cur&&t>=cur.t-0.05&&t<=cur.t+cur.d+0.08&&scoreState.userVoiced){
