@@ -1874,8 +1874,8 @@ function advanceToNextSong(){
 // 参考音高曲线（MPM 算法），演唱时前端实时检测麦克风音高（同一算法），按播放
 // 时间对齐后逐句比对：每个音符段为一句，句得分 = 100 × 音准帧平均匹配度，
 // 总分 = 已唱句的平均分，实时爬升显示。偏差 ≤0.3 半音算满分，≥2 半音为 0。
-const scoreState={on:false,curve:null,segs:[],segPtr:0,segScores:[],curSum:0,curN:0,total:0,
-  userMidi:0,userVoiced:false,audioCtx:null,stream:null,analyser:null,buf:null,timer:null,
+const scoreState={on:false,curve:null,segs:[],segPtr:0,segScores:[],curSum:0,curN:0,curWeight:0,total:0,
+  userMidi:0,userVoiced:false,userRms:null,combo:0,lastUserMidi:0,audioCtx:null,stream:null,analyser:null,buf:null,timer:null,
   cv:null,cx:null,best:null,ended:false,
   native:false,natAt:0,natVoiced:false,natMidi:0};  // native=安卓 App 原生采集通道
 function scoreHzToMidi(hz){return 69+12*Math.log2(hz/440);}
@@ -2007,7 +2007,8 @@ function scoreStopUI(){
 async function scorePrepare(songId){
   if(!scoreState.on)return;
   scoreState.curve=null;scoreState.segs=[];scoreState.segPtr=0;scoreState.segScores=[];
-  scoreState.curSum=0;scoreState.curN=0;scoreState.total=0;scoreState.ended=false;
+  scoreState.curSum=0;scoreState.curN=0;scoreState.curWeight=0;scoreState.total=0;scoreState.ended=false;
+  scoreState.combo=0;scoreState.lastUserMidi=0;scoreState.userRms=null;
   document.getElementById('score-tick').textContent='0';
   const st=document.getElementById('score-status');
   st.textContent='评分准备中…（首次提取参考曲线需几秒）';st.classList.add('show');
@@ -2034,6 +2035,7 @@ function scoreTick(){
     const fresh=scoreState.natAt&&(performance.now()-scoreState.natAt<1500);
     scoreState.userVoiced=!!(fresh&&scoreState.natVoiced);
     scoreState.userMidi=fresh?scoreState.natMidi:0;
+    scoreState.userRms=null;   // 原生路径不回传 RMS，能量权重回退为 1
   }else{
     if(!scoreState.analyser)return;
     scoreState.analyser.getFloatTimeDomainData(scoreState.buf);
@@ -2046,21 +2048,39 @@ function scoreTick(){
       if(r){voiced=true;midi=scoreHzToMidi(r.freq);}
     }
     scoreState.userVoiced=voiced;scoreState.userMidi=midi;
+    scoreState.userRms=voiced?rms:0;
   }
   const t=v.currentTime,segs=scoreState.segs;
+  // 连续音高守卫（C 项·轻量实现）：演唱音高在时间上平滑，出现 >3.5 半音跳变大概率是
+  // MPM 倍频/半频误判，除非极有把握否则沿用上一帧——等价于给音高加一个时序先验。
+  if(scoreState.userVoiced){
+    if(scoreState.lastUserMidi>0){
+      const jump=Math.abs(scoreState.userMidi-scoreState.lastUserMidi);
+      if(jump>3.5)scoreState.userMidi=scoreState.lastUserMidi;
+    }
+    scoreState.lastUserMidi=scoreState.userMidi;
+  }else scoreState.lastUserMidi=0;
   // 走完的音符段结算一句
   while(scoreState.segPtr<segs.length&&t>segs[scoreState.segPtr].t+segs[scoreState.segPtr].d+0.08){
-    const sc=scoreState.curN>0?Math.round(100*scoreState.curSum/scoreState.curN):0;
+    const sc=scoreState.curWeight>0?Math.round(100*scoreState.curSum/scoreState.curWeight):0;
     scoreState.segScores.push(sc);
-    scoreState.curSum=0;scoreState.curN=0;scoreState.segPtr++;
+    scoreState.curSum=0;scoreState.curWeight=0;scoreState.curN=0;scoreState.segPtr++;
     scoreState.total=Math.round(scoreState.segScores.reduce((a,b)=>a+b,0)/scoreState.segScores.length);
     document.getElementById('score-tick').textContent=scoreState.total;
   }
   const cur=scoreState.segPtr<segs.length?segs[scoreState.segPtr]:null;
-  if(cur&&t>=cur.t-0.05&&t<=cur.t+cur.d+0.08&&voiced){
-    const dev=Math.abs(midi-cur.m);
-    scoreState.curSum+=Math.max(0,Math.min(1,1-Math.max(0,dev-0.3)/1.7));
-    scoreState.curN++;
+  if(cur&&t>=cur.t-0.05&&t<=cur.t+cur.d+0.08&&scoreState.userVoiced){
+    // B 项：cents 连续映射（指数衰减，抄 Thiogu/karaoke-arcade）——偏差越大分越低，无硬截断。
+    // 半音=100cents，取 50cents 半衰：0→1、±50cents→0.5、±100cents→0.25、±200cents→0.06。
+    const devSemi=Math.abs(scoreState.userMidi-cur.m);
+    const centsScore=Math.pow(0.5,Math.abs(devSemi*100)/50);
+    // 能量权重：浏览器路径有 RMS，越自信/越响的演唱权重越高；原生路径无 RMS 则回退 1
+    const ew=scoreState.userRms!=null?Math.min(1,scoreState.userRms/0.08):1;
+    // combo：连续准唱累计倍率（≤+30%），把逐帧分拉向满分但不超 100
+    if(devSemi<1.0)scoreState.combo++;else if(devSemi>=2.0)scoreState.combo=0;
+    const comboMul=1+Math.min(scoreState.combo,40)/40*0.3;
+    const fw=Math.min(1,centsScore*comboMul)*ew;
+    scoreState.curSum+=fw;scoreState.curWeight+=ew;scoreState.curN++;
   }
   scoreDraw(t);
 }
@@ -2097,7 +2117,7 @@ function scoreFinalize(){
   if(!scoreState.on||scoreState.ended)return;
   scoreState.ended=true;
   if(scoreState.curN>0&&scoreState.segPtr<scoreState.segs.length){
-    scoreState.segScores.push(Math.round(100*scoreState.curSum/scoreState.curN));
+    scoreState.segScores.push(scoreState.curWeight>0?Math.round(100*scoreState.curSum/scoreState.curWeight):0);
     scoreState.curSum=0;scoreState.curN=0;
   }
   const sung=scoreState.segScores.filter(s=>s>0).length;

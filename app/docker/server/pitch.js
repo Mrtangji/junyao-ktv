@@ -20,6 +20,8 @@ const log = require('./logger');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const PITCH_DIR = process.env.PITCH_CACHE_DIR || path.join(DATA_DIR, 'pitchcache');
+// 算法版本：改了曲线提取方式（如加人声分离/带通）就 +1，旧缓存自动失效重提。
+const PITCH_VER = 2;
 
 // 分析参数：8kHz 单声道足够覆盖人声（C2~C6 ≈ 65~1050Hz），
 // 窗口 1024 点 = 128ms（低频下限 ~62Hz），步长 512 点 = 64ms。
@@ -106,7 +108,11 @@ function extractPCM(filepath) {
       '-loglevel', 'error',
       '-i', filepath,
       '-map', '0:a:0',
-      '-vn', '-ac', '1', '-ar', String(SR),
+      '-vn',
+      // A 项（轻量版）：人声频段带通，抑制乐器对参考曲线的干扰。
+      // 全 ML 人声分离(Demucs)为 Phase 2，这里用零依赖的 ffmpeg 带通先拿到大头收益。
+      '-af', 'highpass=f=150,lowpass=f=5500',
+      '-ac', '1', '-ar', String(SR),
       '-acodec', 'pcm_f32le',
       '-f', 'f32le', '-',
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -176,7 +182,7 @@ function buildSegments(midiArr) {
 }
 
 // ---------- 主流程：懒计算 + 落盘缓存 ----------
-function cachePath(id) { return path.join(PITCH_DIR, `${id}.json`); }
+function cachePath(id) { return path.join(PITCH_DIR, `${id}.v${PITCH_VER}.json`); }
 
 async function computeCurve(song) {
   const { id, filepath } = song;
