@@ -271,6 +271,8 @@ html,body{width:100%;height:100%;width:100vw;height:100vh;overflow:hidden;backgr
   border:1px solid rgba(255,255,255,.12)}
 #clock-time{font-size:24px;font-weight:800;color:#fff;letter-spacing:.5px}
 #clock-date{font-size:14px;color:rgba(255,255,255,.65)}
+/* 安卓原生 App（KtvBridge 注入）：顶部仅保留时间，隐藏日期元素 */
+html.native-android #clock-date{display:none}
 .sp{flex:1}
 /* ============ 主界面布局容器（下辖 MV/控制按钮/歌名歌星常唱收藏/已点队列 四个模块） ============
    横屏(TV)下是三栏网格：MV播放列 | 歌名歌星常唱收藏卡片列 | 已点队列列；
@@ -1276,6 +1278,8 @@ function updateClock(){
   document.getElementById('clock-time').textContent=`${p(d.getHours())}:${p(d.getMinutes())}`;
   document.getElementById('clock-date').textContent=`${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ${WEEKDAYS[d.getDay()]}`;
 }
+// 安卓原生 App（KtvBridge 注入）顶部不显示日期，仅留时间
+if(window.KtvBridge)document.documentElement.classList.add('native-android');
 updateClock();
 setInterval(updateClock,1000);
 function devId(){let id=localStorage.getItem('jydev');if(!id){id='tv-'+Math.random().toString(36).substr(2,9);localStorage.setItem('jydev',id);}return id;}
