@@ -2681,15 +2681,17 @@ async function initLX(){
   }
   lxLoadBoard(lxBoardBangid,lxBoardName);
 }
-function lxRenderBoards(boards){
+function lxRenderBoards(boardsRaw){
   const bar=document.getElementById('lx-boardbar');
   bar.innerHTML='';
+  // 兼容两种返回：麦动 /api/md/boards 返回数组，酷我等 /api/lx/boards 返回 {list:[...]}
+  const boards=Array.isArray(boardsRaw)?boardsRaw:(boardsRaw&&boardsRaw.list)||[];
   boards.forEach(b=>{
     const d=document.createElement('div');
     d.className='lx-bd'+(String(b.bangid)===String(lxBoardBangid)?' on':'');
     d.setAttribute('data-f','');
     d.textContent=b.name;
-    d.onclick=()=>{lxBoardBangid=b.bangid;lxBoardName=b.name;lxRenderBoards(boards.map(x=>x));lxLoadBoard(b.bangid,b.name);};
+    d.onclick=()=>{lxBoardBangid=b.bangid;lxBoardName=b.name;lxRenderBoards(boards);lxLoadBoard(b.bangid,b.name);};
     bar.appendChild(d);
   });
 }
