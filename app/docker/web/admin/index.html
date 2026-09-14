@@ -415,6 +415,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
       <code>?ctlMs=4000&amp;scoreMs=7000</code> 临时覆盖（毫秒）。
     </div>
     <div class="modal-btns">
+      <button class="hbtn" style="margin-right:auto" onclick="resetTvSetDefaults()">恢复默认</button>
       <button class="hbtn" onclick="closeTvSetModal()">取消</button>
       <button class="hbtn primary" onclick="submitTvSet()">保存</button>
     </div>
@@ -746,9 +747,18 @@ async function openTvSetModal(){
   document.getElementById('tvset-modal-overlay').classList.add('open');
 }
 function closeTvSetModal(){ document.getElementById('tvset-modal-overlay').classList.remove('open'); }
+// 恢复默认：把输入框填回内置默认值（3 秒 / 5 秒），点「保存」后写入服务端
+function resetTvSetDefaults(){
+  document.getElementById('tvset-ctl').value = 3;
+  document.getElementById('tvset-score').value = 5;
+  const errEl = document.getElementById('tvset-err');
+  errEl.style.color = 'var(--sub)';
+  errEl.textContent = '已填入默认值（3 秒 / 5 秒），点「保存」生效';
+}
 async function submitTvSet(){
   const errEl = document.getElementById('tvset-err');
   errEl.textContent = '';
+  errEl.style.color = '';
   const ctlSec = parseFloat(document.getElementById('tvset-ctl').value);
   const scoreSec = parseFloat(document.getElementById('tvset-score').value);
   if(!(ctlSec >= 0.5 && ctlSec <= 60)){ errEl.textContent = '控制栏隐藏时长需在 0.5 ~ 60 秒之间'; return; }
