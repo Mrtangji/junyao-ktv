@@ -1496,6 +1496,7 @@ function parseLrc(text){
     const tags=[...raw.matchAll(/\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g)];
     if(!tags.length)return;
     const content=raw.replace(/\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g,'').trim();
+    // 逐字歌词格式一：<mm:ss.xx> 尖括号（酷我/标准 LRCX 标签）
     const wtags=[...content.matchAll(/<(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?>/g)];
     let words=null;
     if(wtags.length){
@@ -1508,7 +1509,21 @@ function parseLrc(text){
       // 逐字标签前若有前置文本（少见），并入第一个字
       if(parts[0]&&words.length)words[0].w=parts[0]+words[0].w;
     }
-    const plain=content.replace(/<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>/g,'').trim();
+    // 逐字歌词格式二：(毫秒偏移,持续时间) 圆括号（QQ音乐 LRCX 下载）
+    // 例：世(45513,266)界(45779,183)如(45962,123)此...
+    if(!words || !words.length){
+      const ptags=[...content.matchAll(/(\D)\((\d+),(\d+)\)/g)];
+      if(ptags.length && ptags.length>=2){  // 至少2个字才视为有效逐字
+        words=[];
+        ptags.forEach(pt=>{
+          words.push({t:Number(pt[2])/1000,w:pt[1]});
+        });
+      }
+    }
+    const plain=content
+      .replace(/<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>/g,'')   // 去尖括号
+      .replace(/\(\d+,\d+\)/g,'')                          // 去圆括号(毫秒,时长)
+      .trim();
     tags.forEach(tag=>{
       const time=Number(tag[1])*60+Number(tag[2])+lrcFracToMs(String(tag[3]||''))/1000;
       lines.push({time,text:plain,words:(words&&words.length)?words:null});
