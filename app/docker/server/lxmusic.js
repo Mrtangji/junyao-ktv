@@ -305,12 +305,13 @@ function parseScriptMeta(script) {
 // 在 vm 沙箱里跑一个源脚本，返回 { sources, requestHandler }
 // 注意：不少社区源（如长青SVIP、独家音源）是"异步初始化"——脚本先注册 on()，
 // 再拉取远端配置后才 send(inited)，同步检查会误判"未发送有效的 inited 事件"。
-// 所以这里用带超时（15 秒）的轮询等待 inited 与 request 处理函数都就绪。
+// 所以这里用带超时（20 秒）的轮询等待 inited 与 request 处理函数都就绪。
 async function runSourceScript(script) {
   const meta = parseScriptMeta(script);
   if (!meta.name) throw new Error('不是有效的 LX 音源脚本：找不到 @name 头部注释（请确认选择的是音源 .js 文件，而非普通脚本）');
   let initedInfo = null;
   let requestHandler = null;
+  let initErr = null;   // 初始化阶段脚本内部 lx.request 的失败，用于给出可读报错
   const EVENT_NAMES = { inited: 'inited', request: 'request', updateAlert: 'updateAlert' };
   const lx = {
     version: '2.0.0',
@@ -325,7 +326,7 @@ async function runSourceScript(script) {
         if ((options && options.responseType) === 'buffer') return callback(null, resp, resp.body);
         const body = lxResponseBody(resp.body);
         callback(null, Object.assign({}, resp, { body }), body);
-      }).catch(err => callback(err));
+      }).catch(err => { initErr = err; callback(err); });
       return () => {};
     },
     utils: lxUtils(),
@@ -336,12 +337,18 @@ async function runSourceScript(script) {
   vm.createContext(sandbox);
   vm.runInContext(script, sandbox, { timeout: 8000, filename: `${meta.name || 'lx-source'}.js` });
   const hasSources = () => !!(initedInfo && initedInfo.sources && Object.keys(initedInfo.sources).length);
-  const deadline = Date.now() + 15000;
+  const deadline = Date.now() + 20000;
   while (Date.now() < deadline && !(hasSources() && requestHandler)) {
     await new Promise(r => setTimeout(r, 200));
   }
-  if (!hasSources()) throw new Error('脚本未发送有效的 inited 事件（sources 为空）');
-  if (!requestHandler) throw new Error('脚本未注册 request 事件处理函数');
+  if (!hasSources()) {
+    // 这类音源（如官方「独家音源」）初始化时要联网向 lx-music 官方服务器
+    // 88.lxmusic.xn--fiqs8s 拉配置；该域名常被墙/限流，部署服务器连不上就会卡在这里。
+    // 把初始化阶段的真实网络错误带出来，让用户一眼看出是"连不上官方服务器"而非"脚本坏"。
+    if (initErr) throw new Error(`脚本未发送有效的 inited 事件（sources 为空）；初始化网络请求失败：${initErr.message}`);
+    throw new Error('脚本未发送有效的 inited 事件（sources 为空）；该音源可能需在初始化时联网获取配置（如「独家音源」类需连接 lx-music 官方服务器 88.lxmusic.xn--fiqs8s），请确认部署服务器能访问该域名/接口，或换用不依赖官服的聚合音源');
+  }
+  if (!requestHandler) throw new Error('脚本未注册 request 事件处理函数（可能不是有效的 LX 音源脚本）');
   const sources = {};
   for (const [k, v] of Object.entries(initedInfo.sources)) {
     sources[k] = { name: v.name || k, actions: v.actions || ['musicUrl'], qualitys: v.qualitys || ['128k', '320k'] };

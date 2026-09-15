@@ -271,9 +271,9 @@ html,body{width:100%;height:100%;width:100vw;height:100vh;overflow:hidden;backgr
   border:1px solid rgba(255,255,255,.12)}
 #clock-time{font-size:24px;font-weight:800;color:#fff;letter-spacing:.5px}
 #clock-date{font-size:14px;color:rgba(255,255,255,.65)}
-/* 安卓原生 App 竖屏（KtvBridge 注入 + orientation:portrait）：顶部仅保留时间，隐藏日期元素；横屏仍显示 */
+/* 安卓原生 App 竖屏（KtvBridge 注入 + orientation:portrait）：隐藏顶部时钟（时间+日期）；横屏仍显示 */
 @media (orientation:portrait){
-  html.native-android #clock-date{display:none}
+  html.native-android #clock-badge{display:none}
 }
 .sp{flex:1}
 /* ============ 主界面布局容器（下辖 MV/控制按钮/歌名歌星常唱收藏/已点队列 四个模块） ============
@@ -1288,7 +1288,7 @@ function updateClock(){
   document.getElementById('clock-time').textContent=`${p(d.getHours())}:${p(d.getMinutes())}`;
   document.getElementById('clock-date').textContent=`${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ${WEEKDAYS[d.getDay()]}`;
 }
-// 安卓原生 App（KtvBridge 注入）顶部不显示日期，仅留时间
+// 安卓原生 App（KtvBridge 注入）竖屏顶部不显示时钟（时间+日期）
 if(window.KtvBridge)document.documentElement.classList.add('native-android');
 updateClock();
 setInterval(updateClock,1000);
@@ -3141,8 +3141,19 @@ async function lxImportFile(files){
   if(!f)return;
   document.getElementById('lx-file-name').textContent=f.name;
   showToast('音源导入中…');
+  let text;
   try{
-    const text=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(r.error);r.readAsText(f);});
+    // 安卓 5.1 等老内核 WebView 用 FileReader 读 content:// 文件可能失败，这里把
+    // 失败原因说清楚，避免只显示一句没信息的"导入失败"
+    text=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>{const m=(r.error&&r.error.message)?('文件读取失败：'+r.error.message):'文件读取失败（系统文件选择器返回的文件无法读取，请换用其他文件管理器选择 .js）';rej(new Error(m));};r.readAsText(f);});
+  }catch(e){showToast('⚠️ '+e.message,true);return;}
+  // 粗筛：明显不是脚本的内容（网页/压缩包/空文件）直接拦下，避免存进曲库却搜不到歌
+  if(!text||!/[;{}=]/.test(text)||/^\s*<(!doctype|html|xml|!--)/i.test(text)){
+    showToast('⚠️ 文件内容不像音源脚本（可能是网页/压缩包）。请导入纯文本 .js 音源文件',true);
+    document.getElementById('lx-file-name').textContent='';
+    return;
+  }
+  try{
     if(LOCAL_MODE||lxMode==='loc'){
       const meta=lxParseMeta(text,f.name);
       const list=lxLocalList();
