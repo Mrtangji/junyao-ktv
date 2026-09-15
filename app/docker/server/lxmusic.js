@@ -1045,20 +1045,30 @@ function musicInfoOf(songmid, name, singer) {
 //   · filter.exts：只认这些后缀的行（如 ['flac']），按 LOWER(filename) 尾缀匹配
 //   · filter.mediaTypes：只认这些媒体类型的行（如 ['video']，MV 任务用）
 //   · 不传 filter → 老口径：任何同名同歌手的行都算已有（点唱接口用这个）
+// 预编译语句缓存：歌手批量下载会对每一首歌调一次 findLocalSong（数万次），而 SQL
+// 文本只有少数几种组合；每次 db.prepare() 都让 SQLite 重新编译一遍纯属浪费。
+const _findStmtCache = new Map();
+function _prepFind(sql) {
+  let s = _findStmtCache.get(sql);
+  if (!s) { s = db.prepare(sql); _findStmtCache.set(sql, s); }
+  return s;
+}
 function findLocalSong(name, singer, filter) {
   const title = sanitize(name);
   if (!title) return null;
   let sql = 'SELECT * FROM songs WHERE title LIKE ?';
   const args = [`%${title}%`];
   if (filter && Array.isArray(filter.exts) && filter.exts.length) {
-    sql += ` AND (${filter.exts.map(() => `LOWER(filename) LIKE ?`).join(' OR ')})`;
+    // 注意不要写 LOWER(filename)：SQLite 的 LIKE 默认对 ASCII 就大小写不敏感，
+    // 而 LOWER() 要为全表每一行做一次字符串分配——批量下载会把它放大数万倍。
+    sql += ` AND (${filter.exts.map(() => `filename LIKE ?`).join(' OR ')})`;
     for (const e of filter.exts) args.push(`%.${String(e).replace(/^\./, '').toLowerCase()}`);
   } else if (filter && Array.isArray(filter.mediaTypes) && filter.mediaTypes.length) {
     sql += ` AND media_type IN (${filter.mediaTypes.map(() => '?').join(',')})`;
     args.push(...filter.mediaTypes);
   }
   sql += ' LIMIT 10';
-  const rows = db.prepare(sql).all(...args);
+  const rows = _prepFind(sql).all(...args);
   if (!rows.length) return null;
   if (!singer) return rows[0];
   const s = String(singer);

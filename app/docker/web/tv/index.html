@@ -1560,8 +1560,9 @@ function resetLyrics(){
   panel.querySelector('.lyrics-inner').innerHTML='';
 }
 // 当前行填词：有逐字数据（words）时逐字点亮——已唱的字（t<=now）保持原色，
-// 未唱的字变暗；无逐字数据时整行纯文本。
+// 未唱的字变暗；无逐字数据时整行纯文本。返回逐字 span 列表，供后续只翻类名。
 function fillLyricLine(el, line, now, useWords){
+  const list=[];
   if(useWords&&line&&line.words&&line.words.length){
     el.textContent='';
     line.words.forEach(wd=>{
@@ -1569,36 +1570,52 @@ function fillLyricLine(el, line, now, useWords){
       s.textContent=wd.w;
       s.className=wd.t<=now?'wp':'wf';
       el.appendChild(s);
+      list.push({el:s,t:wd.t});
     });
   }else el.textContent=(line&&line.text)||'♪';
+  return list;
 }
+// 只更新当前行的逐字高亮（类名），不触碰 DOM 结构。
+function paintLyricWords(spans, now){
+  for(let i=0;i<spans.length;i++){const s=spans[i];const cls=s.t<=now?'wp':'wf';if(s.el.className!==cls)s.el.className=cls;}
+}
+// 歌词面板 DOM 缓存：逐字歌词每 150ms 刷新一次，原来是整段 innerHTML 重建
+// （9 行元素 + 全部逐字 span 反复创建销毁），是页面里最频繁的 DOM 抖动来源。
+// 现在只在「换行 / 换歌 / 首次」时重建，同一行内只翻逐字 span 的类名。
+const _lyrCache=new WeakMap();   // inner 元素 -> {lines,ktv,idx,spans}
 function renderLyricLines(inner, large){
   if(!inner)return;
   const ktv=inner.classList.contains('ktv');
-  inner.innerHTML='';
-  if(!lyricLines.length)return;
   const now=video.currentTime||0;
+  if(!lyricLines.length){if(inner.firstChild)inner.textContent='';_lyrCache.delete(inner);return;}
   let idx=-1;
   for(let i=0;i<lyricLines.length;i++){if(lyricLines[i].time<=now)idx=i;else break;}
   if(idx<0)idx=0;
+  const st=_lyrCache.get(inner);
+  if(st&&st.lines===lyricLines&&st.ktv===ktv&&st.idx===idx){paintLyricWords(st.spans,now);return;}
+  let spans=[];
   if(ktv){ // MV 的 KTV 双行样式：上行=当前句靠左，下行=下一句靠右
+    inner.textContent='';
     const cur=document.createElement('div');
     cur.className='lyrics-line kcur';
-    fillLyricLine(cur, lyricLines[idx], now, true);
+    spans=fillLyricLine(cur, lyricLines[idx], now, true);
     inner.appendChild(cur);
     const nxt=document.createElement('div');
     nxt.className='lyrics-line knxt';
     nxt.textContent=lyricLines[idx+1]?(lyricLines[idx+1].text||'♪'):'';
     inner.appendChild(nxt);
-    return;
+  }else{
+    const start=Math.max(0,idx-4), end=Math.min(lyricLines.length,idx+5);
+    inner.textContent='';
+    for(let i=start;i<end;i++){
+      const line=document.createElement('div');
+      line.className='lyrics-line'+(i===idx?' current':Math.abs(i-idx)===1?' near':'');
+      const sp=fillLyricLine(line, lyricLines[i], now, i===idx);
+      if(i===idx)spans=sp;
+      inner.appendChild(line);
+    }
   }
-  const start=Math.max(0,idx-4), end=Math.min(lyricLines.length,idx+5);
-  for(let i=start;i<end;i++){
-    const line=document.createElement('div');
-    line.className='lyrics-line'+(i===idx?' current':Math.abs(i-idx)===1?' near':'');
-    fillLyricLine(line, lyricLines[i], now, i===idx);
-    inner.appendChild(line);
-  }
+  _lyrCache.set(inner,{lines:lyricLines,ktv,idx,spans});
 }
 function renderLyrics(){
   const panel=document.getElementById('lyrics-panel');
@@ -1757,15 +1774,21 @@ function setConnStatus(ok){
   document.getElementById('conn-lbl').textContent=ok?'在线':'连接中…';
   el.title=ok?'已连接到后端服务器':'与后端服务器连接已断开，正在自动重连…';
 }
-function connectWS(){const ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws`);ws.onopen=()=>setConnStatus(true);ws.onmessage=ev=>{const m=JSON.parse(ev.data);if(m.type==='queue'){queueData=m.data;renderAll();}if(m.type==='control')handleRemote(m);};ws.onclose=()=>{setConnStatus(false);setTimeout(connectWS,2000);};ws.onerror=()=>setConnStatus(false);window._ws=ws;}
+function connectWS(){const ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws`);ws.onopen=()=>setConnStatus(true);ws.onmessage=ev=>{let m;try{m=JSON.parse(ev.data);}catch(e){return;}if(!m)return;if(m.type==='queue'&&Array.isArray(m.data)){queueData=m.data;renderAll();}else if(m.type==='control'){handleRemote(m);}};ws.onclose=()=>{setConnStatus(false);setTimeout(connectWS,2000);};ws.onerror=()=>setConnStatus(false);window._ws=ws;}
 if(!LOCAL_MODE)connectWS();
+// 「点歌中」列表签名：内容没变就不重建 DOM（每次 WS 推送都整段重建纯属浪费）。
+let _rqSig='';
 function renderAll(){
   const playing=queueData.find(q=>q.status==='playing');
   document.getElementById('qbadge').textContent=queueData.length;
   document.getElementById('rq-cnt').textContent=queueData.length+'首';
   const rq=document.getElementById('rq-list');
-  if(!queueData.length){rq.innerHTML='<div style="color:var(--sub);font-size:16px;text-align:center;padding:16px">暂无点歌</div>';}
-  else{rq.innerHTML='';queueData.forEach(q=>{const d=document.createElement('div');d.className='rq-i'+(q.status==='playing'?' rq-p':'');d.innerHTML=`<div class="rq-t">${q.status==='playing'?'♪ ':''}${q.title}</div><div class="rq-m">${q.artist||''} · ${q.nickname}</div>`;rq.appendChild(d);});}
+  const rqSig=queueData.length+'|'+queueData.map(q=>`${q.queue_id}~${q.status}~${q.title}~${q.artist}~${q.nickname}`).join('\n');
+  if(rqSig!==_rqSig){
+    _rqSig=rqSig;
+    if(!queueData.length){rq.innerHTML='<div style="color:var(--sub);font-size:16px;text-align:center;padding:16px">暂无点歌</div>';}
+    else{rq.innerHTML='';queueData.forEach(q=>{const d=document.createElement('div');d.className='rq-i'+(q.status==='playing'?' rq-p':'');d.innerHTML=`<div class="rq-t">${q.status==='playing'?'♪ ':''}${esc(q.title)}</div><div class="rq-m">${esc(q.artist||'')} · ${esc(q.nickname)}</div>`;rq.appendChild(d);});}
+  }
   if(isFS&&document.getElementById('fsq').classList.contains('open'))renderFsQueue();
   if(document.getElementById('pd-queue').classList.contains('open'))loadQueue();
   if(playing&&!(localPlay.active&&playing.queue_id===localPlay.baseQueueId)){ // 本机插播中且队列未变 → 不打断
@@ -1895,15 +1918,26 @@ const scoreState={on:false,curve:null,segs:[],segPtr:0,segScores:[],curSum:0,cur
   native:false,natAt:0,natVoiced:false,natMidi:0};  // native=安卓 App 原生采集通道
 function scoreHzToMidi(hz){return 69+12*Math.log2(hz/440);}
 // McLeod Pitch Method（与 server/pitch.js 同一算法，浏览器端跑在麦克风数据上）
+// 性能：自相关是 O(W²)，每 100ms 跑一次，弱机（电视盒子）上是整个页面最大的一块 CPU。
+// 三处优化，音高测量范围(65~1050Hz)与精度不变：
+//   1) 时域 2 倍降采样（相邻两点取平均，兼作简易抗混叠）→ W 减半，复杂度降到 1/4；
+//      时间窗长度不变（仍是 2048 个原始采样），所以最低音高的可测性不受影响；
+//   2) tau 上限收到 rate'/65（低于 65Hz 本来就会被 freq<65 丢弃），省掉无用的长时延自相关；
+//   3) 复用 Float32Array 缓冲，避免每帧 new 出两块数组徒增 GC 压力。
+let _mpmBuf=null,_mpmNsdf=null;
 function scoreMPM(frame,rate){
-  const W=frame.length,nsdf=new Float32Array(W);
-  for(let tau=0;tau<W;tau++){let acf=0,div=0;
-    for(let i=0;i<W-tau;i++){const a=frame[i],b=frame[i+tau];acf+=a*b;div+=a*a+b*b;}
+  const W=frame.length>>1,rate2=rate/2;
+  const buf=(_mpmBuf&&_mpmBuf.length===W)?_mpmBuf:(_mpmBuf=new Float32Array(W));
+  for(let i=0;i<W;i++)buf[i]=(frame[2*i]+frame[2*i+1])*0.5;
+  const tauMax=Math.min(W-1,Math.ceil(rate2/65));
+  const nsdf=(_mpmNsdf&&_mpmNsdf.length===tauMax+1)?_mpmNsdf:(_mpmNsdf=new Float32Array(tauMax+1));
+  for(let tau=0;tau<=tauMax;tau++){let acf=0,div=0;
+    for(let i=0;i<W-tau;i++){const a=buf[i],b=buf[i+tau];acf+=a*b;div+=a*a+b*b;}
     nsdf[tau]=div>0?2*acf/div:0;}
-  let s=0;while(s<W&&nsdf[s]>0)s++;while(s<W&&nsdf[s]<=0)s++;
-  if(s>=W)return null;
+  let s=0;while(s<=tauMax&&nsdf[s]>0)s++;while(s<=tauMax&&nsdf[s]<=0)s++;
+  if(s>tauMax)return null;
   let maxV=-1;const peaks=[];
-  for(let tau=s;tau<W-1;tau++){const v=nsdf[tau];
+  for(let tau=s;tau<tauMax;tau++){const v=nsdf[tau];
     if(v>0&&v>=nsdf[tau-1]&&v>=nsdf[tau+1]){peaks.push([tau,v]);if(v>maxV)maxV=v;}}
   if(!peaks.length||maxV<0.5)return null;
   const th=0.9*maxV;let pick=peaks[peaks.length-1];
@@ -1911,7 +1945,7 @@ function scoreMPM(frame,rate){
   const t0=pick[0],v0=pick[1];
   const vl=nsdf[t0-1]||0,vr=nsdf[t0+1]||0;
   const den=2*(2*v0-vl-vr);const sh=den!==0?(vr-vl)/den:0;
-  const freq=rate/(t0+sh);
+  const freq=rate2/(t0+sh);
   if(freq<65||freq>1050)return null;
   return {freq,clarity:v0};
 }
@@ -2007,6 +2041,7 @@ async function toggleScore(){
 function scoreStartUI(){
   const cv=document.getElementById('score-cv');
   scoreState.cv=cv;scoreState.cx=cv.getContext('2d');
+  _scoreCvW=0;_scoreCvH=0;   // 画布刚显示出来，作废尺寸缓存让首帧重新测量
   document.getElementById('score-wrap').classList.add('show');
   document.getElementById('score-tick').classList.add('show');
   if(!scoreState.timer)scoreState.timer=setInterval(scoreTick,100);
@@ -2120,9 +2155,14 @@ function scoreTick(){
   }
   scoreDraw(t);
 }
+// 画布尺寸缓存：clientWidth/clientHeight 是布局属性，每帧读会强制同步回流。
+// 只在「评分开始」与「窗口尺寸变化」时各测一次，DPR 同样缓存。
+let _scoreCvW=0,_scoreCvH=0,_scoreDpr=0;
+window.addEventListener('resize',()=>{_scoreCvW=0;_scoreCvH=0;});
 function scoreDraw(t){
   const cv=scoreState.cv,c=scoreState.cx;if(!c)return;
-  const w=cv.clientWidth,h=cv.clientHeight,dpr=window.devicePixelRatio||1;
+  if(!_scoreCvW||!_scoreCvH){_scoreCvW=cv.clientWidth;_scoreCvH=cv.clientHeight;}
+  const w=_scoreCvW,h=_scoreCvH,dpr=_scoreDpr||(_scoreDpr=window.devicePixelRatio||1);
   if(cv.width!==Math.round(w*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);}
   c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);
   const T0=t-8,T1=t+2,mLo=52,mHi=79;
@@ -2300,7 +2340,7 @@ function hideOverlay(){
 fsOv.addEventListener('click',e=>{if(!e.target.closest('.ob,#ov-back,#prog-bar')){clearTimeout(ovTimer);ovTimer=setTimeout(hideOverlay,CTL_HIDE_MS);}});
 function toggleFsQueue(){const q=document.getElementById('fsq');q.classList.toggle('open');if(q.classList.contains('open'))renderFsQueue();}
 function closeFsQueue(){document.getElementById('fsq').classList.remove('open');}
-function renderFsQueue(){const el=document.getElementById('fsq-list');el.innerHTML='';if(!queueData.length){el.innerHTML='<div style="color:var(--sub);font-size:16px;text-align:center;padding:20px">暂无点歌</div>';return;}queueData.forEach(q=>{const d=document.createElement('div');d.className='fsq-row'+(q.status==='playing'?' fsq-p':'');d.innerHTML=`<div class="fsq-t">${q.status==='playing'?'♪ ':''}${q.title}</div><div class="fsq-m">${q.artist||''} · ${q.nickname}</div>`;el.appendChild(d);});}
+function renderFsQueue(){const el=document.getElementById('fsq-list');el.innerHTML='';if(!queueData.length){el.innerHTML='<div style="color:var(--sub);font-size:16px;text-align:center;padding:20px">暂无点歌</div>';return;}queueData.forEach(q=>{const d=document.createElement('div');d.className='fsq-row'+(q.status==='playing'?' fsq-p':'');d.innerHTML=`<div class="fsq-t">${q.status==='playing'?'♪ ':''}${esc(q.title)}</div><div class="fsq-m">${esc(q.artist||'')} · ${esc(q.nickname)}</div>`;el.appendChild(d);});}
 // 焦点记忆栈：进入任何二级/三级面板前，把当前屏幕正焦点的元素记下来，
 // 退出时尝试把焦点还原到原来那个元素上，而不是每次都跳回默认起点。
 let focusStack=[];
@@ -2636,7 +2676,7 @@ function renderSongs(el,songs){
     }else{
     const fk='fav_'+s.id,isFaved=localStorage.getItem(fk)==='1';
     d.innerHTML=`<div class="so-num">${i+1}</div>
-      <div class="so-info"><div class="so-t">${s.title}${mediaBadge(s)}<span class="mt-b mt-srv">服务器</span>${lrcBadge(s)}</div><div class="so-a">${s.artist||''}</div></div>
+      <div class="so-info"><div class="so-t">${esc(s.title)}${mediaBadge(s)}<span class="mt-b mt-srv">服务器</span>${lrcBadge(s)}</div><div class="so-a">${esc(s.artist||'')}</div></div>
       <div class="so-acts">
         <button class="btn-fav${isFaved?' faved':''}" data-f onclick="toggleFav(${s.id},this)">❤</button>
         <button class="btn-add" data-f onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button>
@@ -2649,10 +2689,10 @@ function renderSongs(el,songs){
 async function toggleFav(id,btn){const key='fav_'+id,faved=localStorage.getItem(key)==='1';if(faved){await fetch(`/api/favorites/${id}?device=${devId()}`,{method:'DELETE'});localStorage.removeItem(key);btn.classList.remove('faved');showToast('已取消收藏');}else{await fetch(`/api/favorites/${id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device:devId()})});localStorage.setItem(key,'1');btn.classList.add('faved');showToast('已收藏 ❤');};allFav=[];}
 async function addSong(id,title){await fetch('/api/queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({song_id:id,nickname:'TV点歌'})});showToast(`《${title}》已加入队列 🎶`);}
 // 各面板加载
-function loadQueue(){const el=document.getElementById('pl-queue');el.innerHTML='';if(!queueData.length){el.innerHTML='<div style="color:#555;text-align:center;padding:30px">暂无点歌</div>';return;}queueData.forEach((q,i)=>{const d=document.createElement('div');d.className='qr-row'+(q.status==='playing'?' qrp':'');d.innerHTML=`<div class="qr-num">${q.status==='playing'?'♪':i+1}</div><div class="qr-info"><div class="qr-t">${q.title}</div><div class="qr-m">${q.artist||''} · ${q.nickname}${q.status==='playing'?' <span style="color:var(--ac)">播放中</span>':''}</div></div><div class="qr-acts">${q.status!=='playing'?`<button class="ma ma-top" data-f onclick="topQ(${q.queue_id})">置顶</button>`:''}<button class="ma ma-del" data-f onclick="delQ(${q.queue_id})">✕</button></div>`;el.appendChild(d);});}
+function loadQueue(){const el=document.getElementById('pl-queue');el.innerHTML='';if(!queueData.length){el.innerHTML='<div style="color:#555;text-align:center;padding:30px">暂无点歌</div>';return;}queueData.forEach((q,i)=>{const d=document.createElement('div');d.className='qr-row'+(q.status==='playing'?' qrp':'');d.innerHTML=`<div class="qr-num">${q.status==='playing'?'♪':i+1}</div><div class="qr-info"><div class="qr-t">${esc(q.title)}</div><div class="qr-m">${esc(q.artist||'')} · ${esc(q.nickname)}${q.status==='playing'?' <span style="color:var(--ac)">播放中</span>':''}</div></div><div class="qr-acts">${q.status!=='playing'?`<button class="ma ma-top" data-f onclick="topQ(${q.queue_id})">置顶</button>`:''}<button class="ma ma-del" data-f onclick="delQ(${q.queue_id})">✕</button></div>`;el.appendChild(d);});}
 async function topQ(id){await fetch(`/api/queue/${id}/top`,{method:'POST'});}
 async function delQ(id){await fetch(`/api/queue/${id}`,{method:'DELETE'});}
-async function loadCharts(){const el=document.getElementById('pl-charts');el.innerHTML='';const songs=(await fetch('/api/charts').then(r=>r.json())).slice(0,10);if(!songs.length){el.innerHTML='<div style="color:#555;text-align:center;padding:30px">还没有人唱过歌</div>';return;}songs.forEach((s,i)=>{const d=document.createElement('div');d.className='chart-row';const rk=i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}`;d.innerHTML=`<div class="ck ${i<3?'r'+(i+1):''}"> ${rk}</div><div class="chart-info"><div class="ct">${s.title}${mediaBadge(s)}<span class="mt-b mt-srv">服务器</span>${lrcBadge(s)}</div><div class="cm">${s.artist||'未知歌手'}</div></div><span class="cp">${s.play_count}次</span><button class="btn-add" onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button>`;el.appendChild(d);});}
+async function loadCharts(){const el=document.getElementById('pl-charts');el.innerHTML='';const songs=(await fetch('/api/charts').then(r=>r.json())).slice(0,10);if(!songs.length){el.innerHTML='<div style="color:#555;text-align:center;padding:30px">还没有人唱过歌</div>';return;}songs.forEach((s,i)=>{const d=document.createElement('div');d.className='chart-row';const rk=i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}`;d.innerHTML=`<div class="ck ${i<3?'r'+(i+1):''}"> ${rk}</div><div class="chart-info"><div class="ct">${esc(s.title)}${mediaBadge(s)}<span class="mt-b mt-srv">服务器</span>${lrcBadge(s)}</div><div class="cm">${esc(s.artist||'未知歌手')}</div></div><span class="cp">${s.play_count}次</span><button class="btn-add" onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button>`;el.appendChild(d);});}
 let st2;
 // 40,000+ 曲库修复：搜索结果原本被硬限在 60 首、且无法翻看更多——一个宽泛
 // 关键词（如歌手姓、单字）能命中成千上万首，却永远只看到前 60 首。
@@ -2701,7 +2741,7 @@ async function searchMore(){
   songs.forEach((s,i)=>{
     const fk='fav_'+s.id,isFaved=localStorage.getItem(fk)==='1';
     const d=document.createElement('div');d.className='so-row';
-    d.innerHTML=`<div class="so-num">${searchOffset+i+1}</div><div class="so-info"><div class="so-t">${s.title}</div><div class="so-a">${s.artist||''}</div></div><div class="so-acts"><button class="btn-fav${isFaved?' faved':''}" data-f onclick="toggleFav(${s.id},this)">❤</button><button class="btn-add" data-f onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button></div>`;
+    d.innerHTML=`<div class="so-num">${searchOffset+i+1}</div><div class="so-info"><div class="so-t">${esc(s.title)}</div><div class="so-a">${esc(s.artist||'')}</div></div><div class="so-acts"><button class="btn-fav${isFaved?' faved':''}" data-f onclick="toggleFav(${s.id},this)">❤</button><button class="btn-add" data-f onclick="addSong(${s.id},'${esc(s.title)}')">点歌</button></div>`;
     frag.appendChild(d);
   });
   el.appendChild(frag);
@@ -3509,7 +3549,9 @@ function moveFocus(d){
 function activateFocused(){blurRealInput();focEls=getFocusables();if(focEls[focIdx])focEls[focIdx].click();}
 document.addEventListener('keydown',e=>{if(isFS)showOverlay();switch(e.key){case 'ArrowUp':moveFocus('up');e.preventDefault();break;case 'ArrowDown':moveFocus('down');e.preventDefault();break;case 'ArrowLeft':moveFocus('left');e.preventDefault();break;case 'ArrowRight':moveFocus('right');e.preventDefault();break;case 'Enter':activateFocused();break;case ' ':togglePause();e.preventDefault();break;case 'Escape':closeTopPanel();break;case 'f':case 'F':isFS?exitKtvFullscreen():enterFullscreen();break;case 'n':case 'N':cutSong();break;}
 });
-function esc(s){return String(s||'').replace(/'/g,"&#39;");}
+// 统一 HTML 转义（文本节点/属性双安全）：曲库元数据来自文件名解析与网络下载，
+// 可能含 < > & " ' 等字符，拼进 innerHTML 或 onclick 属性前必须转义，否则构成 DOM-XSS。
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 // 歌名后媒体类型角标：MV / 直接显示格式后缀大写（FLAC、WAV、APE、MP3…）。
 // 优先按 filename 后缀判断（老数据 media_type 可能缺失），media_type 兜底。
 function mediaBadge(s){

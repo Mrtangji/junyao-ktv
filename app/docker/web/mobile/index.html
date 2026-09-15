@@ -283,6 +283,10 @@ function switchTabByName(name){
   switchTab(name, tabs[idx]);
 }
 
+// 统一 HTML 转义：所有来自服务端曲库（歌名/歌手/昵称可能含任意字符，包括批量下载
+// 来的网络元数据）的文本，拼进 innerHTML 前一律先转义，避免 DOM-XSS。
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
 // ===== WS =====
 let queueData=[];
 let isPlaying=false, localPaused=false, localVoice=true;
@@ -290,8 +294,11 @@ let isPlaying=false, localPaused=false, localVoice=true;
 function connectWS(){
   const ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws`);
   ws.onmessage=ev=>{
-    const msg=JSON.parse(ev.data);
-    if(msg.type==='queue'){queueData=msg.data;onQueue();}
+    // 兜底：服务端/中间层偶尔会推来非 JSON 心跳或截断帧，一条坏消息不该让整个
+    // onmessage 抛异常（否则后续队列更新全部丢失，界面永久卡在旧状态）。
+    let msg;try{msg=JSON.parse(ev.data);}catch(e){return;}
+    if(!msg)return;
+    if(msg.type==='queue'&&Array.isArray(msg.data)){queueData=msg.data;onQueue();}
   };
   ws.onclose=()=>setTimeout(connectWS,2000);
   window._ws=ws;
@@ -325,7 +332,7 @@ function renderQueue(){
     row.className='q-row'+(q.status==='playing'?' playing':'');
     row.innerHTML=`
       <div class="q-num">${q.status==='playing'?'♪':i+1}</div>
-      <div class="q-info"><div class="q-title">${q.title}</div>${songBadges(q)}<div class="q-meta">${q.artist} · ${q.nickname}</div></div>
+      <div class="q-info"><div class="q-title">${esc(q.title)}</div>${songBadges(q)}<div class="q-meta">${esc(q.artist)} · ${esc(q.nickname)}</div></div>
       <div class="q-acts">
         ${q.status!=='playing'?`<button class="q-act top" onclick="topSong(${q.queue_id})">置顶</button>`:''}
         <button class="q-act del" onclick="delSong(${q.queue_id})">✕</button>
@@ -359,7 +366,7 @@ function songBadges(s){
   else if(s.lyrics_path) out.push(['LRC','lrc']);
   if(!out.length) return '';
   return '<div class="badges">' +
-    out.map(([t,c])=>`<span class="badge b-${c}">${t}</span>`).join('') + '</div>';
+    out.map(([t,c])=>`<span class="badge b-${c}">${esc(t)}</span>`).join('') + '</div>';
 }
 
 // ===== Song search & add =====
@@ -406,9 +413,9 @@ function renderSongs(list, replace=true){
     const isFaved=localStorage.getItem(favKey)==='1';
     c.innerHTML=`
       <div class="info">
-        <div class="title">${s.title}</div>
+        <div class="title">${esc(s.title)}</div>
         ${songBadges(s)}
-        <div class="artist">${s.artist||''}</div>
+        <div class="artist">${esc(s.artist||'')}</div>
       </div>
       <div style="display:flex;gap:6px;align-items:center">
         <button class="btn-fav${isFaved?' faved':''}">❤</button>

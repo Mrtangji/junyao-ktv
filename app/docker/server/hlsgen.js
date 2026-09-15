@@ -95,6 +95,16 @@ async function detectVAAPI() {
 // 同一首歌同一时间只允许一个生成任务在跑，避免并发请求把 ffmpeg 打架
 const building = new Map();   // song_id -> Promise（整首歌全部轨道转码完成）
 const buildErrors = new Map(); // song_id -> Error（最近一次转码失败原因）
+// 失败原因只服务于「这首歌下一次被请求时给出可读报错」，历史条目没有价值。
+// 之前只 set 不设上限：批量点唱一堆损坏文件时这个 Map 会一直涨（服务常驻不重启）。
+const BUILD_ERRORS_MAX = 500;
+function rememberBuildError(id, err) {
+  if (!buildErrors.has(id) && buildErrors.size >= BUILD_ERRORS_MAX) {
+    const oldest = buildErrors.keys().next().value;   // Map 保持插入序 → 淘汰最早一条
+    if (oldest !== undefined) buildErrors.delete(oldest);
+  }
+  buildErrors.set(id, err);
+}
 
 // ---------- 转码进程跟踪 / 取消 ----------
 // 为什么需要：ensureHLS 是"渐进式"的——它把整首歌（视频轨 + 每条音频轨，最多
@@ -509,7 +519,7 @@ async function ensureHLS(song) {
       .catch(e => {
         // 因"客户端离线"主动取消的，不算转码失败：不写 buildErrors，否则
         // waitForFile 会把这次取消当成"转码失败"报给播放器。
-        if (!isCanceled(id)) buildErrors.set(id, e);
+        if (!isCanceled(id)) rememberBuildError(id, e);
       })
       .finally(() => building.delete(id));
     building.set(id, p);

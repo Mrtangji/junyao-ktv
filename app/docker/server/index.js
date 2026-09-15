@@ -44,7 +44,16 @@ app.use(express.json({ limit: JSON_BODY_LIMIT }));
 // 操作，风险和曲库管理网页端裸露在局域网里不是一回事。
 const ADMIN_PASSWORD_KEY = 'admin_password_hash';
 const ADMIN_SESSION_COOKIE = 'ktv_admin_session';
-const adminSessions = new Set();
+// token -> 过期时间戳(ms)。改用 Map 而不是 Set：原来只 add/delete，登录发一个 token
+// 就永远留一份，只有点「退出登录」才清——服务长期运行 + 反复登录会让这个集合无界增长。
+// 现在带上与服务端 cookie maxAge 一致的 TTL，校验时顺手淘汰过期项。
+const adminSessions = new Map();
+const ADMIN_SESSION_TTL = 7 * 24 * 60 * 60 * 1000;
+
+function pruneAdminSessions() {
+  const now = Date.now();
+  for (const [t, exp] of adminSessions) if (exp <= now) adminSessions.delete(t);
+}
 
 function getAdminPasswordHash() {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(ADMIN_PASSWORD_KEY);
@@ -83,7 +92,11 @@ function parseCookies(req) {
 
 function isAdminAuthed(req) {
   const token = parseCookies(req)[ADMIN_SESSION_COOKIE];
-  return !!(token && adminSessions.has(token));
+  if (!token) return false;
+  const exp = adminSessions.get(token);
+  if (exp === undefined) return false;
+  if (exp <= Date.now()) { adminSessions.delete(token); return false; }
+  return true;
 }
 
 function requireAdminAuth(req, res, next) {
@@ -93,11 +106,12 @@ function requireAdminAuth(req, res, next) {
 
 function startSession(res) {
   const token = crypto.randomBytes(24).toString('hex');
-  adminSessions.add(token);
+  if (adminSessions.size > 200) pruneAdminSessions();   // 顺手清理，避免无界增长
+  adminSessions.set(token, Date.now() + ADMIN_SESSION_TTL);
   res.cookie(ADMIN_SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
+    maxAge: ADMIN_SESSION_TTL,
   });
 }
 
@@ -162,7 +176,7 @@ app.post('/api/admin/change-password', requireAdminAuth, (req, res) => {
   setAdminPasswordHash(sha256Hex(newPassword));
   const token = parseCookies(req)[ADMIN_SESSION_COOKIE];
   adminSessions.clear();
-  if (token) adminSessions.add(token);
+  if (token) adminSessions.set(token, Date.now() + ADMIN_SESSION_TTL);
   log.info('ADMIN', '曲库管理密码已修改');
   res.json({ ok: true });
 });
@@ -436,11 +450,26 @@ app.get('/api/songs/letter/:letter', (req, res) => {
 // ---------- 歌手列表 ----------
 app.get('/api/artists', (req, res) => {
   // 每位歌手返回其主导语言(歌曲数最多的语言)，供歌星面板按语言筛选。
+  // 原实现用相关子查询 (SELECT lang ... GROUP BY lang ORDER BY COUNT(*) DESC LIMIT 1)
+  // 对**每一位歌手**重跑一遍全表聚合 —— 复杂度 O(歌手数 × 曲库行数)。万级歌手的曲库
+  // 下这条接口要跑几秒到几十秒，且把 CPU 打满（歌星面板一打开就卡）。
+  // 改为两条平坦的 GROUP BY 扫描（都命中 idx_songs_artist_title），在 JS 里合并取
+  // 主导语言：整体 O(曲库行数)，与歌手数无关。
   const rows = db.prepare(`
-    SELECT s.artist, COUNT(*) as count,
-      (SELECT lang FROM songs s2 WHERE s2.artist = s.artist GROUP BY lang ORDER BY COUNT(*) DESC LIMIT 1) as lang
-    FROM songs s WHERE s.artist IS NOT NULL AND s.artist != '' GROUP BY s.artist ORDER BY s.artist
+    SELECT artist, COUNT(*) AS count FROM songs
+    WHERE artist IS NOT NULL AND artist != '' GROUP BY artist ORDER BY artist
   `).all();
+  const langRows = db.prepare(`
+    SELECT artist, lang, COUNT(*) AS c FROM songs
+    WHERE artist IS NOT NULL AND artist != '' AND lang IS NOT NULL AND lang != ''
+    GROUP BY artist, lang
+  `).all();
+  const best = new Map();   // artist -> { lang, c }（同票数取先遇到的，与原实现同样不保证顺序）
+  for (const r of langRows) {
+    const cur = best.get(r.artist);
+    if (!cur || r.c > cur.c) best.set(r.artist, { lang: r.lang, c: r.c });
+  }
+  for (const r of rows) { const b = best.get(r.artist); r.lang = b ? b.lang : null; }
   res.json(rows);
 });
 
@@ -750,10 +779,7 @@ app.post('/api/lx/queue', async (req, res) => {
       return res.status(502).json({ error: '下载失败: ' + e.message });
     }
   }
-  const q = db.prepare('INSERT INTO queue (song_id,nickname) VALUES (?,?)').run(song.id, '网络点唱');
-  db.prepare('UPDATE songs SET play_count=play_count+1 WHERE id=?').run(song.id);
-  startPlayingIfIdle(q.lastInsertRowid);
-  broadcastQueue();
+  enqueueSong(song.id, '网络点唱');
   res.json({ ok: true, downloaded, song });
 });
 
@@ -814,10 +840,7 @@ app.post('/api/md/queue', async (req, res) => {
       return res.status(502).json({ error: '下载失败: ' + e.message });
     }
   }
-  const q = db.prepare('INSERT INTO queue (song_id,nickname) VALUES (?,?)').run(song.id, '网络点唱');
-  db.prepare('UPDATE songs SET play_count=play_count+1 WHERE id=?').run(song.id);
-  startPlayingIfIdle(q.lastInsertRowid);
-  broadcastQueue();
+  enqueueSong(song.id, '网络点唱');
   res.json({ ok: true, downloaded, song });
 });
 
@@ -1068,17 +1091,25 @@ function startPlayingIfIdle(queueId) {
   db.prepare("UPDATE queue SET status='playing' WHERE id=?").run(queueId);
 }
 
+// 点歌入队的唯一入口。原来 /api/queue、/api/lx/queue、/api/md/queue 三处各自复制了
+// 「插队 → play_count+1 → 空闲即开播 → 广播队列」这四步，任何一处漏改都会让三个入口
+// 的行为悄悄分叉（比如新增字段、调整置顶规则时）。收敛到这里，只留一份。
+function enqueueSong(songId, nickname) {
+  const info = db.prepare('INSERT INTO queue (song_id,nickname) VALUES (?,?)').run(songId, nickname || '匿名歌手');
+  db.prepare('UPDATE songs SET play_count=play_count+1 WHERE id=?').run(songId);
+  startPlayingIfIdle(info.lastInsertRowid);
+  broadcastQueue();
+  return info.lastInsertRowid;
+}
+
 app.get('/api/queue', (req, res) => res.json(getQueueWithSongs()));
 
 app.post('/api/queue', (req, res) => {
   const { song_id, nickname } = req.body;
   const song = db.prepare('SELECT * FROM songs WHERE id=?').get(song_id);
   if (!song) return res.status(404).json({ error: '歌曲不存在' });
-  const info = db.prepare('INSERT INTO queue (song_id,nickname) VALUES (?,?)').run(song_id, nickname || '匿名歌手');
-  db.prepare('UPDATE songs SET play_count=play_count+1 WHERE id=?').run(song_id);
-  startPlayingIfIdle(info.lastInsertRowid);
-  broadcastQueue();
-  res.json({ ok: true, id: info.lastInsertRowid });
+  const queueId = enqueueSong(song_id, nickname);
+  res.json({ ok: true, id: queueId });
 });
 
 app.post('/api/queue/:id/top', (req, res) => {
