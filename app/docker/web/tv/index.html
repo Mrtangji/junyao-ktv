@@ -2105,8 +2105,10 @@ function openPF(name){pushFocus();document.querySelectorAll('.pd-full').forEach(
 // 会一次性把该歌手全部歌曲取回并渲染进 DOM，是"点进歌手后卡顿"的根因。
 // 改成跟点歌页一样的分页：每页 30 首，翻页再向后台要下一页。
 let asArtist='',asPg=0;const AS_PG=30;
-async function openArtistSongs(artist){
+let asTotal=null;   // 该歌手歌曲总数（取自歌星网格的 count），用于显示总页数/总数
+async function openArtistSongs(artist,total){
   asArtist=artist;asPg=0;_asSrvTotal=null;
+  asTotal=(typeof total==='number'&&total>0)?total:null;
   pushFocus();
   document.getElementById('pf-artists').classList.remove('open');
   document.getElementById('as-title').textContent='🎤 '+artist;
@@ -2130,9 +2132,16 @@ async function loadArtistSongs(){
   }
   renderSongs(document.getElementById('as-list'),list);
   const srvCount=_asSrvTotal!=null?_asSrvTotal:(asPg*AS_PG+songs.length);
-  const hasMore=(asPg+1)*AS_PG<srvCount+locLen;
+  // 修：原来 hasMore 只在「某页不足 30 首」学到 _asSrvTotal 后才可能为真，
+  // 页页满 30 的歌手（如周杰伦 252 首）恒为 false → "还有更多"永不显示，
+  // 看着像只有一页（《夜曲》就被"藏"在第 3 页）。当前页已满就先按"还有更多"处理。
+  const hasMore=songs.length>=AS_PG||(asPg+1)*AS_PG<srvCount+locLen;
   const info=document.getElementById('as-pg-info');
-  if(info)info.textContent=`第 ${asPg+1} 页${hasMore?' · 还有更多':''}`;
+  if(info){
+    if(asTotal!=null){
+      info.textContent=`第 ${asPg+1}/${Math.max(1,Math.ceil(asTotal/AS_PG))} 页 · 共 ${asTotal} 首`;
+    }else info.textContent=`第 ${asPg+1} 页${hasMore?' · 还有更多':''}`;
+  }
 }
 function artistSongsPage(d){asPg=Math.max(0,asPg+d);loadArtistSongs();}
 function closePF(name){
@@ -2252,7 +2261,7 @@ function renderArtists(){
     const c=document.createElement('div');c.className='ag-card';c.setAttribute('data-f','');
     const rowIdx=Math.floor(i/AG_COLS);
     c.innerHTML=`<div class="ag-av" style="background:${AV_COLORS[rowIdx%AV_COLORS.length]}">${a.artist.charAt(0)}</div><div class="ag-name">${a.artist}</div><div class="ag-cnt">${a.count}首</div>`;
-    c.onclick=()=>openArtistSongs(a.artist);
+    c.onclick=()=>openArtistSongs(a.artist,a.count);
     frag.appendChild(c);
   });
   g.appendChild(frag);
