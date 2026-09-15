@@ -90,6 +90,7 @@ main{max-width:960px;margin:0 auto;padding:24px}
 }
 .act-edit{background:rgba(54,217,247,.15);color:var(--cyan)}
 .act-del{background:rgba(255,79,155,.15);color:var(--pink)}
+.act-add{background:rgba(61,220,132,.15);color:#3ddc84}
 .act-btn:hover{opacity:.8}
 
 /* Edit modal */
@@ -823,6 +824,7 @@ function render(list){
       <td class="count-cell">${s.play_count}</td>
       <td>
         <div class="row-acts">
+          <button class="act-btn act-add" onclick="orderSong(${s.id})">点播</button>
           <button class="act-btn act-edit" onclick="openEdit(${s.id},'${esc(s.title)}','${esc(s.artist||'')}')">编辑</button>
           <button class="act-btn act-del" onclick="delSong(${s.id},this)">删除</button>
         </div>
@@ -848,6 +850,25 @@ async function delSong(id, btn){
   allSongs = allSongs.filter(s=>s.id!==id);
   document.getElementById('s-total').textContent = allSongs.length;
   toast('已移除 ✓');
+}
+
+// 点播：与电视/手机端同走 POST /api/queue（该接口公共，无需 admin token）。
+// nickname 固定"管理端"，方便在电视端队列里一眼区分是谁点的。
+async function orderSong(id){
+  try{
+    const res = await fetch('/api/queue', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ song_id:id, nickname:'管理端' })
+    });
+    if(res.status===401){ showLogin(); return; }
+    const d = await res.json().catch(()=>({}));
+    if(!res.ok || d.error){ toast('点播失败：'+(d.error||('HTTP '+res.status))); return; }
+    toast('已加入点播队列 ✓');
+    // 顶部「队列中」计数 +1，避免为这点事整页重载
+    const q = document.getElementById('s-queue');
+    if(q){ const n = parseInt(q.textContent,10); if(Number.isFinite(n)) q.textContent = n+1; }
+  }catch(e){ toast('点播失败：'+e.message); }
 }
 
 function openEdit(id, title, artist){
