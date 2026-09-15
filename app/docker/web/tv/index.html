@@ -1416,7 +1416,12 @@ video.addEventListener('loadedmetadata', () => VoiceManager.onLoad(video, curSon
 // 拼音映射
 const PM={"啊":"A","阿":"A","爱":"A","安":"A","暗":"A","岸":"A","昂":"A","傲":"A","澳":"A","哎":"A","唉":"A","挨":"A","艾":"A","按":"A","案":"A","把":"B","八":"B","吧":"B","白":"B","百":"B","拜":"B","班":"B","伴":"B","半":"B","帮":"B","包":"B","宝":"B","保":"B","报":"B","爸":"B","背":"B","被":"B","本":"B","比":"B","彼":"B","别":"B","变":"B","冰":"B","病":"B","步":"B","布":"B","不":"B","波":"B","博":"B","奔":"B","笔":"B","标":"B","才":"C","唱":"C","超":"C","沉":"C","成":"C","城":"C","出":"C","春":"C","层":"C","灿":"C","参":"C","差":"C","残":"C","草":"C","彩":"C","仓":"C","曾":"C","丛":"C","此":"C","词":"C","从":"C","存":"C","长":"C","称":"C","初":"C","创":"C","除":"C","曹":"C","采":"C","大":"D","当":"D","道":"D","地":"D","第":"D","懂":"D","多":"D","断":"D","带":"D","动":"D","等":"D","的":"D","登":"D","都":"D","对":"D","独":"D","淡":"D","蝶":"D","跌":"D","灯":"D","点":"D","额":"E","而":"E","恩":"E","鹅":"E","呢":"E","俄":"E","发":"F","飞":"F","分":"F","风":"F","父":"F","复":"F","放":"F","方":"F","烦":"F","飘":"F","奋":"F","赴":"F","费":"F","封":"F","丰":"F","富":"F","感":"G","高":"G","个":"G","给":"G","更":"G","光":"G","归":"G","过":"G","国":"G","跟":"G","共":"G","孤":"G","挂":"G","贵":"G","滚":"G","干":"G","刚":"G","格":"G","歌":"G","还":"H","海":"H","好":"H","和":"H","后":"H","花":"H","回":"H","害":"H","恨":"H","红":"H","很":"H","含":"H","欢":"H","黄":"H","喉":"H","呼":"H","怀":"H","家":"J","见":"J","今":"J","经":"J","就":"J","记":"J","旧":"J","解":"J","几":"J","敬":"J","降":"J","吉":"J","将":"J","进":"J","静":"J","角":"J","坚":"J","开":"K","看":"K","哭":"K","快":"K","苦":"K","靠":"K","空":"K","可":"K","跨":"K","来":"L","浪":"L","老":"L","乐":"L","了":"L","里":"L","留":"L","落":"L","泪":"L","蓝":"L","凉":"L","恋":"L","路":"L","旅":"L","懒":"L","没":"M","明":"M","梦":"M","面":"M","迷":"M","美":"M","满":"M","慢":"M","么":"M","莫":"M","那":"N","年":"N","你":"N","难":"N","念":"N","南":"N","哪":"N","哦":"O","噢":"O","欧":"O","旁":"P","漂":"P","平":"P","片":"P","起":"Q","前":"Q","千":"Q","情":"Q","轻":"Q","去":"Q","求":"Q","亲":"Q","其":"Q","切":"Q","然":"R","让":"R","热":"R","人":"R","忍":"R","柔":"R","三":"S","伤":"S","上":"S","少":"S","失":"S","说":"S","随":"S","生":"S","声":"S","思":"S","是":"S","岁":"S","太":"T","特":"T","天":"T","听":"T","同":"T","头":"T","痛":"T","万":"W","为":"W","我":"W","无":"W","往":"W","忘":"W","晚":"W","想":"X","象":"X","小":"X","心":"X","星":"X","现":"X","希":"X","寻":"X","也":"Y","一":"Y","已":"Y","忆":"Y","因":"Y","用":"Y","又":"Y","有":"Y","眼":"Y","烟":"Y","要":"Y","云":"Y","以":"Y","遥":"Y","夜":"Y","鱼":"Y","再":"Z","在":"Z","找":"Z","真":"Z","中":"Z","走":"Z","总":"Z","紫":"Z","知":"Z","赵":"Z","张":"Z","郑":"Z","周":"Z","庄":"Z","怎":"Z","醉":"Z"};
 const PB=[['啊','A'],['芭','B'],['擦','C'],['搭','D'],['蛾','E'],['发','F'],['噶','G'],['哈','H'],['击','J'],['喀','K'],['垃','L'],['妈','M'],['拿','N'],['哦','O'],['啪','P'],['期','Q'],['然','R'],['撒','S'],['塌','T'],['挖','W'],['昔','X'],['压','Y'],['匝','Z']];
-function getPY(char){if(!char)return'#';const c=char.charCodeAt(0);if(c<0x4E00||c>0x9FFF)return/[A-Za-z]/.test(char)?char.toUpperCase():'#';if(PM[char])return PM[char];try{for(let i=PB.length-1;i>=0;i--)if(char.localeCompare(PB[i][0],'zh-CN',{sensitivity:'base'})>=0)return PB[i][1];}catch(e){}return'#';}
+// zh-CN Collator 共享实例：String.localeCompare 每次调用都要重新解析 locale（ICU 慢路径），
+// Collator 只解析一次、compare 快一个数量级以上。歌星列表要给上万名歌手做拼音排序，
+// 这里是"歌星面板首开卡顿"的主要热点之一；无 Intl.Collator 的老内核回落 localeCompare。
+const _ZH_COLL=(typeof Intl!=='undefined'&&Intl.Collator)?new Intl.Collator('zh-CN',{sensitivity:'base'}):null;
+function _cmpZH(a,b){return _ZH_COLL?_ZH_COLL.compare(String(a),String(b)):String(a).localeCompare(String(b),'zh-CN',{sensitivity:'base'});}
+function getPY(char){if(!char)return'#';const c=char.charCodeAt(0);if(c<0x4E00||c>0x9FFF)return/[A-Za-z]/.test(char)?char.toUpperCase():'#';if(PM[char])return PM[char];try{for(let i=PB.length-1;i>=0;i--)if(_cmpZH(char,PB[i][0])>=0)return PB[i][1];}catch(e){}return'#';}
 // 把整个字符串逐字转成拼音首字母并拼接，例如"水中花"->"SZH"。
 // 空白字符直接跳过（不产生占位符），这样"水 中 花"这类带空格的标题拼出来的
 // 首字母序列依然是连续的"SZH"，不会被空格打断导致匹配不上。
@@ -2240,11 +2245,22 @@ async function initArtists(){
 }
 // 按歌手名第一个字的拼音首字母排序（A-Z），首字母相同的再按完整名称排序，
 // 让"歌星"列表呈现出常见的拼音首字母顺序，而不是接口返回的原始顺序。
+// 歌手首字母排序键缓存：原实现对上万名歌手跑比较器排序，每次比较要调 2 次 getPY
+// + 1 次 localeCompare('zh-CN')（每次都重新解析 locale 的慢路径）——1 万歌手约 13 万次
+// 比较 ≈ 27 万次 getPY + 9 万次 localeCompare，歌星面板首开主线程卡数秒（老盒子更久）。
+// 改为：每位歌手只算一次首字母（按歌手名缓存，排序退化为普通键比较），同字母内的
+// 中文次序用共享 Collator（_cmpZH）。
+const _artistPyCache=new Map();
+function artistSortKey(name){
+  let v=_artistPyCache.get(name);
+  if(v===undefined){v=getPY(String(name||'').charAt(0));_artistPyCache.set(name,v);}
+  return v;
+}
 function sortArtistsByPinyin(list){
   list.sort((a,b)=>{
-    const pa=getPY(a.artist.charAt(0)),pb=getPY(b.artist.charAt(0));
+    const pa=artistSortKey(a.artist),pb=artistSortKey(b.artist);
     if(pa!==pb)return pa<pb?-1:1;
-    return a.artist.localeCompare(b.artist,'zh-CN');
+    return _cmpZH(a.artist,b.artist);
   });
 }
 // Bug：歌星列表没有分页，歌手一多（几百个）就要一次性创建几百个卡片DOM，
