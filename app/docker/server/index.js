@@ -490,8 +490,12 @@ app.get('/api/songs', (req, res) => {
           SELECT s.* FROM songs s WHERE s.pinyin >= ? AND s.pinyin < ?${langSql}
           UNION
           SELECT s.* FROM songs s WHERE s.pinyin_initial >= ? AND s.pinyin_initial < ?${langSql}
+          UNION
+          SELECT s.* FROM songs s WHERE s.artist_pinyin >= ? AND s.artist_pinyin < ?${langSql}
+          UNION
+          SELECT s.* FROM songs s WHERE s.artist_pinyin_initial >= ? AND s.artist_pinyin_initial < ?${langSql}
         ) s ORDER BY s.play_count DESC, s.id DESC LIMIT ? OFFSET ?
-      `).all(ql, hi, ...langArg, ql, hi, ...langArg, limit, offset);
+      `).all(ql, hi, ...langArg, ql, hi, ...langArg, ql, hi, ...langArg, ql, hi, ...langArg, limit, offset);
     // FTS5 trigram 可命中中文任意片段；长度不足 3 个字符时仍走 LIKE，保证短词可搜。
     } else if (db.fts5Ready && q.length >= 3) {
       const match = q.replace(/["*:^(){}\[\]]/g, ' ').trim();
@@ -968,8 +972,8 @@ app.put('/api/songs/:id', requireAdminAuth, (req, res) => {
   db.prepare('UPDATE songs SET title=?, artist=? WHERE id=?').run(title, artist, req.params.id);
   // 歌名/歌手改动后重算拼音与语言，否则点歌面板的拼音首字母搜索、语言筛选会漏掉这首歌。
   if (title || artist) {
-    db.prepare('UPDATE songs SET pinyin=?, pinyin_initial=?, lang=? WHERE id=?')
-      .run(toPinyin(title || ''), toPinyinInitial(title || ''), detectLang(title, artist), req.params.id);
+    db.prepare('UPDATE songs SET pinyin=?, pinyin_initial=?, artist_pinyin=?, artist_pinyin_initial=?, lang=? WHERE id=?')
+      .run(toPinyin(title || ''), toPinyinInitial(title || ''), toPinyin(artist || ''), toPinyinInitial(artist || ''), detectLang(title, artist), req.params.id);
   }
   res.json({ ok: true });
 });

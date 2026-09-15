@@ -147,6 +147,35 @@ try {
   console.error('拼音列迁移/回灌失败:', e.message);
 }
 
+// 歌手拼音列迁移 + 存量回灌：搜索框输入全拼/首字母（zhoujielun / zjl）也要能搜到
+// 该歌手唱的歌——原来 pinyin/pinyin_initial 只存「歌名」拼音，字母查询永远命中
+// 不了歌手，"TV 搜索支持拼音输入"就缺了这一半。
+try {
+  const apCols = db.prepare("PRAGMA table_info(songs)").all().map(c => c.name);
+  if (!apCols.includes('artist_pinyin')) db.exec('ALTER TABLE songs ADD COLUMN artist_pinyin TEXT');
+  if (!apCols.includes('artist_pinyin_initial')) db.exec('ALTER TABLE songs ADD COLUMN artist_pinyin_initial TEXT');
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_songs_artist_pinyin ON songs(artist_pinyin);
+    CREATE INDEX IF NOT EXISTS idx_songs_artist_pinyin_initial ON songs(artist_pinyin_initial);
+  `);
+  const apPinyin = require('./pinyin');
+  if (apPinyin.toPinyin) {
+    const apNull = db.prepare("SELECT COUNT(*) c FROM songs WHERE artist_pinyin IS NULL OR artist_pinyin_initial IS NULL").get().c;
+    if (apNull > 0) {
+      // 一次性同步补算（4 万首约 1~2s，仅加载时且确有空值才跑）
+      const apPending = db.prepare('SELECT id, artist FROM songs WHERE artist_pinyin IS NULL OR artist_pinyin_initial IS NULL').all();
+      const apUpd = db.prepare('UPDATE songs SET artist_pinyin = ?, artist_pinyin_initial = ? WHERE id = ?');
+      const apTx = db.transaction(() => {
+        for (const r of apPending) apUpd.run(apPinyin.toPinyin(r.artist || ''), apPinyin.toPinyinInitial(r.artist || ''), r.id);
+      });
+      apTx();
+      console.log(`[pinyin] 已为 ${apPending.length} 首存量歌曲补齐歌手拼音`);
+    }
+  }
+} catch (e) {
+  console.error('歌手拼音列迁移/回灌失败:', e.message);
+}
+
 // 语言列迁移 + 存量回灌：歌曲按语言(中文/粤语/英语/韩语/日语)分类，
 // 供歌星/点歌/搜索面板按语言筛选。韩语(谚文)、日语(假名)、英语(纯拉丁)按字符
 // 判定；粤语/中文同为汉字，靠「已知粤语歌手」名单判定(见 server/lang.js)。

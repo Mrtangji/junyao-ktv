@@ -342,8 +342,8 @@ async function scanLibrary() {
   scanState.files = files.length;
   scanState.processed = 0;
   const insert = db.prepare(`
-    INSERT INTO songs (title, artist, filename, filepath, audio_tracks, media_type, lyrics_path, lrc_karaoke, pinyin, pinyin_initial, lang)
-    VALUES (@title, @artist, @filename, @filepath, @audio_tracks, @media_type, @lyrics_path, @lrc_karaoke, @pinyin, @pinyin_initial, @lang)
+    INSERT INTO songs (title, artist, filename, filepath, audio_tracks, media_type, lyrics_path, lrc_karaoke, pinyin, pinyin_initial, artist_pinyin, artist_pinyin_initial, lang)
+    VALUES (@title, @artist, @filename, @filepath, @audio_tracks, @media_type, @lyrics_path, @lrc_karaoke, @pinyin, @pinyin_initial, @artist_pinyin, @artist_pinyin_initial, @lang)
     ON CONFLICT(filename) DO NOTHING
   `);
   const existing = db.prepare('SELECT filename FROM songs').all().map(r => r.filename);
@@ -424,7 +424,7 @@ async function scanLibrary() {
             // 表达不了跨目录引用（/lyrics/:id 接口同时兼容旧库存量的相对路径）。
             const lyrics_path = lyrics ? lyrics : null;
             const lrc_karaoke = sniffLrcKaraoke(lyrics_path);
-            const r = insert.run({ title, artist, filename: rel, filepath: f, audio_tracks, media_type, lyrics_path, lrc_karaoke, pinyin: toPinyin(title), pinyin_initial: toPinyinInitial(title), lang: detectLang(title, artist) });
+            const r = insert.run({ title, artist, filename: rel, filepath: f, audio_tracks, media_type, lyrics_path, lrc_karaoke, pinyin: toPinyin(title), pinyin_initial: toPinyinInitial(title), artist_pinyin: toPinyin(artist||''), artist_pinyin_initial: toPinyinInitial(artist||''), lang: detectLang(title, artist) });
             if (r.changes > 0) added++;
             upsertStat.run(rel, mtimeMs, size);   // 探测通过才登记；失败的下轮重试
           } catch (e) {
@@ -564,10 +564,10 @@ function scanFile(f) {
     const lyrics_path = findLyricsPath(f) || null;
     const lrc_karaoke = sniffLrcKaraoke(lyrics_path);
     const insert = db.prepare(`
-      INSERT INTO songs (title, artist, filename, filepath, audio_tracks, media_type, lyrics_path, lrc_karaoke, pinyin, pinyin_initial, lang)
-      VALUES (@title, @artist, @filename, @filepath, @audio_tracks, @media_type, @lyrics_path, @lrc_karaoke, @pinyin, @pinyin_initial, @lang)
+      INSERT INTO songs (title, artist, filename, filepath, audio_tracks, media_type, lyrics_path, lrc_karaoke, pinyin, pinyin_initial, artist_pinyin, artist_pinyin_initial, lang)
+      VALUES (@title, @artist, @filename, @filepath, @audio_tracks, @media_type, @lyrics_path, @lrc_karaoke, @pinyin, @pinyin_initial, @artist_pinyin, @artist_pinyin_initial, @lang)
     `);
-    insert.run({ title, artist, filename: rel, filepath: f, audio_tracks, media_type, lyrics_path, lrc_karaoke, pinyin: toPinyin(title), pinyin_initial: toPinyinInitial(title), lang: detectLang(title, artist) });
+    insert.run({ title, artist, filename: rel, filepath: f, audio_tracks, media_type, lyrics_path, lrc_karaoke, pinyin: toPinyin(title), pinyin_initial: toPinyinInitial(title), artist_pinyin: toPinyin(artist||''), artist_pinyin_initial: toPinyinInitial(artist||''), lang: detectLang(title, artist) });
     // 顺手登记 mtime/size：下一轮全量扫描时这个文件就能走"未变化跳过探测"通道
     try {
       const st = fs.statSync(f);

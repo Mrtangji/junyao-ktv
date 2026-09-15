@@ -3235,7 +3235,10 @@ function moveFocus(d){
   if(isFS)showOverlay();
 }
 function activateFocused(){blurRealInput();focEls=getFocusables();if(focEls[focIdx])focEls[focIdx].click();}
-document.addEventListener('keydown',e=>{if(isFS)showOverlay();switch(e.key){case 'ArrowUp':moveFocus('up');e.preventDefault();break;case 'ArrowDown':moveFocus('down');e.preventDefault();break;case 'ArrowLeft':moveFocus('left');e.preventDefault();break;case 'ArrowRight':moveFocus('right');e.preventDefault();break;case 'Enter':activateFocused();break;case ' ':togglePause();e.preventDefault();break;case 'Escape':closeTopPanel();break;case 'f':case 'F':isFS?exitKtvFullscreen():enterFullscreen();break;case 'n':case 'N':cutSong();break;}
+// TV 输入法/物理键盘打字支持：输入框聚焦时放行全部按键，只留 Escape 关面板。
+// 否则空格被当暂停、f/n 被当全屏/切歌、方向键被虚拟焦点劫持——拼音根本打不了。
+// 关面板时 closePanel→blurRealInput() 会把真实焦点交还虚拟焦点系统，遥控导航随即恢复。
+document.addEventListener('keydown',e=>{if(isFS)showOverlay();const _t=e.target;if(_t&&(_t.tagName==='INPUT'||_t.tagName==='TEXTAREA'||_t.isContentEditable)){if(e.key==='Escape')closeTopPanel();return;}switch(e.key){case 'ArrowUp':moveFocus('up');e.preventDefault();break;case 'ArrowDown':moveFocus('down');e.preventDefault();break;case 'ArrowLeft':moveFocus('left');e.preventDefault();break;case 'ArrowRight':moveFocus('right');e.preventDefault();break;case 'Enter':activateFocused();break;case ' ':togglePause();e.preventDefault();break;case 'Escape':closeTopPanel();break;case 'f':case 'F':isFS?exitKtvFullscreen():enterFullscreen();break;case 'n':case 'N':cutSong();break;}
 });
 // 统一 HTML 转义（文本节点/属性双安全）：曲库元数据来自文件名解析与网络下载，
 // 可能含 < > & " ' 等字符，拼进 innerHTML 或 onclick 属性前必须转义，否则构成 DOM-XSS。
