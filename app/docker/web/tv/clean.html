@@ -192,8 +192,8 @@
 })();
 </script>
 <title>骏耀K歌</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js" defer></script>
+<script src="qrcode.min.js"></script>
+<script src="hls.min.js" defer></script>
 <style>
 :root{
   --bg:#07071a;--navy:#0d0d2b;
@@ -1142,10 +1142,45 @@ function destroyHls(){if(hlsInstance){try{hlsInstance.destroy();}catch(e){}hlsIn
 // 加载一首新歌：优先用 hls.js 播放 HLS(master.m3u8 里声明的每条音轨都是独立分片，
 // 切音轨/拖进度条都不会打断视频)；hls.js 不可用但浏览器原生支持 HLS(如 Safari)则
 // 直接把 src 指过去；两者都不支持时兜底退回旧的整段直传接口(仅默认音轨，无法切换)。
+// ── 老旧内核(安卓5.1车机等)兼容层 ──
+// 这些内核无 MSE(hls.js 起不来)、且常不能原生解码 FLAC/WAV/OPUS，无损音频会整段静音。
+// 能力探测：canPlayType 对这些格式返回 '' 即视为不兼容，改用服务端实时转码成 MP3。
+// ?compat=1 可强制开启（便于桌面/现代设备自测降级路径）。
+const COMPAT = (() => {
+  const probe = (m) => { try { return !!document.createElement('video').canPlayType(m); } catch (e) { return false; } };
+  const canFlac = probe('audio/flac');
+  const canWav  = probe('audio/wav');
+  const canOpus = probe('audio/ogg; codecs=opus') || probe('audio/opus');
+  const noMSE  = typeof window.MediaSource === 'undefined';
+  const forced = /[?&]compat=1\b/.test(location.search);
+  const active = forced || !canFlac || !canWav || !canOpus;
+  function needTranscode(song) {
+    if (!active || !song || song.media_type !== 'audio') return false;
+    const ext = String(song.filename || '').toLowerCase().split('.').pop();
+    return ['flac', 'wav', 'opus'].includes(ext);
+  }
+  const canSeamlessVoice = !noMSE || (typeof window.AudioContext !== 'undefined' || typeof window.webkitAudioContext !== 'undefined');
+  return { active, canFlac, canWav, canOpus, noMSE, forced, needTranscode, canSeamlessVoice };
+})();
+// 兼容模式下的目标音轨（0=原唱,1=伴唱），仅 COMPAT 路径的"换流重载"切换使用
+let _compatTrack = 0;
+
 function loadSong(v,songId){
   hideToast();
   document.getElementById('video-loading').classList.add('show');
   destroyHls();
+  // 老旧内核：无损/opus 无法原生解码，直接走服务端实时转码成 MP3（见 /stream?transcode=mp3），
+  // 不再经过 HLS——HLS 在无 MSE 内核上起不来，会退化成 raw 直传，而 raw FLAC 在旧内核仍静音。
+  // 多音轨曲(原/伴唱)用 ?track=N 选轨，使切换也能以"换流重载"方式工作。
+  if (COMPAT.needTranscode(curSong)) {
+    let q = `?transcode=mp3`;
+    if ((curSong.audio_tracks || 1) >= 2) q += `&track=${_compatTrack}`;
+    v.src = `${BASE}/stream/${songId}${q}`;
+    const onTerr = () => showToast('当前设备需服务端转码，请稍候重试');
+    v.addEventListener('error', onTerr, { once: true });
+    if (!isPaused) v.play().catch(() => {});
+    return;
+  }
   const url=`${BASE}/hls/${songId}/master.m3u8`;
   const fallbackToRaw=()=>{
     destroyHls();
@@ -1275,6 +1310,16 @@ async function cutSong(){
 }
 function restartSong(){VoiceManager.wake(video);video.currentTime=0;isPaused=false;video.play().catch(()=>{});showToast('重唱 🔄');}
 function toggleVoice(){
+  // 兼容模式(无 MSE/Web Audio 的老内核)：原伴唱无法"无缝"切换，改为换流重载——
+  // 重新请求带目标音轨的转码流(?track=N)。代价是这首歌从头播，但旧车机可用。
+  if (COMPAT.active && COMPAT.needTranscode(curSong) && (curSong.audio_tracks || 1) >= 2) {
+    _compatTrack = _compatTrack ? 0 : 1;
+    loadSong(video, curSong.song_id);
+    document.getElementById('btn-voice').classList.toggle('act', _compatTrack === 1);
+    document.getElementById('ob-voice').classList.toggle('act', _compatTrack === 1);
+    showToast(_compatTrack ? '伴唱（换流重载）' : '原唱（换流重载）');
+    return;
+  }
   if(VoiceManager.isOriginal) VoiceManager.setAccompaniment(video);
   else VoiceManager.setOriginal(video);
   // 按钮文案固定为"原/伴唱"，不再随状态在"原唱"/"伴唱"之间切换文字；

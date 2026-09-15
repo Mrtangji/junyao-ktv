@@ -311,6 +311,82 @@ app.get('/stream/:id', (req, res) => {
   const trackParam = req.query.track;
   const hasMultiTrack = (song.audio_tracks || 1) >= 2;
 
+  // ── 老旧内核兼容层（安卓5.1车机等）──
+  // 这些内核无 MSE(hls.js 起不来)、且常不能原生解码 FLAC/WAV/OPUS，无损音频在旧
+  // WebView 上整段静音。客户端探测到不兼容时带 ?transcode=mp3 请求，服务端用 ffmpeg
+  // 把音频实时重编码成 MP3(320k) 流式返回；可选 ?track=N 在重编码前先选音轨，从而让
+  // "原/伴唱切换"在旧内核上也能以"换流重载"的方式工作。转码结果落磁盘缓存
+  // (compat/<id>[.tN].mp3)，同一首歌重复点播只转一次。
+  if (req.query.transcode === 'mp3' && song.media_type === 'audio') {
+    const ctTrack = (trackParam !== undefined && hasMultiTrack)
+      ? Math.max(0, Math.min(parseInt(trackParam, 10) || 0, song.audio_tracks - 1))
+      : null;
+    const cacheDir = path.join(process.env.DATA_DIR || '/data', 'compat');
+    const cacheFile = path.join(cacheDir, `${song.id}${ctTrack !== null ? '.t' + ctTrack : ''}.mp3`);
+    const cacheReady = fs.existsSync(cacheFile) && fs.statSync(cacheFile).size > 0;
+    if (cacheReady) {
+      const cstat = fs.statSync(cacheFile);
+      const crange = req.headers.range;
+      if (!crange) {
+        res.writeHead(200, { 'Content-Length': cstat.size, 'Content-Type': 'audio/mpeg', 'Accept-Ranges': 'bytes' });
+        return fs.createReadStream(cacheFile).pipe(res);
+      }
+      const [cs, ce] = crange.replace(/bytes=/, '').split('-');
+      const cstart = parseInt(cs, 10), cend = ce ? parseInt(ce, 10) : cstat.size - 1;
+      res.writeHead(206, {
+        'Content-Range': `bytes ${cstart}-${cend}/${cstat.size}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': cend - cstart + 1,
+        'Content-Type': 'audio/mpeg',
+      });
+      return fs.createReadStream(cacheFile, { start: cstart, end: cend }).pipe(res);
+    }
+    // 首次：实时 pipe 给客户端（无 Range），同时落缓存供下次复用。
+    res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Accept-Ranges': 'none', 'Cache-Control': 'no-store' });
+    const args = ['-loglevel', 'error', '-i', song.filepath, '-vn'];
+    if (ctTrack !== null) args.push('-map', `0:a:${ctTrack}`);
+    args.push('-c:a', 'libmp3lame', '-b:a', '320k', '-f', 'mp3', 'pipe:1');
+    const ff = spawn('ffmpeg', args);
+    let responded = false;
+    if (ff.pid) liveStreamProcs.add(ff.pid);
+    try { fs.mkdirSync(cacheDir, { recursive: true }); } catch (e) {}
+    const cacheTmp = `${cacheFile}.${Date.now()}.${process.pid}.tmp`;
+    const cacheStream = fs.createWriteStream(cacheTmp);
+    ff.stdout.pipe(res);
+    ff.stdout.pipe(cacheStream);
+    ff.stderr.on('data', d => log.warn('TRANSCODE', `[compat转码][ffmpeg] ${d.toString().trim()}`));
+    let ffExited = false, ffCode = -1;
+    const finish = () => {
+      ffExited = true;
+      liveStreamProcs.delete(ff.pid);
+      // 仅当 ffmpeg 正常退出(码0)才把临时文件提升为缓存；客户端提前断开导致
+      // 被 kill 的半成品不缓存，避免下次 served 出截断的 MP3。
+      try {
+        if (ffCode === 0 && fs.existsSync(cacheTmp) && fs.statSync(cacheTmp).size > 0) {
+          if (!fs.existsSync(cacheFile)) fs.renameSync(cacheTmp, cacheFile);
+          else fs.unlinkSync(cacheTmp);
+        } else { try { fs.unlinkSync(cacheTmp); } catch (_) {} }
+      } catch (e) {}
+    };
+    ff.on('close', (code) => { ffCode = code; finish(); });
+    ff.on('error', err => {
+      log.error('TRANSCODE', `[compat转码] ffmpeg 启动失败: ${err.message}`);
+      if (!responded) { responded = true; res.status(500).end(); }
+      try { fs.unlinkSync(cacheTmp); } catch (_) {}
+      liveStreamProcs.delete(ff.pid);
+    });
+    let resDone = false;
+    res.on('finish', () => { resDone = true; });
+    res.on('close', () => {
+      liveStreamProcs.delete(ff.pid);
+      // 仅在客户端提前断开(响应尚未正常结束)且 ffmpeg 尚未自然结束时才杀进程；
+      // 正常播完的 stream 关闭(finish 已触发)不应误杀已成功的转码，否则会丢掉
+      // 本可复用的缓存。
+      if (!resDone && !ffExited && !ff.killed) { try { ff.kill('SIGKILL'); } catch (e) {} }
+    });
+    return;
+  }
+
   if (trackParam !== undefined && hasMultiTrack) {
     const track = Math.max(0, Math.min(parseInt(trackParam, 10) || 0, song.audio_tracks - 1));
     res.writeHead(200, {
