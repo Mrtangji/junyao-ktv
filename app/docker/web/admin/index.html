@@ -406,13 +406,10 @@ main{max-width:960px;margin:0 auto;padding:24px}
     <div class="form-row"><label>控制栏自动隐藏（秒）</label>
       <input id="tvset-ctl" type="number" min="0.5" max="60" step="0.5" value="3">
       <div style="font-size:12px;color:var(--sub);margin-top:4px">全屏播放时，遥控器/触摸唤出控制栏后多久无操作自动隐藏</div></div>
-    <div class="form-row"><label>评分面板显示时长（秒）</label>
-      <input id="tvset-score" type="number" min="0.5" max="60" step="0.5" value="5">
-      <div style="font-size:12px;color:var(--sub);margin-top:4px">一首歌唱完后，成绩面板显示多久再进入下一首</div></div>
     <div id="tvset-err" style="color:var(--pink);font-size:12px;min-height:14px;margin-bottom:8px"></div>
     <div style="font-size:12px;color:var(--sub);line-height:1.6;margin-bottom:10px">
       仅对 TV 端生效，保存在服务器（重启/升级不丢）。单机调试也可在 TV 地址后加
-      <code>?ctlMs=4000&amp;scoreMs=7000</code> 临时覆盖（毫秒）。
+      <code>?ctlMs=4000</code> 临时覆盖（毫秒）。
     </div>
     <div class="modal-btns">
       <button class="hbtn" style="margin-right:auto" onclick="resetTvSetDefaults()">恢复默认</button>
@@ -739,35 +736,30 @@ async function openTvSetModal(){
   try{
     const c = await fetch('/api/settings').then(r=>r.json());
     document.getElementById('tvset-ctl').value = _secFromMs(c.ctlHideMs);
-    document.getElementById('tvset-score').value = _secFromMs(c.scoreShowMs);
   }catch(e){
     document.getElementById('tvset-ctl').value = 3;
-    document.getElementById('tvset-score').value = 5;
   }
   document.getElementById('tvset-modal-overlay').classList.add('open');
 }
 function closeTvSetModal(){ document.getElementById('tvset-modal-overlay').classList.remove('open'); }
-// 恢复默认：把输入框填回内置默认值（3 秒 / 5 秒），点「保存」后写入服务端
+// 恢复默认：把输入框填回内置默认值（3 秒），点「保存」后写入服务端
 function resetTvSetDefaults(){
   document.getElementById('tvset-ctl').value = 3;
-  document.getElementById('tvset-score').value = 5;
   const errEl = document.getElementById('tvset-err');
   errEl.style.color = 'var(--sub)';
-  errEl.textContent = '已填入默认值（3 秒 / 5 秒），点「保存」生效';
+  errEl.textContent = '已填入默认值（3 秒），点「保存」生效';
 }
 async function submitTvSet(){
   const errEl = document.getElementById('tvset-err');
   errEl.textContent = '';
   errEl.style.color = '';
   const ctlSec = parseFloat(document.getElementById('tvset-ctl').value);
-  const scoreSec = parseFloat(document.getElementById('tvset-score').value);
   if(!(ctlSec >= 0.5 && ctlSec <= 60)){ errEl.textContent = '控制栏隐藏时长需在 0.5 ~ 60 秒之间'; return; }
-  if(!(scoreSec >= 0.5 && scoreSec <= 60)){ errEl.textContent = '评分面板时长需在 0.5 ~ 60 秒之间'; return; }
   try{
     const r = await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ctlHideMs: Math.round(ctlSec*1000), scoreShowMs: Math.round(scoreSec*1000) }),
+      body: JSON.stringify({ ctlHideMs: Math.round(ctlSec*1000) }),
     });
     if(r.ok){
       closeTvSetModal();

@@ -879,25 +879,6 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
   .alpha-disp{gap:8px}
   .alpha-disp>*{margin:0}
 }
-/* ===== 唱歌评分 ===== */
-#score-wrap{position:fixed;left:50%;transform:translateX(-50%);bottom:64px;width:min(900px,86vw);z-index:45;display:none;pointer-events:none}
-#score-wrap.show{display:block}
-#score-cv{width:100%;height:76px;display:block;background:rgba(0,0,0,.35);border-radius:10px}
-#score-tick{position:fixed;top:14px;right:18px;z-index:46;display:none;font-size:34px;font-weight:800;color:#fff;text-shadow:0 2px 12px rgba(0,0,0,.8);font-variant-numeric:tabular-nums}
-#score-tick.show{display:block}
-#score-status{position:fixed;top:54px;right:18px;z-index:46;display:none;font-size:13px;color:#ffd66b;text-shadow:0 1px 6px rgba(0,0,0,.8)}
-#score-status.show{display:block}
-#score-pop{position:fixed;top:18%;left:50%;transform:translateX(-50%) scale(.6);z-index:47;
-  font-size:44px;font-weight:900;letter-spacing:1px;opacity:0;pointer-events:none;
-  text-shadow:0 2px 16px rgba(0,0,0,.85)}
-#ob-score.act{border-color:#3ddc84;color:#3ddc84}
-#score-result{position:fixed;inset:0;z-index:80;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55)}
-#score-result.show{display:flex}
-.sr-card{background:linear-gradient(160deg,#1a1030,#241238);border:1px solid rgba(255,255,255,.12);border-radius:18px;padding:26px 56px;text-align:center;box-shadow:0 18px 60px rgba(0,0,0,.6)}
-.sr-grade{font-size:58px;font-weight:900;line-height:1;color:#ffd34d}
-.sr-score{font-size:92px;font-weight:900;line-height:1.1;color:#fff;font-variant-numeric:tabular-nums}
-.sr-score small{font-size:26px;color:var(--sub)}
-.sr-meta{margin-top:6px;font-size:15px;color:var(--sub)}
 </style>
 </head>
 <body data-page-node-id="Ilno3zzU7bDySpH0pPHqC3">
@@ -966,15 +947,9 @@ html[data-layout="mobile"] .song-list-2col{grid-template-columns:1fr}
       <div class="ob" data-f id="ob-voice" onclick="toggleVoice()" data-page-node-id="D8JW8RC3WYnELCOTlE2eHf"><span class="oi" data-page-node-id="A8AkETpim13Le1oXFOJQd0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="1SusVfRaTFIi4KAAVeKQzz"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" data-page-node-id="wGPoWa2hRGumEypDRECfr3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2" data-page-node-id="ddCnMO9r7KEwIfTGBFfj6j"/><line x1="12" y1="19" x2="12" y2="23" data-page-node-id="dGGnETiSSTpekDnqhbi1Cl"/><line x1="8" y1="23" x2="16" y2="23" data-page-node-id="hngxUzXKL0yWPDWwlQAktg"/></svg></span><span id="ov-vlbl" data-page-node-id="3XZITFHtJx2m2fQBesRUS4">原/伴唱</span></div>
       <div class="ob" data-f onclick="cutSong()" data-page-node-id="XtAXTg1McstFBJzEtSEW7j"><span class="oi" data-page-node-id="DWnEkvNSjJE82NktiE9hIX"><svg viewBox="0 0 24 24" fill="currentColor" data-page-node-id="b0PJA1c44DC7kyCc5AO7Oz"><polygon points="5 4 15 12 5 20 5 4" data-page-node-id="0EQUbQilE2GAqehpai5DuA"/><rect x="17" y="4" width="2" height="16" data-page-node-id="iVLrriQZUPjtUuriiE8xQr"/></svg></span>切歌</div>
       <div class="ob" data-f onclick="toggleFsQueue()" data-page-node-id="D3oo3rhGxvvPiQiSVMYNeM"><span class="oi" data-page-node-id="kjbZusEVHBAiaFErOF9qFw"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="TC7HYGS9NL9hSDrVhQhNhd"><line x1="8" y1="6" x2="21" y2="6" data-page-node-id="R8j3k98iUL4diO050RCRrF"/><line x1="8" y1="12" x2="21" y2="12" data-page-node-id="sqZIDClZfEAhGxiEagL5OL"/><line x1="8" y1="18" x2="21" y2="18" data-page-node-id="eXqm5KmBx9IszF5UXRxE0c"/><line x1="3" y1="6" x2="3.01" y2="6" data-page-node-id="2nuY1Eh85rZN0rX5jBtCN1"/><line x1="3" y1="12" x2="3.01" y2="12" data-page-node-id="1khpmd6tf7Df5MJFeaIzWI"/><line x1="3" y1="18" x2="3.01" y2="18" data-page-node-id="ML2Il91YVF2A2OCIBZ1W9O"/></svg></span>队列</div>
-      <div class="ob" data-f id="ob-score" onclick="toggleScore()"><span class="oi">🎤</span><span id="ob-score-lbl">评分</span></div>
     </div>
   </div>
 </div>
-<div id="score-tick">0</div>
-<div id="score-status">评分准备中…</div>
-<div id="score-pop"></div>
-<div id="score-wrap"><canvas id="score-cv"></canvas></div>
-<div id="score-result"><div class="sr-card"><div class="sr-grade" id="sr-grade">S</div><div class="sr-score" id="sr-score">0<small>/100</small></div><div class="sr-meta" id="sr-meta"></div></div></div>
 <div id="fsq" data-page-node-id="fME6Xa6UTcxwuSXlmaIojZ">
   <div class="fsq-h" data-page-node-id="8MzqlgDTXHaa7b52EA7bEu">♪ 点歌队列<div class="fsq-close" onclick="closeFsQueue()" data-page-node-id="uAYkc29MWLAwdwONDh7s3W">✕</div></div>
   <div class="fsq-body" id="fsq-list" data-page-node-id="lvcADlfbxRRLTDzCw6CA3d"></div>
@@ -1687,9 +1662,7 @@ function wantDirectPlay(song,v){
 // 起播报错或 15 秒没出声 → 自动回落 HLS（宁可转码也别唱不了）。
 function loadSong(v,songId){
   hideToast();
-  document.getElementById('score-result').classList.remove('show');
   if(isFS)hideOverlay();
-  if(scoreState.on)scorePrepare(songId);
   loadLyrics(curSong);
   if(curSong && curSong.media_type==='audio')document.getElementById('lyrics-panel').classList.add('show');
   document.getElementById('video-loading').classList.add('show');
@@ -1805,7 +1778,7 @@ function renderAll(){
     document.getElementById('ov-title').textContent=playing.title;
     document.getElementById('ov-artist').textContent=`${playing.artist||''} · ${playing.nickname}`;
     if(!curSong||curSong.queue_id!==playing.queue_id){curSong=playing;loadSong(video,playing.song_id);endingNotified=false;updateAudioMode();}
-  }else if(!localPlay.active){document.getElementById('now-idle').style.display='flex';video.style.display='none';document.getElementById('lyrics-panel').classList.remove('show','no-lyrics');document.getElementById('now-info').classList.remove('show');document.getElementById('video-loading').classList.remove('show');hideToast();curSong=null;updateAudioMode();resetLyrics();destroyHls();video.removeAttribute('src');video.load();if(scoreState.on)scoreTeardown();if(isFS)exitKtvFullscreen();maybeAutoPlay();}
+  }else if(!localPlay.active){document.getElementById('now-idle').style.display='flex';video.style.display='none';document.getElementById('lyrics-panel').classList.remove('show','no-lyrics');document.getElementById('now-info').classList.remove('show');document.getElementById('video-loading').classList.remove('show');hideToast();curSong=null;updateAudioMode();resetLyrics();destroyHls();video.removeAttribute('src');video.load();if(isFS)exitKtvFullscreen();maybeAutoPlay();}
 }
 // 播放
 // 播放/暂停按钮图标+文案的唯一更新入口：只由 <video> 的原生 play/pause 事件驱动，
@@ -1921,316 +1894,9 @@ function advanceToNextSong(){
   isPaused=false; // 自然播完触发的自动切歌≠用户暂停意图，下一首要正常自动播放
   fetch('/api/queue/next',{method:'POST'});
 }
-// ===== 唱歌评分 =====
-// 方案（业界成熟范式，参考 Agora 歌词评分组件）：服务端离线提取「原唱音轨」的
-// 参考音高曲线（MPM 算法），演唱时前端实时检测麦克风音高（同一算法），按播放
-// 时间对齐后逐句比对：每个音符段为一句，句得分 = 100 × 音准帧平均匹配度，
-// 总分 = 已唱句的平均分，实时爬升显示。偏差 ≤0.3 半音算满分，≥2 半音为 0。
-const scoreState={on:false,curve:null,segs:[],segPtr:0,segScores:[],curSum:0,curN:0,curWeight:0,total:0,
-  userMidi:0,userVoiced:false,userRms:null,combo:0,lastUserMidi:0,audioCtx:null,stream:null,analyser:null,buf:null,timer:null,
-  cv:null,cx:null,best:null,ended:false,
-  native:false,natAt:0,natVoiced:false,natMidi:0};  // native=安卓 App 原生采集通道
-function scoreHzToMidi(hz){return 69+12*Math.log2(hz/440);}
-// McLeod Pitch Method（与 server/pitch.js 同一算法，浏览器端跑在麦克风数据上）
-// 性能：自相关是 O(W²)，每 100ms 跑一次，弱机（电视盒子）上是整个页面最大的一块 CPU。
-// 三处优化，音高测量范围(65~1050Hz)与精度不变：
-//   1) 时域 2 倍降采样（相邻两点取平均，兼作简易抗混叠）→ W 减半，复杂度降到 1/4；
-//      时间窗长度不变（仍是 2048 个原始采样），所以最低音高的可测性不受影响；
-//   2) tau 上限收到 rate'/65（低于 65Hz 本来就会被 freq<65 丢弃），省掉无用的长时延自相关；
-//   3) 复用 Float32Array 缓冲，避免每帧 new 出两块数组徒增 GC 压力。
-let _mpmBuf=null,_mpmNsdf=null;
-function scoreMPM(frame,rate){
-  const W=frame.length>>1,rate2=rate/2;
-  const buf=(_mpmBuf&&_mpmBuf.length===W)?_mpmBuf:(_mpmBuf=new Float32Array(W));
-  for(let i=0;i<W;i++)buf[i]=(frame[2*i]+frame[2*i+1])*0.5;
-  const tauMax=Math.min(W-1,Math.ceil(rate2/65));
-  const nsdf=(_mpmNsdf&&_mpmNsdf.length===tauMax+1)?_mpmNsdf:(_mpmNsdf=new Float32Array(tauMax+1));
-  for(let tau=0;tau<=tauMax;tau++){let acf=0,div=0;
-    for(let i=0;i<W-tau;i++){const a=buf[i],b=buf[i+tau];acf+=a*b;div+=a*a+b*b;}
-    nsdf[tau]=div>0?2*acf/div:0;}
-  let s=0;while(s<=tauMax&&nsdf[s]>0)s++;while(s<=tauMax&&nsdf[s]<=0)s++;
-  if(s>tauMax)return null;
-  let maxV=-1;const peaks=[];
-  for(let tau=s;tau<tauMax;tau++){const v=nsdf[tau];
-    if(v>0&&v>=nsdf[tau-1]&&v>=nsdf[tau+1]){peaks.push([tau,v]);if(v>maxV)maxV=v;}}
-  if(!peaks.length||maxV<0.5)return null;
-  const th=0.9*maxV;let pick=peaks[peaks.length-1];
-  for(const p of peaks){if(p[1]>=th){pick=p;break;}}
-  const t0=pick[0],v0=pick[1];
-  const vl=nsdf[t0-1]||0,vr=nsdf[t0+1]||0;
-  const den=2*(2*v0-vl-vr);const sh=den!==0?(vr-vl)/den:0;
-  const freq=rate2/(t0+sh);
-  if(freq<65||freq>1050)return null;
-  return {freq,clarity:v0};
-}
-// ===== 麦克风（评分）获取：兼容老 Android WebView =====
-// 安卓电视盒子/老手机里的 WebView 内核版本可能很旧：没有 navigator.mediaDevices，
-// 只提供已废弃的 navigator.getUserMedia / webkitGetUserMedia。原实现只认前者，
-// 一旦缺失就直接判定"麦克风不可用"，且不分青红皂白提示"需 HTTPS"——即使当前
-// 明明就是 https（真实原因是内核太老）。这里两种都试，并把提示分清楚。
-const MIC_CONSTRAINTS={audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1}};
-function micUnavailableReason(){
-  const secure=window.isSecureContext||location.protocol==='https:'||location.protocol==='file:'
-    ||location.hostname==='localhost'||location.hostname==='127.0.0.1';
-  if(!secure)return '麦克风不可用：评分需要安全上下文，请用 https://'+location.hostname+':8443/tv 打开（自签证书点「继续访问」）';
-  return '当前播放内核不支持麦克风采集，请在系统里更新「Android System WebView」后重试';
-}
-async function micGetStream(){
-  if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)
-    return await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
-  const legacy=navigator.getUserMedia||navigator.webkitGetUserMedia||navigator.mozGetUserMedia;
-  if(!legacy)throw Object.assign(new Error('内核不支持'),{name:'NotSupportedError'});
-  return await new Promise((res,rej)=>legacy.call(navigator,MIC_CONSTRAINTS,res,rej));
-}
-// ===== 安卓 App：原生麦克风桥（彻底不依赖 HTTPS）=====
-// App 是 WebView 壳，KtvBridge.startMic/stopMic 由 MainActivity 提供：Java 侧用
-// AudioRecord 采集、跑同一套 MPM 音高算法，只把 (频率, 置信度, 音量) 通过
-// onNativeMicFrame 送回页面。这样局域网 HTTP、甚至内核不支持 WebRTC 的老盒子都能
-// 拿到人声音高——浏览器的 getUserMedia 则被"安全上下文"(HTTPS/localhost)卡死。
-const NATIVE_MIC=!!(window.KtvBridge&&typeof window.KtvBridge.startMic==='function');
-window.onNativeMicFrame=function(freq,clarity,rms){
-  if(!scoreState.on)return;
-  scoreState.natAt=performance.now();
-  scoreState.natVoiced=freq>0;
-  scoreState.natMidi=freq>0?scoreHzToMidi(freq):0;
-};
-window.onNativeMicError=function(msg){
-  if(scoreState.on)scoreTeardown();
-  showToast('麦克风不可用：'+msg,true);
-};
-// 统一关闭评分：原生采集与浏览器采集两条路都要还原干净
-function scoreTeardown(){
-  scoreState.on=false;scoreState.native=false;
-  scoreStopUI();
-  if(scoreState.stream)scoreState.stream.getTracks().forEach(t=>t.stop());
-  if(scoreState.audioCtx){try{scoreState.audioCtx.close();}catch(e){}}
-  scoreState.stream=scoreState.audioCtx=scoreState.analyser=null;
-  if(NATIVE_MIC){try{window.KtvBridge.stopMic();}catch(e){}}
-  const b=document.getElementById('ob-score');if(b)b.classList.remove('act');
-  const l=document.getElementById('ob-score-lbl');if(l)l.textContent='评分';
-}
-async function toggleScore(){
-  const btn=document.getElementById('ob-score');
-  if(!scoreState.on){
-    // 本地模式（没连上服务器）：参考音高曲线要从服务端 /api/songs/:id/pitch 取，
-    // 这里提前说清楚，免得用户拿到麦克风权限后只看到一句"参考曲线提取失败"。
-    if(LOCAL_MODE){showToast('本地模式没有服务器，评分不可用；请先在设置里填写服务器地址',true);return;}
-    if(NATIVE_MIC){
-      // 安卓 App：走原生采集，不需要 HTTPS，也不看内核支不支持 getUserMedia
-      scoreState.native=true;scoreState.natAt=0;scoreState.natVoiced=false;scoreState.natMidi=0;
-      scoreState.on=true;btn.classList.add('act');
-      document.getElementById('ob-score-lbl').textContent='评分中';
-      scoreStartUI();
-      if(curSong)scorePrepare(curSong.song_id);
-      try{window.KtvBridge.startMic();}
-      catch(e){scoreTeardown();showToast('麦克风启动失败：'+e.message,true);return;}
-      showToast('🎤 评分已开启，开唱！');
-      return;
-    }
-    try{
-      scoreState.stream=await micGetStream();
-    }catch(e){
-      showToast(e&&e.name==='NotSupportedError'?micUnavailableReason():('无法获取麦克风：'+(e&&e.name||e&&e.message||'未知错误')),true);
-      return;
-    }
-    scoreState.audioCtx=new (window.AudioContext||window.webkitAudioContext)();
-    // 安卓上 AudioContext 常常以 suspended 状态创建，不 resume 的话 analyser 拿到的
-    // 全是静音数据（表现为"评分一直是 0 分"），这里显式唤醒。
-    if(scoreState.audioCtx.state==='suspended'){try{await scoreState.audioCtx.resume();}catch(e){}}
-    const src=scoreState.audioCtx.createMediaStreamSource(scoreState.stream);
-    scoreState.analyser=scoreState.audioCtx.createAnalyser();
-    scoreState.analyser.fftSize=2048;scoreState.analyser.smoothingTimeConstant=0;
-    src.connect(scoreState.analyser);
-    scoreState.buf=new Float32Array(scoreState.analyser.fftSize);
-    scoreState.on=true;btn.classList.add('act');
-    document.getElementById('ob-score-lbl').textContent='评分中';
-    scoreStartUI();
-    if(curSong)scorePrepare(curSong.song_id);
-    showToast('🎤 评分已开启，开唱！');
-  }else{
-    scoreTeardown();
-    showToast('评分已关闭');
-  }
-}
-function scoreStartUI(){
-  const cv=document.getElementById('score-cv');
-  scoreState.cv=cv;scoreState.cx=cv.getContext('2d');
-  _scoreCvW=0;_scoreCvH=0;   // 画布刚显示出来，作废尺寸缓存让首帧重新测量
-  document.getElementById('score-wrap').classList.add('show');
-  document.getElementById('score-tick').classList.add('show');
-  if(!scoreState.timer)scoreState.timer=setInterval(scoreTick,100);
-}
-function scoreStopUI(){
-  if(scoreState.timer){clearInterval(scoreState.timer);scoreState.timer=null;}
-  document.getElementById('score-wrap').classList.remove('show');
-  document.getElementById('score-tick').classList.remove('show');
-  document.getElementById('score-status').classList.remove('show');
-  document.getElementById('score-result').classList.remove('show');
-}
-// 每首歌开始时（loadSong 调用）：取参考曲线 + 历史最高分
-async function scorePrepare(songId){
-  if(!scoreState.on)return;
-  scoreState.curve=null;scoreState.segs=[];scoreState.segPtr=0;scoreState.segScores=[];
-  scoreState.curSum=0;scoreState.curN=0;scoreState.curWeight=0;scoreState.total=0;scoreState.ended=false;
-  scoreState.combo=0;scoreState.lastUserMidi=0;scoreState.userRms=null;
-  document.getElementById('score-tick').textContent='0';
-  const st=document.getElementById('score-status');
-  st.textContent='评分准备中…（首次提取参考曲线需几秒）';st.classList.add('show');
-  try{
-    const [pr,br]=await Promise.all([
-      fetch(`${BASE}/api/songs/${songId}/pitch`),
-      fetch(`${BASE}/api/songs/${songId}/best-score`).catch(()=>null),
-    ]);
-    if(!pr.ok)throw new Error('pitch fail');
-    const c=await pr.json();
-    scoreState.curve=c;scoreState.segs=c.segments||[];
-    if(br&&br.ok){const b=await br.json();scoreState.best=b.best;}
-    st.classList.remove('show');
-  }catch(e){
-    scoreState.segs=[];scoreState.curve=null;
-    st.textContent='评分不可用（参考曲线提取失败）';
-  }
-}
-// 逐句评价：音符段唱完后弹 Perfect/Great/Good/OK/Miss（唱吧式反馈）
-function gradeOf(sc){
-  if(sc>=95)return{label:'PERFECT',color:'#3ddc84'};
-  if(sc>=85)return{label:'GREAT',color:'#7cf6a0'};
-  if(sc>=70)return{label:'GOOD',color:'#ffd34d'};
-  if(sc>=50)return{label:'OK',color:'#ffae5a'};
-  return{label:'MISS',color:'#ff5a76'};
-}
-function showLineGrade(sc){
-  const el=document.getElementById('score-pop');if(!el)return;
-  const g=gradeOf(sc);el.textContent=g.label;el.style.color=g.color;
-  if(el.animate){el.getAnimations().forEach(a=>a.cancel());
-    el.animate([
-      {opacity:0,transform:'translateX(-50%) scale(.5)'},
-      {opacity:1,transform:'translateX(-50%) scale(1.15)',offset:0.22},
-      {opacity:1,transform:'translateX(-50%) scale(1)',offset:0.5},
-      {opacity:0,transform:'translateX(-50%) scale(1)',offset:1}
-    ],{duration:1000,easing:'ease-out'});}
-}
-function scoreTick(){
-  const v=video;
-  if(!scoreState.on||!v||v.paused||v.ended)return;
-  if(scoreState.native){
-    // 原生帧每 64ms 一帧；1.5 秒没新帧就当成"没在唱"（麦克风被占/切到后台）
-    const fresh=scoreState.natAt&&(performance.now()-scoreState.natAt<1500);
-    scoreState.userVoiced=!!(fresh&&scoreState.natVoiced);
-    scoreState.userMidi=fresh?scoreState.natMidi:0;
-    scoreState.userRms=null;   // 原生路径不回传 RMS，能量权重回退为 1
-  }else{
-    if(!scoreState.analyser)return;
-    scoreState.analyser.getFloatTimeDomainData(scoreState.buf);
-    let rms=0;
-    for(let i=0;i<scoreState.buf.length;i++)rms+=scoreState.buf[i]*scoreState.buf[i];
-    rms=Math.sqrt(rms/scoreState.buf.length);
-    let voiced=false,midi=0;
-    if(rms>0.01){
-      const r=scoreMPM(scoreState.buf,scoreState.audioCtx.sampleRate);
-      if(r){voiced=true;midi=scoreHzToMidi(r.freq);}
-    }
-    scoreState.userVoiced=voiced;scoreState.userMidi=midi;
-    scoreState.userRms=voiced?rms:0;
-  }
-  const t=v.currentTime,segs=scoreState.segs;
-  // 连续音高守卫（C 项·轻量实现）：演唱音高在时间上平滑，出现 >3.5 半音跳变大概率是
-  // MPM 倍频/半频误判，除非极有把握否则沿用上一帧——等价于给音高加一个时序先验。
-  if(scoreState.userVoiced){
-    if(scoreState.lastUserMidi>0){
-      const jump=Math.abs(scoreState.userMidi-scoreState.lastUserMidi);
-      if(jump>3.5)scoreState.userMidi=scoreState.lastUserMidi;
-    }
-    scoreState.lastUserMidi=scoreState.userMidi;
-  }else scoreState.lastUserMidi=0;
-  // 走完的音符段结算一句（逐句弹评 Perfect/Great/Good…）
-  while(scoreState.segPtr<segs.length&&t>segs[scoreState.segPtr].t+segs[scoreState.segPtr].d+0.08){
-    const sung=scoreState.curN>0;
-    const sc=scoreState.curWeight>0?Math.round(100*scoreState.curSum/scoreState.curWeight):0;
-    scoreState.segScores.push(sc);
-    scoreState.curSum=0;scoreState.curWeight=0;scoreState.curN=0;scoreState.segPtr++;
-    scoreState.total=Math.round(scoreState.segScores.reduce((a,b)=>a+b,0)/scoreState.segScores.length);
-    document.getElementById('score-tick').textContent=scoreState.total;
-    if(sung)showLineGrade(sc);   // 逐句弹评（仅对已唱的段，休止/跳过不弹）
-  }
-  const cur=scoreState.segPtr<segs.length?segs[scoreState.segPtr]:null;
-  if(cur&&t>=cur.t-0.05&&t<=cur.t+cur.d+0.08&&scoreState.userVoiced){
-    // B 项：cents 连续映射（指数衰减，抄 Thiogu/karaoke-arcade）——偏差越大分越低，无硬截断。
-    // 半音=100cents，取 50cents 半衰：0→1、±50cents→0.5、±100cents→0.25、±200cents→0.06。
-    const devSemi=Math.abs(scoreState.userMidi-cur.m);
-    const centsScore=Math.pow(0.5,Math.abs(devSemi*100)/50);
-    // 能量权重：浏览器路径有 RMS，越自信/越响的演唱权重越高；原生路径无 RMS 则回退 1
-    const ew=scoreState.userRms!=null?Math.min(1,scoreState.userRms/0.08):1;
-    // combo：连续准唱累计倍率（≤+30%），把逐帧分拉向满分但不超 100
-    if(devSemi<1.0)scoreState.combo++;else if(devSemi>=2.0)scoreState.combo=0;
-    const comboMul=1+Math.min(scoreState.combo,40)/40*0.3;
-    const fw=Math.min(1,centsScore*comboMul)*ew;
-    scoreState.curSum+=fw;scoreState.curWeight+=ew;scoreState.curN++;
-  }
-  scoreDraw(t);
-}
-// 画布尺寸缓存：clientWidth/clientHeight 是布局属性，每帧读会强制同步回流。
-// 只在「评分开始」与「窗口尺寸变化」时各测一次，DPR 同样缓存。
-let _scoreCvW=0,_scoreCvH=0,_scoreDpr=0;
-window.addEventListener('resize',()=>{_scoreCvW=0;_scoreCvH=0;});
-function scoreDraw(t){
-  const cv=scoreState.cv,c=scoreState.cx;if(!c)return;
-  if(!_scoreCvW||!_scoreCvH){_scoreCvW=cv.clientWidth;_scoreCvH=cv.clientHeight;}
-  const w=_scoreCvW,h=_scoreCvH,dpr=_scoreDpr||(_scoreDpr=window.devicePixelRatio||1);
-  if(cv.width!==Math.round(w*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);}
-  c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);
-  const T0=t-8,T1=t+2,mLo=52,mHi=79;
-  const yOf=m=>h-((m-mLo)/(mHi-mLo))*h;
-  const xOf=tt=>((tt-T0)/10)*w;
-  c.strokeStyle='rgba(255,255,255,.08)';c.lineWidth=1;
-  for(let m=mLo;m<=mHi;m+=2){const y=yOf(m);c.beginPath();c.moveTo(0,y);c.lineTo(w,y);c.stroke();}
-  const segs=scoreState.segs;
-  for(let i=0;i<segs.length;i++){
-    const s=segs[i];if(s.t+s.d<T0)continue;if(s.t>T1)break;
-    const x=xOf(s.t),x2=xOf(s.t+s.d),y=yOf(s.m);
-    let col='rgba(255,255,255,.35)';
-    if(i<scoreState.segPtr){const sc=scoreState.segScores[i]||0;col=sc>=70?'#3ddc84':sc>=40?'#ffd34d':'#ff5a76';}
-    c.fillStyle=col;c.fillRect(x,y-5,Math.max(3,x2-x),10);
-  }
-  const cx=xOf(t);
-  c.strokeStyle='rgba(255,255,255,.7)';c.beginPath();c.moveTo(cx,0);c.lineTo(cx,h);c.stroke();
-  if(scoreState.userVoiced){
-    const y=yOf(scoreState.userMidi);
-    const cur=scoreState.segPtr<segs.length?segs[scoreState.segPtr]:null;
-    const good=cur&&t>=cur.t-0.05&&t<=cur.t+cur.d+0.08&&Math.abs(scoreState.userMidi-cur.m)<0.6;
-    c.fillStyle=good?'#3ddc84':'#ff9f43';
-    c.beginPath();c.arc(cx,y,5,0,Math.PI*2);c.fill();
-  }
-}
-let _scoreResultTimer=null;
-function scoreFinalize(){
-  if(!scoreState.on||scoreState.ended)return;
-  scoreState.ended=true;
-  if(scoreState.curN>0&&scoreState.segPtr<scoreState.segs.length){
-    scoreState.segScores.push(scoreState.curWeight>0?Math.round(100*scoreState.curSum/scoreState.curWeight):0);
-    scoreState.curSum=0;scoreState.curN=0;
-  }
-  const sung=scoreState.segScores.filter(s=>s>0).length;
-  const total=sung?Math.round(scoreState.segScores.reduce((a,b)=>a+b,0)/scoreState.segScores.length):0;
-  const g=total>=90?'S':total>=80?'A':total>=70?'B':total>=60?'C':'D';
-  const el=document.getElementById('score-result');
-  document.getElementById('sr-grade').textContent=g;
-  document.getElementById('sr-score').innerHTML=total+'<small>/100</small>';
-  const best=scoreState.best!=null?Math.max(scoreState.best,total):total;
-  document.getElementById('sr-meta').textContent=`唱 ${sung} 句 · 本曲历史最高 ${Math.round(best)}`;
-  el.classList.add('show');
-  clearTimeout(_scoreResultTimer);_scoreResultTimer=setTimeout(()=>{el.classList.remove('show');advanceToNextSong();},SCORE_SHOW_MS);
-  if(curSong){
-    fetch('/api/scores',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({song_id:curSong.song_id,score:total,grade:g,device:devId()})}).catch(()=>{});
-  }
-}
-// 歌结束时：开启了评分则先弹成绩面板、5 秒后再进入下一首；未开启评分直接切歌
+// 歌结束时：切下一首
 video.addEventListener('ended',onSongEnded);
-function onSongEnded(){
-  if(scoreState.on&&!scoreState.ended){scoreFinalize();return;}
-  advanceToNextSong();
-}
+function onSongEnded(){advanceToNextSong();}
 // 兜底检测：渐进式生成的 HLS 用的是 event 类型播放列表，hls.js 会先把它当"直播流"
 // 处理，等转码完成追加 #EXT-X-ENDLIST 后才转成"点播"语义——这个状态转换在个别
 // 时序下没能让 <video> 正确触发原生 ended 事件，画面会卡在最后一帧但不报任何错，
@@ -2249,22 +1915,20 @@ setInterval(()=>{
   if(nearEnd&&Math.abs(bufEnd-stallBufEnd)<0.05)stallStableCount++;
   else stallStableCount=0;
   stallBufEnd=bufEnd;
-  if(nearEnd&&stallStableCount>=4){if(scoreState.on)scoreFinalize();else advanceToNextSong();}
+  if(nearEnd&&stallStableCount>=4)advanceToNextSong();
 },1000);
 // Bug4修复：全屏（video移至body，fs-tap点击层，ktv_fs）
 const fsOv=document.getElementById('fs-ov'),fsTap=document.getElementById('fs-tap');
 let ovTimer;
-// 全屏控制栏/评分面板时长：优先级 URL 参数 ?ctlMs= / ?scoreMs= > 服务端配置(/api/settings) > 默认值。
+// 全屏控制栏时长：优先级 URL 参数 ?ctlMs= > 服务端配置(/api/settings) > 默认值。
 // 服务端配置可在「曲库管理」后台「🎬 播放设置」里改，持久化在 settings 表（见 server/tvsettings.js）。
 function _qInt(k,d){const v=new URLSearchParams(location.search).get(k);const n=v?parseInt(v,10):NaN;return Number.isFinite(n)&&n>0?n:d;}
 function _qHas(k){return new URLSearchParams(location.search).has(k);}
 let CTL_HIDE_MS=_qInt('ctlMs',3000);     // 全屏控制栏唤出后无操作自动隐藏时长(ms)
-let SCORE_SHOW_MS=_qInt('scoreMs',5000); // 评分面板显示时长(ms)，到时后自动进入下一首
 // 拉取服务端持久化配置（URL 未显式指定时才覆盖；失败静默保留默认值）
 fetch('/api/settings').then(r=>r.json()).then(c=>{
   if(!c)return;
   if(!_qHas('ctlMs')&&c.ctlHideMs>0)CTL_HIDE_MS=c.ctlHideMs;
-  if(!_qHas('scoreMs')&&c.scoreShowMs>0)SCORE_SHOW_MS=c.scoreShowMs;
 }).catch(()=>{});
 // Bug7修复：主页焦点记忆功能未生效。
 // openPanel/openPF/closePanel/closePF 等所有"打开/关闭二级面板"的入口都会调用
@@ -3343,18 +3007,12 @@ async function playLocalSong(id){
     }
   }
   localPlay.active=true;localPlay.baseQueueId=curSong?curSong.queue_id:null;
-  // 本机歌曲无参考音高曲线，评分挂起（UI 隐藏，ended 结算跳过）
-  scoreState.ended=true;
   document.querySelectorAll('.pd.open,.pd-full.open').forEach(p=>p.classList.remove('open'));
   destroyHls();
   video.src=srcUrl;
   document.getElementById('now-idle').style.display='none';
   video.style.display='none';
   document.getElementById('lyrics-panel').classList.remove('show','no-lyrics');
-  document.getElementById('score-wrap').classList.remove('show');
-  document.getElementById('score-tick').classList.remove('show');
-  document.getElementById('score-status').classList.remove('show');
-  document.getElementById('score-result').classList.remove('show');
   document.getElementById('video-loading').classList.remove('show');
   document.getElementById('now-info').classList.add('show');
   document.getElementById('ni-title').textContent=s.title;
@@ -3486,7 +3144,7 @@ function maybeAutoPlay(delay){
 updateAutoPlayUI();
 async function doScan(){if(LOCAL_MODE){showToast('本地模式下无需扫描曲库');return;}showToast('扫描中…');const _pt=setInterval(async()=>{try{const s=await fetch('/api/scan/status').then(r=>r.json());if(s.scanning)showToast(s.files?`扫描中… ${s.processed}/${s.files}`:'扫描中… 正在枚举目录');}catch(e){}},1500);let d;try{d=await fetch('/api/scan',{method:'POST'}).then(r=>r.json());}catch(e){clearInterval(_pt);showToast('⚠️ 扫描请求失败：'+e.message);return;}clearInterval(_pt);if(d.error==='IN_PROGRESS'){showToast('⚠️ '+(d.message||'已有扫描正在进行中'));return;}if(d.error==='MV_DIR_UNAVAILABLE'){showToast('⚠️ 曲库目录暂时无法访问，请检查挂载后重试');return;}if(d.ok===false){showToast('⚠️ 扫描出错：'+(d.error||'未知错误'));return;}showToast(`扫描完成：${d.total}首，新增${d.added}首，移除${d.removed||0}首`);allSongs=[];loadSettings();}
 // 遥控
-function handleRemote(m){switch(m.action){case 'play_pause':togglePause();break;case 'next':cutSong();break;case 'voice':toggleVoice();break;case 'repeat':restartSong();break;case 'score':toggleScore();break;case 'fullscreen':isFS?exitKtvFullscreen():enterFullscreen();break;case 'home':if(isFS)exitKtvFullscreen();break;case 'focus_up':moveFocus('up');break;case 'focus_down':moveFocus('down');break;case 'focus_left':moveFocus('left');break;case 'focus_right':moveFocus('right');break;case 'ok':activateFocused();break;case 'back':closeTopPanel();break;}}
+function handleRemote(m){switch(m.action){case 'play_pause':togglePause();break;case 'next':cutSong();break;case 'voice':toggleVoice();break;case 'repeat':restartSong();break;case 'fullscreen':isFS?exitKtvFullscreen():enterFullscreen();break;case 'home':if(isFS)exitKtvFullscreen();break;case 'focus_up':moveFocus('up');break;case 'focus_down':moveFocus('down');break;case 'focus_left':moveFocus('left');break;case 'focus_right':moveFocus('right');break;case 'ok':activateFocused();break;case 'back':closeTopPanel();break;}}
 // Fix2：全屏时焦点只在全屏覆盖层，主页时排除全屏层
 let focEls=[],focIdx=0;
 function getFocusables(){

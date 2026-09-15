@@ -15,7 +15,6 @@ const procmon = require('./procmon');
 const appVersion = require('./version');
 const maidong = require('./maidong');
 const muse = require('./muse');
-const { getPitchCurve } = require('./pitch');
 const log = require('./logger');
 const { firstSinger } = require('./singers');
 const tvsettings = require('./tvsettings');
@@ -559,53 +558,6 @@ app.get('/api/history', (req, res) => {
   res.json(rows);
 });
 
-// ---------- 唱歌评分 ----------
-// 参考音高曲线：首次请求时用 ffmpeg 从「原唱音轨」(第 0 条) 离线提取并落盘缓存，
-// 之后直接读缓存（源文件被替换会自动失效重建）。一首 4 分钟的歌首次提取约
-// 5~15 秒（取决于 CPU），前端要按"评分准备中"处理这段延迟。
-app.get('/api/songs/:id/pitch', (req, res) => {
-  const song = db.prepare('SELECT id, filepath, title FROM songs WHERE id = ?').get(req.params.id);
-  if (!song) return res.status(404).json({ error: '歌曲不存在' });
-  getPitchCurve(song)
-    .then(curve => { res.set('Cache-Control', 'no-store'); res.json(curve); })
-    .catch(e => res.status(502).json({ error: '音高曲线提取失败', detail: e.message }));
-});
-
-// 提交演唱成绩。广播给所有 WS 客户端，电视端可以即时弹"本曲得分"。
-app.post('/api/scores', (req, res) => {
-  const { song_id, score, grade, device } = req.body || {};
-  const sid = Number.parseInt(song_id, 10);
-  const sc = Number(score);
-  if (!Number.isFinite(sid) || !Number.isFinite(sc)) {
-    return res.status(400).json({ error: '参数不合法' });
-  }
-  const g = (grade || '').toString().slice(0, 4);
-  const d = (device || '').toString().slice(0, 64);
-  db.prepare('INSERT INTO scores(song_id, score, grade, device) VALUES(?,?,?,?)').run(sid, sc, g, d);
-  const best = db.prepare('SELECT MAX(score) AS best FROM scores WHERE song_id = ?').get(sid).best;
-  const payload = JSON.stringify({
-    type: 'score', data: { song_id: sid, score: sc, grade: g, device: d, best: best ?? sc },
-  });
-  wss.clients.forEach(c => { if (c.readyState === 1) c.send(payload); });
-  res.json({ ok: true, best: best ?? sc });
-});
-
-// 某首歌的历史最高分（点歌面板/成绩面板显示"历史最高"用）。
-app.get('/api/songs/:id/best-score', (req, res) => {
-  const row = db.prepare('SELECT MAX(score) AS best, COUNT(*) AS cnt FROM scores WHERE song_id = ?').get(req.params.id);
-  res.json({ best: row.best ?? null, count: row.cnt });
-});
-
-// 最近的演唱成绩（评分面板"打榜"列表）。
-app.get('/api/scores/recent', (req, res) => {
-  const rows = db.prepare(`
-    SELECT sc.score, sc.grade, sc.created_at, s.title, s.artist
-    FROM scores sc JOIN songs s ON s.id = sc.song_id
-    ORDER BY sc.id DESC LIMIT 20
-  `).all();
-  res.json(rows);
-});
-
 // ---------- LX Music（音源导入 / 网络搜索 / 榜单 / 下载点唱） ----------
 const lxmusic = require('./lxmusic');
 const boardsdk = require('./boardsdk');
@@ -964,9 +916,9 @@ app.post('/api/singer-batch/resume', requireAdminAuth, (req, res) => {
 // 停止才是真正放弃（连同断点快照一起清掉）
 app.post('/api/singer-batch/stop', requireAdminAuth, (req, res) => res.json(singerBatch.stop()));
 
-// ---------- TV 播放/评分时长配置 ----------
+// ---------- TV 播放时长配置 ----------
 // TV 端启动时拉取（公共接口，仅两个时长，不含敏感信息）；后台保存（需管理员登录）。
-// 详见 server/tvsettings.js 与 tv/index.html 里的 CTL_HIDE_MS / SCORE_SHOW_MS。
+// 详见 server/tvsettings.js 与 tv/index.html 里的 CTL_HIDE_MS。
 app.get('/api/settings', (req, res) => res.json(tvsettings.get()));
 app.post('/api/settings', requireAdminAuth, (req, res) => {
   try { res.json({ ok: true, ...tvsettings.set(req.body || {}) }); }
@@ -1247,8 +1199,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
 // ---------- HTTPS（自签证书） ----------
-// 浏览器安全策略：麦克风（getUserMedia，唱歌评分用）只在 HTTPS 或 localhost 下开放，
-// 局域网 HTTP 访问拿不到麦克风。这里用自签证书在同一 app 上再起一个 HTTPS 端口，
+// 在同一 app 上再起一个 HTTPS 端口（8443），供 App / 浏览器以安全上下文访问；
 // 证书持久化在 DATA_DIR 下，重启不换。App 端信任自签证书；浏览器访问会弹证书
 // 警告，点「高级→继续访问」即可。
 const https = require('https');
@@ -1524,10 +1475,10 @@ try {
   wssSecure.on('connection', onWsConnection);
   wssAll.push(wssSecure);
   httpsServer.listen(HTTPS_PORT, () => {
-    log.info('SERVER', `KTV HTTPS 已启动: https://0.0.0.0:${HTTPS_PORT}（自签证书，麦克风/评分用）`);
+    log.info('SERVER', `KTV HTTPS 已启动: https://0.0.0.0:${HTTPS_PORT}（自签证书）`);
   });
 } catch (e) {
-  log.error('SERVER', 'HTTPS 启动失败（网页评分功能将不可用，HTTP 不受影响）: ' + e.message);
+  log.error('SERVER', 'HTTPS 启动失败（HTTPS 访问将不可用，HTTP 不受影响）: ' + e.message);
 }
 
 // ---------- 统一错误响应（必须注册在所有路由之后） ----------

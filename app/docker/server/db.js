@@ -61,16 +61,6 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT
 );
 
-CREATE TABLE IF NOT EXISTS scores (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  song_id INTEGER NOT NULL,
-  score REAL NOT NULL,
-  grade TEXT,
-  device TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_scores_song ON scores(song_id, score DESC);
-CREATE INDEX IF NOT EXISTS idx_scores_time ON scores(created_at DESC);
 `);
 
 // Bug修复：老版本数据库里没有 audio_tracks 列，CREATE TABLE IF NOT EXISTS 对已存在的
